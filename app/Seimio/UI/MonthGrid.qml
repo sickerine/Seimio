@@ -145,7 +145,9 @@ FocusScope {
     SequentialAnimation {
         id: turn
         NumberAnimation { target: grid; property: "fade"; to: 0; duration: 110; easing.type: Easing.InQuad }
-        ScriptAction { script: { grid.firstWeek = grid.turnDir > 0 ? 0 : 5; grid.month = grid.nextMonth; grid.fade = 1; grid.turned() } }
+        // all days at once: the ripple shows days from every week within ~300 ms, sooner than staging
+        // would reach them (it's hidden behind the fade, and only month-bar jumps ripple)
+        ScriptAction { script: { grid.firstWeek = -1; grid.month = grid.nextMonth; grid.fade = 1; grid.turned() } }
     }
 
     // a light running around today's day

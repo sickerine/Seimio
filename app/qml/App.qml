@@ -66,6 +66,13 @@ WebOSWindow {
     WindowTools { id: tools }
     LabProbe {
         id: probe; window: app
+        stateOf: function () {
+            function id(x) { return x ? x.id || x.name || "?" : null }
+            return { layer: app.layer, row: home.row, dayOpen: home.dayOpen, scrolled: home.scrolled,
+                     focusItem: id(app.focusItem), displayItem: id(app.displayItem),
+                     info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
+                             visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy } };
+        }
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
     }

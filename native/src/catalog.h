@@ -12,14 +12,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QPointer>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
 #include <QVector>
 #include <algorithm>
 #include <memory>
-#include <thread>
 
 // One release on one day: an episode of a library show or of the airing schedule.
 struct Release {
@@ -165,11 +164,13 @@ public:
         m_base = b;
         emit baseChanged();
         QString dir = QUrl(b).isLocalFile() ? QUrl(b).toLocalFile() : b;
-        QPointer<Catalog> self(this);
-        std::thread([self, dir, b] {
-            auto data = std::make_shared<Data>(Data::load(dir, b));
-            if (self) QMetaObject::invokeMethod(self, [self, data] { if (self) self->take(data); }, Qt::QueuedConnection);
-        }).detach();
+        // the result comes back through a queued connection with this object as its context, so Qt
+        // drops it if the catalog is gone by then (no pointer to it crosses threads)
+        auto data = std::make_shared<Data>();
+        QThread *worker = QThread::create([data, dir, b] { *data = Data::load(dir, b); });
+        connect(worker, &QThread::finished, this, [this, data] { take(data); });
+        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+        worker->start();
     }
 
     // a show's seasons and episodes, for the show page (empty if it isn't a library show)

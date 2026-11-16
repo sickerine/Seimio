@@ -1,11 +1,12 @@
 #!/bin/bash
-# The check before pushing UI or performance changes: the visual check on the Mac, then the current
+# The check before pushing UI or performance changes: the visual check and tools/tests on the Mac, then the current
 # build on the TV with the three tours against their frame budget. Starts the lab server if it isn't
 # running and stops it again. Exits 1 if anything fails; --mac skips the TV.
 # usage: tools/check.sh [--mac]
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 fail=0
 echo "visual check"; tools/preview/shots.sh || fail=1
+echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
 [ "$1" = --mac ] && exit $fail
 
 started=""

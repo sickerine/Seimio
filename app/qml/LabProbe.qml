@@ -16,6 +16,9 @@ Item {
     property string server: "http://192.168.1.47:8091"
     property var variant: ({})
     property string phase: "idle"
+    // a function returning the app's state (screen, selection, hero info), added to every report, to
+    // catch state bugs on the TV after the fact
+    property var stateOf: null
     signal autopop()
     signal openMenu()
 
@@ -73,7 +76,7 @@ Item {
     Timer {
         running: true; interval: 3000; repeat: true
         onTriggered: {
-            var out = { latency: lat.stats(), variant: probe.variant, luna: luna.log, bench: probe.benchOut };
+            var out = { latency: lat.stats(), variant: probe.variant, luna: luna.log, bench: probe.benchOut, state: probe.stateOf ? probe.stateOf() : null };
             luna.log = [];
             var fs = frames.take();
             for (var q in fs) out["rt " + q] = fs[q];

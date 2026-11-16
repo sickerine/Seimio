@@ -39,6 +39,9 @@ Each rule comes from a measured stall on the C5.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.
 - State has one source: selection is `App.displayItem`, changed only by `commit()`; components take one
   input and apply explicit rules, as `Backdrop` and `HeroInfo` document at their top.
+  Expect handlers to re-enter: setting a property can emit a signal synchronously (a cached image turns
+  Ready inside the assignment), so change your own state before the assignment that may call back. A
+  state bug gets a QtQuick test in `tools/tests` that fails before the fix; `check.sh` runs them.
 - Data lives in C++ (`Seimio.Data`, `native/src/catalog.h`), parsed on a worker thread. QML asks for
   what a screen needs when it needs it (`Catalog.show(id)`, `Catalog.day(key)`) and keeps the answer
   if identity matters. JavaScript is glue: QML bindings and handlers run in a JS engine whose

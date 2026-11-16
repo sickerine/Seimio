@@ -26,9 +26,11 @@ Item {
     onItemChanged: {
         if (item === m) { pending = null; fadeOut.stop(); if (fadeIn < 1) fadeInAnim.restart(); return }
         pending = item;
+        // start the fade-out before touching the preload: a cached logo reports Ready synchronously and
+        // calls apply() from inside this handler
+        if (m && !fadeOut.running) { fadeInAnim.stop(); if (fadeIn > 0) fadeOut.restart() }
         preload.source = item && item.logo ? item.logo : "";
-        if (!m) { apply(); return }
-        if (!fadeOut.running) { fadeInAnim.stop(); fadeOut.restart() }
+        apply();
     }
     Image { id: preload; visible: false; asynchronous: true; sourceSize.width: 780; onStatusChanged: info.apply() }
     NumberAnimation { id: fadeOut; target: info; property: "fadeIn"; to: 0; duration: 140; easing.type: Easing.InQuad; onFinished: info.apply() }
