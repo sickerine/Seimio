@@ -10,7 +10,7 @@ with a C++ plugin for LG's media server and libass subtitles. Built and measured
 | `app/` | The webOS app package: `appinfo.json`, `main.qml` (loads the plugin, then `qml/App.qml`) |
 | `app/Seimio/UI/` | The UI library (`import Seimio.UI 1.0`): theme, controls, glass and frost, cards, strips |
 | `app/qml/` | Screens built from the library: Home, the show page, the title page (movies, single episodes), quick actions |
-| `native/` | The `Seimio.Native` plugin: Luna calls, the media server player, libass subtitles, window properties, lab probes |
+| `native/` | The `Seimio.Native` plugin (Luna calls, the media server player, libass subtitles, window properties, lab probes) and `Seimio.Data` (the catalog and the calendar model, in C++) |
 | `core/` | stremio-core built natively for the TV (currently a probe; the app still uses lab data) |
 | `third_party/libass/` | libass with FriBidi and HarfBuzz, built for the TV |
 | `tools/` | Deploy, remote-driven tours, the lab server, art fetching, Mac previews |
@@ -39,5 +39,6 @@ its owner, so the rest of the hold can't press anything in the menu.
 3. `tools/fetch-art.py` fetches lab art and your watch state into `app/art/`.
 4. `python3 -I tools/lab-server.py &` then `tools/deploy.sh`.
 5. `tools/tour.sh home|show|menu` drives the TV with the network remote and prints frame pacing.
-6. `tools/preview/shot.sh out.png` renders the app on the Mac (Qt 5 from Homebrew) for screenshots;
+6. `tools/preview/build-data.sh` builds `Seimio.Data` for the Mac, then `tools/preview/shot.sh out.png`
+   renders the app on the Mac (Qt 5 from Homebrew) for screenshots;
    `tools/preview/shots.sh` compares fixed states with the approved images.

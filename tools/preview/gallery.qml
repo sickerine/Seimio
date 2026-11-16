@@ -3,13 +3,13 @@
 import QtQuick 2.12
 import Eos.Window 0.1
 import Seimio.UI 1.0
-import "../../app/qml"
+import Seimio.Data 1.0
 
 WebOSWindow {
     id: win
     visible: true
     Rectangle { width: 1920; height: 1080; color: "#202024" }   // the grab has no window colour behind it
-    LabCatalog { id: catalog }
+    Catalog { id: catalog; base: Qt.resolvedUrl("../../app/art/") }
     readonly property var cw: catalog.continueWatching
     readonly property var pop: catalog.popular.length ? catalog.popular[0].items : []
     function art(list, i) { return list.length > i ? list[i].art : "" }

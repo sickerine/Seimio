@@ -1,0 +1,2 @@
+module Seimio.Data
+plugin seimiodata

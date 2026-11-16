@@ -8,7 +8,7 @@ P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); OUT="$REPO/.lab/
 approve=0; [ "$1" = --approve ] && { approve=1; shift; }
 # finds an item in the window's tree by a test (screen ids aren't reachable from the preview)
 FIND_JS='function f(o, t) { if (o && t(o)) return o; for (var i = 0; o && i < o.children.length; i++) { var r = f(o.children[i], t); if (r) return r } return null }
-var home = f(win.canvas, function (o) { return o.continueWatching !== undefined && o.calendar !== undefined });'
+var home = f(win.canvas, function (o) { return o.continueWatching !== undefined && o.catalog !== undefined });'
 # every state renders on the same day, so the calendar and its baselines don't change with the date
 DAY_JS='win.today = "2026-11-16";'
 js() {

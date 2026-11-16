@@ -10,6 +10,7 @@ import QtQuick 2.12
 import Eos.Window 0.1
 import Seimio.UI 1.0
 import Seimio.Native 1.0
+import Seimio.Data 1.0
 
 WebOSWindow {
     id: app
@@ -39,16 +40,14 @@ WebOSWindow {
     onDisplayItemChanged: prepareShow.restart()
     Timer {
         id: prepareShow; interval: 1200
-        onTriggered: { var show = app.displayItem && catalog.series[app.displayItem.id]; if (show && app.onHome && home.row === 0) showPage.load(app.displayItem, show) }
+        onTriggered: { if (app.displayItem && app.onHome && home.row === 0 && catalog.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id)) }
     }
 
     function open() {
         commit();
         // the title page is for a movie, or a show whose whole run is one season with one episode; any
         // other show gets the show page, even when one of its seasons has a single episode
-        var show = displayItem ? catalog.series[displayItem.id] : null;
-        var episodes = show ? show.seasons.reduce(function (n, s) { return n + s.episodes.length }, 0) : 0;
-        if (episodes > 1) { showPage.open(displayItem, show); layer = "show" }
+        if (displayItem && catalog.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
     function openMenu() { commit(); layer = "menu"; probe.captures() }
@@ -59,7 +58,11 @@ WebOSWindow {
     property bool warming: true
     Timer { running: catalog.continueWatching.length > 0; interval: 600; onTriggered: app.warming = false }
 
-    LabCatalog { id: catalog }
+    // the data, held natively (Seimio.Data); a show's seasons come over to QML once and are kept, so the
+    // show page sees the same object again and needn't rebuild
+    Catalog { id: catalog; base: Qt.resolvedUrl("../art/"); onLoaded: app.shows = ({}) }
+    property var shows: ({})
+    function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     WindowTools { id: tools }
     LabProbe {
         id: probe; window: app
@@ -137,7 +140,7 @@ WebOSWindow {
                 shown: app.onHome
                 holdFocus: app.layer === "menu"
                 continueWatching: catalog.continueWatching
-                calendar: catalog.calendar
+                catalog: catalog
                 glassSource: backdropFrost
                 today: app.today
                 onActivated: app.open()

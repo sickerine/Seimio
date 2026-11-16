@@ -39,6 +39,12 @@ Each rule comes from a measured stall on the C5.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.
 - State has one source: selection is `App.displayItem`, changed only by `commit()`; components take one
   input and apply explicit rules, as `Backdrop` and `HeroInfo` document at their top.
+- Data lives in C++ (`Seimio.Data`, `native/src/catalog.h`), parsed on a worker thread. QML asks for
+  what a screen needs when it needs it (`Catalog.show(id)`, `Catalog.day(key)`) and keeps the answer
+  if identity matters. JavaScript is glue: QML bindings and handlers run in a JS engine whose
+  stop-the-world GC grows with what's alive, and moving the catalog and the calendar's day maths to C++
+  took the calendar tour from 9-14 late frames to 4-7 and removed its random 120 ms stalls. Models for
+  repeated items are C++ `QAbstractListModel`s that signal only the rows that changed.
 - Each item costs a draw call and Qt draws items that are off screen. A screen of repeated composites
   (a month of calendar days, each a stack of cards with chips and text) draws each one into its own
   texture (`layer.enabled`): 460 draw calls became 42 quads and the main pass went from 12-15 ms to 2-3.

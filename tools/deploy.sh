@@ -6,7 +6,7 @@ set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 mkdir -p app/native .lab/ipk .lab/reports
-cp native/out/libseimionative.so native/out/libass.so.9 native/out/qmldir app/native/
+cp native/out/libseimionative.so native/out/libseimiodata.so native/out/libass.so.9 native/out/qmldir app/native/
 [ -f app/art/rows.json ] || { echo "no lab art: run tools/fetch-art.py first"; exit 1; }
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 ver=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['version'])")

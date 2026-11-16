@@ -8,7 +8,7 @@ import Seimio.UI 1.0
 FocusScope {
     id: home
     property var continueWatching: []
-    property var calendar: ({})
+    property var catalog: null               // a Catalog (Seimio.Data), for the calendar
     property Item glassSource                // what the calendar's month bar blurs
     property string today
     property bool shown: true                // false sinks Home away (a page is open)
@@ -69,7 +69,7 @@ FocusScope {
             active: home.row === 1
             y: home.cwHeight
             focus: home.row === 1
-            entries: home.calendar
+            catalog: home.catalog
             glassSource: home.glassSource
             today: home.today
             sceneY: column.y + y

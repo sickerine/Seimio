@@ -19,14 +19,19 @@ import Seimio.UI 1.0
 
 FocusScope {
     id: section
-    property var entries: ({})
+    property var catalog: null               // a Catalog (Seimio.Data): the days' releases
+    // a day's releases, fetched from the catalog once per day and kept, so they stay the same objects
+    // (Home compares the focused release's title by identity) and each move costs no conversion
+    property var dayCache: ({})
+    function releases(k) { if (!catalog) return []; if (!dayCache[k]) dayCache[k] = catalog.day(k); return dayCache[k] }
+    Connections { target: section.catalog; onLoaded: section.dayCache = ({}) }
     property Item glassSource                // what the month bar's glass blurs
     property real sceneY: 0                  // this section's y in glassSource
     property string today                    // "YYYY-MM-DD"
     property bool active: true
     property real entered: active ? 1 : 0    // 0 the peek, 1 the month bar and grid
     Behavior on entered { NumberAnimation { duration: 480; easing.type: Theme.ease } }
-    readonly property var dayEntries: entries[grid.selected] || []
+    readonly property var dayEntries: dayCache && releases(grid.selected)   // re-read when the cache resets
     signal activated(var entry)
     width: Theme.screenWidth
     height: grid.y + grid.height
@@ -56,7 +61,7 @@ FocusScope {
         return e.watched ? "Watched" : away < 0 ? "Out" : away === 0 ? "Today" : away === 1 ? "Tomorrow" : "In " + away + " days";
     }
     function releasesOf(k) {
-        return (entries[k] || []).slice().sort(function (a, b) { return (a.time || "") < (b.time || "") ? -1 : (a.time || "") > (b.time || "") ? 1 : 0 });
+        return releases(k).slice().sort(function (a, b) { return (a.time || "") < (b.time || "") ? -1 : (a.time || "") > (b.time || "") ? 1 : 0 });
     }
     // the nearest day with releases before (dir -1) or after (dir 1) day k, within the calendar's months
     function neighbour(k, dir) {
@@ -65,7 +70,7 @@ FocusScope {
             d.setDate(d.getDate() + dir);
             var n = grid.key(d);
             if (n < grid.first || n > grid.last) return "";
-            if ((entries[n] || []).length) return n;
+            if (catalog.releaseCount(n)) return n;
         }
         return "";
     }
@@ -196,7 +201,7 @@ FocusScope {
                 id: grid
                 x: Theme.margin; y: gridFrame.room * section.entered - gridFrame.peekShift * (1 - section.entered)
                 focus: section.zone === 1
-                entries: section.entries
+                days: section.catalog ? section.catalog.calendar : null
                 today: section.today
                 first: key(section.months[0])
                 last: key(new Date(section.months[3].getFullYear(), section.months[3].getMonth() + 1, 0))
