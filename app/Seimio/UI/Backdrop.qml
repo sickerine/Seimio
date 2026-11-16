@@ -8,18 +8,24 @@
 // - A failed load drops the incoming one and keeps what is shown.
 // `busy` is true from a target change until the screen shows that target, so anything that
 // captures the backdrop (frost) knows when its copy would be stale.
+//
+// Both images are drawn by one opaque shader that crops, zooms, pans and crossfades them, so the
+// backdrop costs one full-screen pass with no blending, even mid-crossfade. `pan` shifts the picture
+// left by that many pixels (parallax).
 import QtQuick 2.12
 
 Item {
     id: root
     property string target
     property size decodeSize: Qt.size(960, 540)
+    property real pan: 0
     property string shown: ""
     property string incoming: ""
     readonly property bool busy: target !== shown
     signal crossfadeStarted()
 
-    property int front: 0                     // which layer is in front
+    property int front: 0                     // which image is on screen; the other one loads and fades in
+    property real fadeIn: 0                   // how far the back image has faded in over the front one
     function img(i) { return i ? l1 : l0 }
     onTargetChanged: apply()
 
@@ -29,7 +35,6 @@ Item {
         incoming = target;
         var back = img(1 - front);
         if (back.url === target && back.status === Image.Ready) { startFade(); return }
-        back.opacity = 0;
         back.url = target;                     // starts a load; loaded() continues from there
     }
     function loaded(i, ok) {
@@ -37,18 +42,12 @@ Item {
         if (!ok) { incoming = ""; return }
         startFade();
     }
-    function startFade() {
-        var back = img(1 - front);
-        back.z = 2; img(front).z = 1;
-        fade.target = back;
-        fade.restart();
-        crossfadeStarted();
-    }
+    function startFade() { fade.restart(); crossfadeStarted() }
     NumberAnimation {
-        id: fade; property: "opacity"; from: 0; to: 1; duration: 700; easing.type: Easing.InOutQuad
+        id: fade; target: root; property: "fadeIn"; from: 0; to: 1; duration: 700; easing.type: Easing.InOutQuad
         onFinished: {
-            root.img(root.front).opacity = 0;   // the old front is fully covered now; stop drawing it
             root.front = 1 - root.front;
+            root.fadeIn = 0;
             root.shown = root.incoming;
             root.incoming = "";
             root.apply();
@@ -56,19 +55,58 @@ Item {
     }
     Image {
         id: l0; property string url
-        anchors.fill: parent; source: url; opacity: 0
-        fillMode: Image.PreserveAspectCrop; asynchronous: true; sourceSize: root.decodeSize
+        source: url; visible: false; asynchronous: true; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(0, status === Image.Ready)
     }
     Image {
         id: l1; property string url
-        anchors.fill: parent; source: url; opacity: 0
-        fillMode: Image.PreserveAspectCrop; asynchronous: true; sourceSize: root.decodeSize
+        source: url; visible: false; asynchronous: true; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(1, status === Image.Ready)
     }
-    SequentialAnimation on scale {
+    property real zoom: 1
+    SequentialAnimation on zoom {
+        running: root.visible
         loops: Animation.Infinite
         NumberAnimation { from: 1.0; to: 1.07; duration: 18000; easing.type: Easing.InOutSine }
         NumberAnimation { from: 1.07; to: 1.0; duration: 18000; easing.type: Easing.InOutSine }
+    }
+
+    ShaderEffect {
+        anchors.fill: parent
+        blending: false
+        property var tex0: l0
+        property var tex1: l1
+        // uv scale for each image's aspect-fill crop
+        property size crop0: root.crop(l0)
+        property size crop1: root.crop(l1)
+        property real front: root.front
+        property real frontOn: root.shown ? 1 : 0
+        property real fadeIn: root.fadeIn
+        property real zoom: root.zoom
+        property real pan: root.pan / root.width
+        fragmentShader: "
+            varying highp vec2 qt_TexCoord0;
+            uniform sampler2D tex0;
+            uniform sampler2D tex1;
+            uniform highp vec2 crop0;
+            uniform highp vec2 crop1;
+            uniform lowp float front;
+            uniform lowp float frontOn;
+            uniform lowp float fadeIn;
+            uniform highp float zoom;
+            uniform highp float pan;
+            void main() {
+                highp vec2 p = (qt_TexCoord0 - 0.5) / zoom + vec2(pan, 0.0);
+                lowp vec3 a = texture2D(tex0, clamp(0.5 + p * crop0, 0.0, 1.0)).rgb;
+                lowp vec3 b = texture2D(tex1, clamp(0.5 + p * crop1, 0.0, 1.0)).rgb;
+                lowp vec3 f = mix(a, b, front);
+                lowp vec3 k = mix(b, a, front);
+                gl_FragColor = vec4(mix(f * frontOn, k, fadeIn), 1.0);
+            }"
+    }
+    function crop(i) {
+        if (i.implicitWidth <= 0 || i.implicitHeight <= 0 || width <= 0 || height <= 0) return Qt.size(1, 1);
+        var r = (i.implicitWidth / i.implicitHeight) / (width / height);
+        return r > 1 ? Qt.size(1 / r, 1) : Qt.size(1, r);
     }
 }

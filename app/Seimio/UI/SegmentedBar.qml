@@ -1,6 +1,7 @@
 // A glass bar of segments (tabs, seasons) walked with Left/Right. The highlight stretches like liquid:
 // its leading edge moves first and the trailing edge follows. It's white while the bar has focus.
-// `model` entries are strings, or { label, icon } for icon-only segments. Other keys pass on to the
+// `model` entries are strings, or { label, icon } for icon-only segments; a new model of the same
+// length relabels the segments in place. Other keys pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 import QtQuick 2.12
 
@@ -41,10 +42,11 @@ FocusScope {
             id: segments
             x: glass.inset; height: parent.height
             Repeater {
-                model: bar.model
+                model: bar.model.length
                 Item {
-                    readonly property string label: typeof modelData === "string" ? modelData : (modelData.label || "")
-                    readonly property string icon: typeof modelData === "string" ? "" : (modelData.icon || "")
+                    readonly property var m: bar.model[index]
+                    readonly property string label: typeof m === "string" ? m : (m && m.label || "")
+                    readonly property string icon: typeof m === "string" ? "" : (m && m.icon || "")
                     readonly property bool current: bar.currentIndex === index
                     readonly property color ink: bar.activeFocus && current ? Theme.inkOnLight : Theme.ink
                     width: icon !== "" ? bar.barHeight : text.implicitWidth + bar.segmentPad

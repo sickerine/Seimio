@@ -7,6 +7,19 @@
 #include <QLoggingCategory>
 #include <time.h>
 
+inline double monoMs() { timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+
+// The lab log: Qt's log output (once LogTap starts) and the probes' own events, each stamped with
+// monoMs(), so a slow frame can be lined up with the key press or GUI stall behind it.
+inline QStringList g_logLines;
+inline QMutex g_logMutex;
+inline bool g_logOn = false;
+inline void labLog(const QString &line) {
+    if (!g_logOn) return;
+    QMutexLocker l(&g_logMutex);
+    g_logLines << QString::number(monoMs(), 'f', 1) + " " + line;
+}
+
 // KeyLatency: for each key press, the time from the key reaching the app (and from the compositor's
 // event timestamp) to the first frame swapped after a scene sync that includes the key's changes.
 class KeyLatency : public QObject {
@@ -35,6 +48,7 @@ public:
         if (e->type() == QEvent::KeyPress) {
             QMutexLocker l(&m_mutex);
             m_pending.append({ double(static_cast<QKeyEvent *>(e)->timestamp()), monoMs(), false });
+            labLog(QString("key %1").arg(static_cast<QKeyEvent *>(e)->key(), 0, 16));
         }
         return false;
     }
@@ -51,7 +65,6 @@ public:
         return s;
     }
 private:
-    static double monoMs() { timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
     struct Pending { double eventTime, arrival; bool synced; };
     QVector<Pending> m_pending;
     QVector<double> m_fromArrival, m_fromEvent;
@@ -70,11 +83,18 @@ public:
         auto w = qobject_cast<QQuickWindow *>(window);
         if (!w) return;
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
-            timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
-            double now = t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+            double now = monoMs();
             QMutexLocker l(&m_mutex);
             if (m_last > 0) m_gaps[m_phase].append(now - m_last);
+            if (m_last > 0 && now - m_last > 20) labLog(QString("late frame %1 ms").arg(now - m_last, 0, 'f', 1));
             m_last = now;
+        }, Qt::DirectConnection);
+        // GUI thread: a long wait between two animation ticks means key handling, JS or item creation
+        // held the GUI thread up
+        connect(w, &QQuickWindow::afterAnimating, this, [this] {
+            double now = monoMs();
+            if (m_lastTick > 0 && now - m_lastTick > 20) labLog(QString("gui stall %1 ms").arg(now - m_lastTick, 0, 'f', 1));
+            m_lastTick = now;
         }, Qt::DirectConnection);
     }
     // { phase: { frames, median, max, late20, late30, short12 } } since the last call
@@ -95,21 +115,20 @@ private:
     mutable QMutex m_mutex;
     QString m_phase = "idle";
     double m_last = 0;
+    double m_lastTick = 0;
     QMap<QString, QVector<double>> m_gaps;
 };
 
 
 // Captures Qt log output in-process (qml-runner sends it to PmLog, which dev mode can't read).
-inline QStringList g_logLines;
-inline QMutex g_logMutex;
 class LogTap : public QObject {
     Q_OBJECT
 public:
     Q_INVOKABLE void start(const QString &rules) {
         QLoggingCategory::setFilterRules(rules);
+        g_logOn = true;
         qInstallMessageHandler([](QtMsgType, const QMessageLogContext &ctx, const QString &msg) {
-            QMutexLocker l(&g_logMutex);
-            g_logLines << QString("%1 %2").arg(ctx.category ? ctx.category : "").arg(msg);
+            labLog(QString("%1 %2").arg(ctx.category ? ctx.category : "").arg(msg));
         });
     }
     Q_INVOKABLE QStringList take() { QMutexLocker l(&g_logMutex); QStringList out = g_logLines; g_logLines.clear(); return out; }

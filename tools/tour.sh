@@ -2,12 +2,12 @@
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
 # phase (render-thread stamps from LabProbe). Routes: home (rows, tabs, sheet), show (a show page),
 # menu (quick actions opening and closing on a timer).
-# usage: tools/tour.sh home|show|menu
+# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|show|menu   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 route=${1:-home}
-mkdir -p .lab/www; [ "$route" = menu ] && echo '{"autopop": true}' > .lab/www/variant.json || echo '{}' > .lab/www/variant.json
+mkdir -p .lab/www; [ "$route" = menu ] && echo '{"autopop": true}' > .lab/www/variant.json || echo "${VARIANT:-"{}"}" > .lab/www/variant.json
 ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null; sleep 5
 N=~/.nvm/versions/node/v22.22.0/bin/node; S=$(date +%H%M%S)
 p() { $N tools/tvremote.mjs press $1 ${2:-1} ${3:-350} 2>&1 | grep -q sent || echo "press $1 failed"; }

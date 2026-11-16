@@ -23,6 +23,24 @@ Up/Down and OK, `SegmentedBar` takes Left/Right. Anything a control doesn't use 
 screen (Up/Down between zones), then to `App`, which handles Back and decides which screen has focus
 (`layer`). Selection state is one value, `displayItem`, changed only through `App.commit()`.
 
+OK goes through `OkPress` in each control and one app-wide gesture in `Remote`, which tells a tap from
+a hold (LG's remote sends a held key as release and press pairs). A hold that opens quick actions keeps
+its owner, so the rest of the hold can't press anything in the menu.
+
+## Performance rules
+
+Measured on the C5 with `tools/tour.sh` (frame pacing per phase) and `VARIANT='{"timing": true}'`,
+which adds stamped key presses, late frames, GUI-thread stalls and Qt's render loop timing.
+
+- The plugin turns off Qt's texture atlas: adding an image to it while the GPU still reads it stalls the
+  driver for 10 to 15 ms.
+- `CardStrip` keeps a fixed pool of cards and hands them new data as the row moves, so moving or
+  swapping a model never creates items. Repeaters key on the model's length for the same reason.
+- Hidden screens don't bind to the selection. The show page is built ahead of time while Home is idle
+  (`ShowScreen.load`), and its episode row changes only through `showSeason()`.
+- Full-screen layers are single shaders: `Backdrop` crossfades both images in one opaque pass.
+- Icons are distance-field shaders, not Canvas: no painting or texture upload per icon.
+
 ## Building and running
 
 1. `tools/fetch-tv-libs.sh` copies the TV's Qt and LG libraries into `tvlibs/` (dev mode, SSH key at `~/.ssh/tv_key`).

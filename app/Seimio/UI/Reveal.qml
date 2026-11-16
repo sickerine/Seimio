@@ -1,6 +1,7 @@
 // Fades and slides its content in each time `shown` turns true, after `delay` ms, so groups of items can
-// arrive one after another. Turning `shown` off hides it at once. A Reveal created with `shown` already
-// true plays its entrance once.
+// arrive one after another. Turning `shown` off leaves it as it is, so it leaves with its container;
+// the next entrance starts from hidden. A Reveal created with `shown` already true plays its entrance
+// once.
 import QtQuick 2.12
 
 Item {
@@ -17,7 +18,7 @@ Item {
     transform: Translate { x: (1 - reveal.t) * reveal.dx; y: (1 - reveal.t) * reveal.dy }
 
     function play() { t = 0; anim.restart() }
-    onShownChanged: if (shown) play(); else { anim.stop(); t = 0 }
+    onShownChanged: if (shown) play(); else anim.stop()
     Component.onCompleted: if (shown) play()
     SequentialAnimation {
         id: anim

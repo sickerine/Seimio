@@ -132,6 +132,8 @@ Item {
                 id: fill; height: parent.height; radius: 3; color: "white"
                 width: 0
                 Component.onCompleted: fillAnim.start()
+                // a card a strip reuses for another title fills in again
+                Connections { target: card; onProgressChanged: { fill.width = 0; fillAnim.restart() } }
                 NumberAnimation { id: fillAnim; target: fill; property: "width"; to: Math.max(6, fill.parent.width * Math.min(100, card.progress) / 100); duration: 900; easing.type: Easing.OutCubic }
             }
         }

@@ -50,11 +50,7 @@ Item {
             y: 206; spacing: 10
             Chip { visible: !!(info.m && info.m.episode); kind: "solid"; icon: "play"; text: info.m && info.m.episode ? info.m.episode : "" }
             Chip { visible: !!(info.m && info.m.rating); kind: "rating"; icon: "star"; text: info.m ? info.m.rating : "" }
-            Repeater {
-                model: info.m ? info.m.chips : []
-                // chips arrive one after another
-                Reveal { delay: 60 + index * 50; dy: 0; duration: 260; Chip { text: modelData } }
-            }
+            ChipRow { model: info.m ? info.m.chips : []; stagger: 50 }
         }
         Text {
             y: 272; width: 780; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight

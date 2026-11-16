@@ -23,16 +23,17 @@ FocusScope {
     Column {
         spacing: menu.rowSpacing
         Repeater {
-            model: menu.model
+            model: menu.model.length
             Reveal {
+                readonly property var m: menu.model[index] || {}
                 shown: menu.shown
                 delay: 60 + index * 55
                 dx: -18; dy: 0; duration: 300
                 width: menu.width; height: menu.rowHeight
-                Icon { name: modelData.icon || ""; visible: !!modelData.icon; x: 24; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: parent.m.icon || ""; visible: !!parent.m.icon; x: 24; anchors.verticalCenter: parent.verticalCenter }
                 Text {
-                    x: modelData.icon ? 68 : 24; anchors.verticalCenter: parent.verticalCenter
-                    text: modelData.label; color: Theme.ink
+                    x: parent.m.icon ? 68 : 24; anchors.verticalCenter: parent.verticalCenter
+                    text: parent.m.label || ""; color: Theme.ink
                     font.family: Theme.face; font.pixelSize: 27; font.weight: Font.Medium
                 }
             }
@@ -40,5 +41,6 @@ FocusScope {
     }
     Keys.onUpPressed: if (currentIndex > 0) currentIndex--
     Keys.onDownPressed: if (currentIndex < model.length - 1) currentIndex++
-    Keys.onPressed: if (Remote.isOk(event.key)) { event.accepted = true; if (!event.isAutoRepeat) triggered(currentIndex) }
+    OkPress { id: ok; onTapped: menu.triggered(menu.currentIndex) }
+    Keys.forwardTo: [ok]
 }

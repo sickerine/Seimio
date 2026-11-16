@@ -1,14 +1,17 @@
 // A show's page: title, actions (resume with progress, library, watched), seasons and episodes, with
-// details of the focused episode. Inputs: `item` (the title) and `show` (its seasons and episodes with
-// watch state). The zones are library controls that handle their own keys; this page moves focus
-// between them with Up/Down. The episode row shows `shownSeason`, which follows the season bar through
-// a short slide, so a season change never flashes the old episodes at the new position.
+// details of the focused episode. load(item, show) builds the page for a title and its seasons and
+// episodes with watch state, at its resume position; App calls it ahead of time while Home sits on a
+// show, so open(item, show) usually only resets focus. The page keeps its title until the next load,
+// so it still shows it while it fades out. The zones are library controls
+// that handle their own keys; this page moves focus between them with Up/Down. The episode row shows
+// `shownSeason`, which follows the season bar through a short slide, so a season change never flashes
+// the old episodes at the new position.
 import QtQuick 2.12
 import Seimio.UI 1.0
 
 FocusScope {
     id: page
-    property var item: null
+    property var item: null             // set by load()
     property var show: null
     property bool active: false
     property Item source                // what the glass blurs (the backdrop)
@@ -16,18 +19,25 @@ FocusScope {
 
     readonly property var seasons: show ? show.seasons : []
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
+    // the season the episode row shows and its card data, set together by showSeason(), so the row is
+    // built once per change instead of once per binding that moves
     property int shownSeason: 0
-    readonly property var episodes: seasons.length ? seasons[shownSeason].episodes : []
+    property var episodes: []
+    property var episodeData: []
     readonly property string today: new Date().toISOString().slice(0, 10)
-    // card data for the strip, built once per season instead of in every delegate binding
-    readonly property var episodeData: episodes.map(function (e) {
-        return {
-            art: e.thumb, episode: "E" + e.episode,
-            progress: e.progress > 0 ? e.progress : -1,
-            watched: e.watched && !(e.progress > 0),
-            upcoming: e.released > today ? new Date(e.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM") : ""
-        };
-    })
+    function showSeason(s, e) {
+        shownSeason = s;
+        episodes = seasons.length ? seasons[s].episodes : [];
+        episodeData = episodes.map(function (ep) {
+            return {
+                art: ep.thumb, episode: "E" + ep.episode,
+                progress: ep.progress > 0 ? ep.progress : -1,
+                watched: ep.watched && !(ep.progress > 0),
+                upcoming: ep.released > today ? new Date(ep.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM") : ""
+            };
+        });
+        strip.jumpTo(e);
+    }
 
     // where you are in the show: the episode Stremio has as current, else the first unwatched
     function currentPos() {
@@ -46,10 +56,17 @@ FocusScope {
         ? (resumeEp.progress > 0 ? "Resume " : "Play ") + (seasons.length > 1 ? "S" + seasons[resumePos.s].season + " " : "") + "E" + resumeEp.episode
         : "Play"
 
-    function open() {
+    function load(title, seasonsAndEpisodes) {
+        if (title === item && seasonsAndEpisodes === show) return;
+        item = title; show = seasonsAndEpisodes;
+        seasonBar.currentIndex = resumePos.s;
+        showSeason(resumePos.s, resumePos.e);
+    }
+    function open(title, seasonsAndEpisodes) {
+        load(title, seasonsAndEpisodes);
         zone = 0; actions.currentIndex = 0;
-        seasonBar.currentIndex = resumePos.s; shownSeason = resumePos.s;
-        strip.jumpTo(resumePos.e);
+        seasonBar.currentIndex = resumePos.s;
+        if (shownSeason !== resumePos.s) showSeason(resumePos.s, resumePos.e); else strip.jumpTo(resumePos.e);
     }
 
     // season change: slide the old episodes out, swap, slide the new ones in from the side moved toward
@@ -64,8 +81,7 @@ FocusScope {
         }
         ScriptAction {
             script: {
-                page.shownSeason = seasonBar.currentIndex;
-                strip.jumpTo(page.shownSeason === page.resumePos.s ? page.resumePos.e : 0);
+                page.showSeason(seasonBar.currentIndex, seasonBar.currentIndex === page.resumePos.s ? page.resumePos.e : 0);
                 page.rowShift = 60 * seasonBar.moveDir;
             }
         }
@@ -87,7 +103,7 @@ FocusScope {
         TitleArt { width: 560; height: 150; nameSize: 64; logo: page.item && page.item.logo ? page.item.logo : ""; name: page.item ? page.item.name : "" }
         Row {
             y: 172; spacing: 10
-            Repeater { model: page.show ? [page.show.year].concat(page.show.genres).filter(function (x) { return x }) : []; Chip { text: modelData; size: 21 } }
+            ChipRow { model: page.show ? [page.show.year].concat(page.show.genres).filter(function (x) { return x }) : []; size: 21 }
             Chip { visible: !!(page.show && page.show.rating); kind: "rating"; icon: "star"; text: page.show ? page.show.rating : ""; size: 21 }
             Chip { visible: page.seasons.length > 0; text: page.seasons.length + (page.seasons.length === 1 ? " season" : " seasons"); size: 21 }
         }
@@ -151,12 +167,9 @@ FocusScope {
                     text: epInfo.ep ? epInfo.ep.episode + "   " + (epInfo.ep.title || "Episode " + epInfo.ep.episode) : ""
                     color: Theme.ink; font.family: Theme.face; font.pixelSize: 30; font.weight: Font.DemiBold
                 }
-                Row {
-                    y: 48; spacing: 10
-                    Repeater {
-                        model: epInfo.ep ? [epInfo.ep.runtime, epInfo.ep.released ? new Date(epInfo.ep.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM yyyy") : ""].filter(function (s) { return s }) : []
-                        Chip { text: modelData; size: 19 }
-                    }
+                ChipRow {
+                    y: 48; size: 19
+                    model: epInfo.ep ? [epInfo.ep.runtime, epInfo.ep.released ? new Date(epInfo.ep.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM yyyy") : ""].filter(function (s) { return s }) : []
                 }
                 Text {
                     y: 96; width: 1000; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight

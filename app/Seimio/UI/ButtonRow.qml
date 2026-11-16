@@ -1,5 +1,6 @@
 // A row of Buttons walked with Left/Right; OK triggers the focused one. Other keys (Up, Down, Back)
-// pass on to the parent. `model` entries are { label, icon, round, primary, progress }.
+// pass on to the parent. `model` entries are { label, icon, round, primary, progress }; a new model of
+// the same length updates the buttons in place.
 import QtQuick 2.12
 
 FocusScope {
@@ -15,18 +16,20 @@ FocusScope {
         id: buttons
         spacing: row.spacing
         Repeater {
-            model: row.model
+            model: row.model.length
             Button {
-                label: modelData.label || ""
-                icon: modelData.icon || ""
-                round: !!modelData.round
-                primary: !!modelData.primary
-                progress: modelData.progress === undefined ? -1 : modelData.progress
+                readonly property var b: row.model[index] || {}
+                label: b.label || ""
+                icon: b.icon || ""
+                round: !!b.round
+                primary: !!b.primary
+                progress: b.progress === undefined ? -1 : b.progress
                 focused: row.activeFocus && row.currentIndex === index
             }
         }
     }
     Keys.onLeftPressed: if (currentIndex > 0) currentIndex--
     Keys.onRightPressed: if (currentIndex < model.length - 1) currentIndex++
-    Keys.onPressed: if (Remote.isOk(event.key)) { event.accepted = true; if (!event.isAutoRepeat) triggered(currentIndex) }
+    OkPress { id: ok; onTapped: row.triggered(row.currentIndex) }
+    Keys.forwardTo: [ok]
 }

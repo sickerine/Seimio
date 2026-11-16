@@ -27,10 +27,18 @@ WebOSWindow {
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
     onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures() }
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
+    // the show page for the selected title is built once Home has been still for a moment (after the
+    // backdrop and info have changed), so opening it costs nothing
+    onDisplayItemChanged: prepareShow.restart()
+    Timer {
+        id: prepareShow; interval: 1200
+        onTriggered: { var show = app.displayItem && catalog.series[app.displayItem.id]; if (show && app.onHome) showPage.load(app.displayItem, show) }
+    }
 
     function open() {
         commit();
-        if (displayItem && catalog.series[displayItem.id]) { showPage.open(); layer = "show" }
+        var show = displayItem ? catalog.series[displayItem.id] : null;
+        if (show) { showPage.open(displayItem, show); layer = "show" }
         else layer = "sheet";
     }
     function openMenu() { commit(); layer = "menu"; probe.captures() }
@@ -64,8 +72,8 @@ WebOSWindow {
                 width: parent.width; height: parent.height
                 target: app.displayItem ? app.displayItem.backdrop : ""
                 // parallax: the backdrop drifts a little against moves along a row
-                x: app.onHome ? -Math.min(8, home.cols[home.row] || 0) * 5 : 0
-                Behavior on x { NumberAnimation { duration: 700; easing.type: Theme.ease } }
+                pan: app.onHome ? Math.min(8, home.cols[home.row] || 0) * 5 : 0
+                Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
                 onCrossfadeStarted: probe.act("hero crossfade")
             }
             Frost {
@@ -97,8 +105,6 @@ WebOSWindow {
                 id: showPage
                 focus: app.layer === "show"
                 active: app.layer === "show"
-                item: app.displayItem
-                show: app.displayItem ? catalog.series[app.displayItem.id] || null : null
                 source: hero
                 onZoneChanged: probe.act("show " + ["actions", "seasons", "episodes"][zone])
             }
@@ -107,6 +113,7 @@ WebOSWindow {
                 width: parent.width; height: parent.height
                 focus: app.layer === "home"
                 shown: app.onHome
+                holdFocus: app.layer === "menu"
                 rows: catalog.rows
                 onActivated: app.open()
                 onHeld: app.openMenu()

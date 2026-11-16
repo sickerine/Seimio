@@ -1,9 +1,39 @@
-// What the LG remote's keys mean.
+// What the LG remote's keys mean, and the app's one OK gesture.
 pragma Singleton
 import QtQuick 2.12
 
 QtObject {
+    id: remote
     // LG's remote sends its own code for Back (0x1200003); Escape and Back cover keyboards and the Mac
     function isBack(k) { return k === Qt.Key_Escape || k === Qt.Key_Back || k === 0x1200003 }
     function isOk(k) { return k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Select }
+
+    // OK tap or hold (Apple TV's long press). LG's remote doesn't auto-repeat a held key the usual way:
+    // it sends release and press pairs about 40 ms apart. So a hold is timed (500 ms from the press),
+    // and a release followed by a press within 90 ms is the same hold. There is one gesture at a time,
+    // owned by the OkPress that saw its first press. A hold that moves focus (opening quick actions)
+    // keeps its owner: the rest of the hold reaches the new focus only to continue the gesture, so it
+    // can't press anything there.
+    property QtObject owner: null
+    property bool fired: false
+    property Timer holdTimer: Timer {
+        interval: 500
+        onTriggered: { remote.fired = true; if (remote.owner) remote.owner.held() }
+    }
+    property Timer releaseTimer: Timer {
+        interval: 90
+        onTriggered: {
+            remote.holdTimer.stop();
+            var o = remote.owner;
+            remote.owner = null;
+            if (o && !remote.fired) o.tapped();
+        }
+    }
+    function okPress(who, event) {
+        if (event.isAutoRepeat) return;
+        if (releaseTimer.running) { releaseTimer.stop(); return }     // a repeat pair: still holding
+        if (owner) return;
+        owner = who; fired = false; holdTimer.restart();
+    }
+    function okRelease(event) { if (!event.isAutoRepeat && owner) releaseTimer.restart() }
 }

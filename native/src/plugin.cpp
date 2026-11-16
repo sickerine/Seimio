@@ -12,8 +12,12 @@
 // qml-runner gets Qt's single-threaded "basic" render loop on webOS: key handling, JS, animation and
 // rendering share one thread, and animations tick on a timer instead of vsync. The plugin loads before
 // the first window exists, so it can ask for the threaded loop here.
-static const int g_renderLoop = [] {
+// It also turns off the texture atlas. Adding an image to the shared atlas while the GPU still reads
+// it from the last frame stalls the TV's driver for 10-15 ms (measured on the C5), and every card
+// and backdrop image is sampled by a shader, which copies it back out of the atlas anyway.
+static const int g_env = [] {
     if (qEnvironmentVariableIsEmpty("QSG_RENDER_LOOP")) qputenv("QSG_RENDER_LOOP", "threaded");
+    if (qEnvironmentVariableIsEmpty("QSG_ATLAS_SIZE_LIMIT")) qputenv("QSG_ATLAS_SIZE_LIMIT", "1");
     return 0;
 }();
 
