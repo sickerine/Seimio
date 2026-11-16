@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Glass bench</title>
+<style>
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #000; font: 600 28px sans-serif; color: #fff; }
+  .bg { position: absolute; inset: -60px; background-size: cover; background-position: center; }
+  .bg.b { opacity: 0; }
+  .rows { position: absolute; left: 0; top: 220px; right: 0; }
+  .row { display: flex; gap: 32px; padding: 0 96px; margin-bottom: 48px; will-change: transform; }
+  .row.moving { animation: slide 2.4s ease-in-out infinite alternate; }
+  .tile { position: relative; flex: none; width: 259px; height: 384px; border-radius: 18px; overflow: hidden; background: #222 center / cover; }
+  .tile .chip { display: none; position: absolute; left: 12px; right: 12px; bottom: 12px; height: 56px; border-radius: 14px; }
+  .focus { animation: focus 0.9s ease-in-out infinite alternate; z-index: 2; }
+  .glass-top, .glass-side { display: none; position: absolute; z-index: 5; background: rgba(255, 255, 255, 0.10); }
+  .glass-top { left: 0; right: 0; top: 0; height: 150px; }
+  .glass-side { left: 0; top: 0; bottom: 0; width: 560px; }
+  #label { position: absolute; right: 40px; top: 40px; z-index: 9; padding: 10px 18px; border-radius: 12px; background: rgba(0, 0, 0, 0.7); }
+  @keyframes slide { from { transform: translateX(0); } to { transform: translateX(-1100px); } }
+  @keyframes focus { from { transform: scale(1); } to { transform: scale(1.12); } }
+  @keyframes tilt { from { transform: perspective(900px) rotateX(6deg) rotateY(-8deg) scale(1.1); } to { transform: perspective(900px) rotateX(-6deg) rotateY(8deg) scale(1.1); } }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+  body.top .glass-top { display: block; backdrop-filter: blur(30px) saturate(1.6); }
+  body.side .glass-side { display: block; backdrop-filter: blur(40px) saturate(1.6); }
+  body.side.small .glass-side { backdrop-filter: blur(12px) saturate(1.6); }
+  body.chips .tile .chip { display: block; backdrop-filter: blur(20px); background: rgba(255, 255, 255, 0.12); }
+  body.shadow .focus { box-shadow: 0 30px 70px rgba(0, 0, 0, 0.7), 0 0 0 4px rgba(255, 255, 255, 0.9); }
+  body.tilt .focus { animation: tilt 0.9s ease-in-out infinite alternate; }
+  body.herobg .bg { filter: blur(40px) brightness(0.6); }
+  .fake { display: none; position: absolute; z-index: 5; overflow: hidden; }
+  .fake .copy { position: absolute; left: -60px; top: -60px; width: 2040px; height: 1200px; background-size: cover; background-position: center; filter: blur(40px) saturate(1.6) brightness(0.8); will-change: transform; }
+  .fake::after { content: ''; position: absolute; inset: 0; background: rgba(255, 255, 255, 0.10); }
+  .fake.side { left: 0; top: 0; bottom: 0; width: 560px; }
+  .fake.topbar { left: 0; right: 0; top: 0; height: 150px; }
+  body.fakeside .fake.side, body.faketop .fake.topbar { display: block; }
+  .baked { display: none; position: absolute; z-index: 5; overflow: hidden; }
+  .baked canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  .baked::after { content: ''; position: absolute; inset: 0; background: rgba(255, 255, 255, 0.10); }
+  .baked.side { left: 0; top: 0; bottom: 0; width: 560px; }
+  .baked.topbar { left: 0; right: 0; top: 0; height: 150px; }
+  body.baked-on .baked { display: block; }
+  body.herobg .bg.b { animation: fade 1.2s ease-in-out infinite alternate; }
+</style>
+<script src="art.js"></script>
+</head>
+<body>
+<div class="bg a"></div><div class="bg b"></div>
+<div class="glass-top"></div><div class="glass-side"></div><div class="fake side"><div class="copy"></div></div><div class="fake topbar"><div class="copy"></div></div>
+<div class="baked side"></div><div class="baked topbar"></div>
+<div class="rows"></div>
+<div id="label">loading</div>
+<script>
+var art = window.ART;
+var bgs = (art.bg.length ? art.bg : art.posters).slice(0, 2);
+document.querySelector('.bg.a').style.backgroundImage = 'url(' + bgs[0] + ')';
+document.querySelectorAll('.fake .copy').forEach(function (c) { c.style.backgroundImage = 'url(' + bgs[0] + ')'; });
+document.querySelector('.bg.b').style.backgroundImage = 'url(' + (bgs[1] || bgs[0]) + ')';
+var rows = document.querySelector('.rows');
+for (var r = 0; r < 3; r++) {
+  var row = document.createElement('div'); row.className = 'row' + (r === 0 ? ' moving' : '');
+  for (var i = 0; i < 12; i++) {
+    var t = document.createElement('div'); t.className = 'tile' + (r === 1 && i === 2 ? ' focus' : '');
+    t.style.backgroundImage = 'url(' + art.posters[(r * 12 + i) % art.posters.length] + ')';
+    t.appendChild(Object.assign(document.createElement('div'), { className: 'chip' }));
+    row.appendChild(t);
+  }
+  rows.appendChild(row);
+}
+var scenarios = [
+  ['baseline: moving row + focus scale', ''],
+  ['fake glass side panel (pre-blurred copy)', 'fakeside'],
+  ['fake glass top + side', 'fakeside faketop'],
+  ['live glass side panel, blur 12', 'side small'],
+  ['glass top bar (blur 30)', 'top'],
+  ['glass side panel (blur 40)', 'side'],
+  ['36 glass chips on posters (blur 20)', 'chips'],
+  ['focus shadow + ring', 'shadow'],
+  ['3D tilt on focus', 'tilt'],
+  ['blurred hero background crossfade', 'herobg'],
+  ['Apple TV style: top + side + shadow + tilt + hero', 'top side shadow tilt herobg'],
+  ['Apple TV style with fake glass', 'faketop fakeside shadow tilt herobg'],
+  ['baked glass top + side', 'baked-on'],
+  ['Apple TV style with baked glass', 'baked-on shadow tilt herobg'],
+];
+function measure(ms) {
+  return new Promise(function (done) {
+    var f = [], last = 0, start = 0;
+    function tick(t) { if (!start) { start = last = t; } else { f.push(t - last); last = t; }
+      if (t - start < ms) requestAnimationFrame(tick); else done(f); }
+    requestAnimationFrame(tick);
+  });
+}
+// Bake the blur once: draw the background small with a blur, then let CSS stretch the canvas.
+var bakeImg = new Image();
+bakeImg.onload = function () {
+  document.querySelectorAll('.baked').forEach(function (panel) {
+    var c = document.createElement('canvas'); c.width = 240; c.height = 135;
+    var x = c.getContext('2d'); x.filter = 'blur(5px) saturate(1.6) brightness(0.8)';
+    x.drawImage(bakeImg, -12, -12, 264, 159);
+    panel.appendChild(c);
+  });
+};
+bakeImg.src = bgs[0];
+window.__bench = [];
+(async function () {
+  await new Promise(function (r) { setTimeout(r, 4000); });   // let posters load
+  for (var s of scenarios) {
+    document.body.className = s[1];
+    document.getElementById('label').textContent = s[0];
+    await measure(1000);                                         // settle
+    var f = await measure(5000);
+    var sorted = f.slice().sort(function (a, b) { return a - b; });
+    window.__bench.push({ name: s[0], fps: +(f.length / (f.reduce(function (a, b) { return a + b; }, 0) / 1000)).toFixed(1),
+      p90: +sorted[Math.floor(sorted.length * 0.9)].toFixed(1), over33: f.filter(function (x) { return x > 33.4; }).length, frames: f.length });
+  }
+  document.getElementById('label').textContent = 'done';
+  window.__benchDone = true;
+})();
+</script>
+</body>
+</html>

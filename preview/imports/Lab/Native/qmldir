@@ -1,0 +1,6 @@
+module Lab.Native
+KeyLatency 1.0 Stub.qml
+FrameStats 1.0 FrameStats.qml
+LogTap 1.0 Stub.qml
+WindowTools 1.0 WindowTools.qml
+LunaClient 1.0 LunaClient.qml

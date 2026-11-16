@@ -1,0 +1,43 @@
+// Native player test: load @URL@ into LG's media server through our plugin, play, seek, switch audio.
+import QtQuick 2.12
+import Eos.Window 0.1
+import Lab.Native 1.0
+
+WebOSWindow {
+    id: win
+    appId: "lab.luna.qml"
+    visible: true
+    width: 1920; height: 1080
+    color: "transparent"
+    property var events: []
+    property double t0: Date.now()
+    function note(s) { events.push(((Date.now() - t0) / 1000).toFixed(2) + " " + s); info.text = s.slice(0, 100) }
+    function post() { var x = new XMLHttpRequest(); x.open("POST", "http://192.168.1.47:8091/luna"); x.send(JSON.stringify(events)); events = [] }
+    NativePlayer {
+        id: player
+        onWindowIdChanged: {
+            note("windowId " + windowId);
+            note("load -> " + player.load("@URL@", JSON.stringify({ option: { appId: "lab.luna.qml", windowId: windowId } })));
+            step.start();
+        }
+        property int ct: 0
+        onEvent: { if (json.indexOf("bufferRange") >= 0) return; if (json.indexOf("\"error\"") >= 0) player.unload(); if (json.indexOf("currentTime") >= 0 && (ct++ % 10)) return; note("event " + json.slice(0, 1500)) }
+    }
+    property int n: 0
+    Timer {
+        id: step; interval: 2000; repeat: true
+        onTriggered: {
+            n++;
+            if (n === 2) note("play -> " + player.play());
+            
+            
+            
+            
+            post();
+            if (n >= 12) stop();
+        }
+    }
+    Component.onCompleted: { player.setEventSlot(48); ex.start() }
+    Timer { id: ex; interval: 300; onTriggered: { note("export: " + (player.exportWindow(win) || "ok")); post() } }
+    Text { id: info; x: 60; y: 60; width: 1800; wrapMode: Text.WrapAnywhere; color: "white"; font.pixelSize: 30; style: Text.Outline; text: "starting" }
+}

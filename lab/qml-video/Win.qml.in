@@ -1,0 +1,64 @@
+// Video lab: plays a stream through QtMultimedia (LG's uMediaServer backend) with an animated
+// overlay on top, and posts the player state plus overlay frame gaps to the Mac every 3 s.
+import QtQuick 2.12
+import QtQuick.Window 2.12
+import QtMultimedia 5.12
+import Eos.Window 0.1
+
+WebOSWindow {
+    id: win
+    appId: "lab.video.qml"
+    visible: true
+    width: 1920; height: 1080
+    color: "transparent"
+
+    property string report: "http://192.168.1.47:8091/video"
+    property var gaps: []
+    property double last: 0
+    property var log: []
+    property double t0: Date.now()
+
+    onFrameSwapped: { var t = Date.now(); if (last > 0) gaps.push(t - last); last = t }
+
+    Video {
+        id: video
+        anchors.fill: parent
+        source: "@URL@"
+        autoPlay: true
+        onStatusChanged: note("status " + status)
+        onErrorChanged: note("error " + error + " " + errorString)
+        onPlaybackStateChanged: note("playback " + playbackState)
+        onDurationChanged: note("duration " + duration)
+        onSeekableChanged: note("seekable " + seekable)
+    }
+    function note(s) { log.push(((Date.now() - t0) / 1000).toFixed(2) + " " + s) }
+
+    // overlay: posters sliding along the bottom over the playing video
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 360; color: "#99000000" }
+    Row {
+        y: 760; spacing: 30
+        Repeater { model: 14; Image { source: "poster.jpg"; width: 180; height: 270 } }
+        SequentialAnimation on x {
+            loops: Animation.Infinite
+            NumberAnimation { from: 60; to: -800; duration: 1500; easing.type: Easing.InOutCubic }
+            NumberAnimation { from: -800; to: 60; duration: 1500; easing.type: Easing.InOutCubic }
+        }
+    }
+    Text { id: info; x: 60; y: 60; color: "white"; font.pixelSize: 36; style: Text.Outline
+           text: "pos " + (video.position / 1000).toFixed(1) + " / " + (video.duration / 1000).toFixed(0) + "  status " + video.status }
+
+    property int sent: 0
+    Timer {
+        interval: 3000; repeat: true; running: true
+        onTriggered: {
+            var x = new XMLHttpRequest();
+            x.open("POST", report);
+            x.send(JSON.stringify({ t: (Date.now() - t0) / 1000, position: video.position, duration: video.duration, status: video.status,
+                                    playback: video.playbackState, error: video.errorString, hasVideo: video.hasVideo, hasAudio: video.hasAudio,
+                                    meta: { res: String(video.metaData.resolution), codec: String(video.metaData.videoCodec) }, log: log, gaps: gaps }));
+            gaps = []; log = [];
+            if (++sent >= 10) stop();
+        }
+    }
+    Component.onCompleted: { video.seek(150000) }
+}

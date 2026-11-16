@@ -1,0 +1,9 @@
+{
+  "id": "lab.video.qml",
+  "version": "0.0.3",
+  "vendor": "lab",
+  "type": "qml",
+  "main": "main.qml",
+  "title": "Video QML",
+  "icon": "icon.png"
+}

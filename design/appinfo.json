@@ -1,0 +1,1 @@
+{ "id": "lab.design.qml", "version": "0.0.32", "vendor": "lab", "type": "qml", "main": "main.qml", "title": "Design lab", "icon": "icon.png" }

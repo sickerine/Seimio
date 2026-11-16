@@ -1,0 +1,9 @@
+{
+  "id": "lab.motion.qml",
+  "version": "0.0.5",
+  "vendor": "lab",
+  "type": "qml",
+  "main": "main.qml",
+  "title": "Motion QML",
+  "icon": "icon.png"
+}

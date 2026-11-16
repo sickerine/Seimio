@@ -1,0 +1,11 @@
+# downloaded or generated
+design/art/
+native/out/
+native/qt512/
+native/plugin/plugin.moc
+tvlibs/
+core/target/
+libass/build/
+libass/out/
+tools/.tv-client-key
+.DS_Store
