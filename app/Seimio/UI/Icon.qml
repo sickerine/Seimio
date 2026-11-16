@@ -1,4 +1,4 @@
-// Small vector icons: play, plus, check, search, info, star. Each is a distance field drawn by one
+// Small vector icons: play, plus, check, search, info, star, up, down. Each is a distance field drawn by one
 // shader, so an icon costs no painting, no texture and no upload when it's created or recoloured,
 // and stays sharp at any size or scale. `inkLeft`/`inkRight` are where the drawn shape starts and ends
 // in pixels, so a control can pad an icon by what you see rather than by its box.
@@ -8,9 +8,9 @@ ShaderEffect {
     property string name
     property color color: "white"
     width: 28; height: 28
-    property real kind: ["play", "plus", "check", "search", "info", "star"].indexOf(name)
+    property real kind: ["play", "plus", "check", "search", "info", "star", "up", "down"].indexOf(name)
     property real px: 1 / Math.max(1, width)        // one pixel in icon units, for antialiasing
-    readonly property var ink: [[0.28, 0.84], [0.125, 0.875], [0.145, 0.875], [0.145, 0.895], [0.085, 0.915], [0.063, 0.937]][kind] || [0, 1]
+    readonly property var ink: [[0.28, 0.84], [0.125, 0.875], [0.145, 0.875], [0.145, 0.895], [0.085, 0.915], [0.063, 0.937], [0.205, 0.795], [0.205, 0.795]][kind] || [0, 1]
     readonly property real inkLeft: ink[0] * width
     readonly property real inkRight: ink[1] * width
     fragmentShader: "
@@ -58,7 +58,11 @@ ShaderEffect {
             else if (kind < 3.5) d = min(abs(length(p - vec2(0.44)) - 0.24), seg(p, vec2(0.62), vec2(0.84))) - t;
             else if (kind < 4.5) d = min(min(abs(length(p - vec2(0.5)) - 0.36), seg(p, vec2(0.5, 0.46), vec2(0.5, 0.68))) - t,
                                          length(p - vec2(0.5, 0.32)) - 0.06);
-            else d = star(vec2(p.x - 0.5, 0.5 - p.y), 0.46, 0.2 / 0.46);
+            else if (kind < 5.5) d = star(vec2(p.x - 0.5, 0.5 - p.y), 0.46, 0.2 / 0.46);
+            else {
+                if (kind > 6.5) p.y = 1.0 - p.y;         // down is up upside down
+                d = min(seg(p, vec2(0.5, 0.82), vec2(0.5, 0.2)), min(seg(p, vec2(0.26, 0.44), vec2(0.5, 0.2)), seg(p, vec2(0.74, 0.44), vec2(0.5, 0.2)))) - t;
+            }
             gl_FragColor = color * clamp(0.5 - d / px, 0.0, 1.0) * qt_Opacity;
         }"
 }

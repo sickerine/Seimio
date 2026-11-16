@@ -18,6 +18,7 @@ FocusScope {
     width: Theme.screenWidth; height: Theme.screenHeight
 
     readonly property var seasons: show ? show.seasons : []
+    signal play()
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
     // the season the episode row shows and its card data, set together by showSeason(), so the row is
     // built once per change instead of once per binding that moves
@@ -123,6 +124,7 @@ FocusScope {
         ButtonRow {
             id: actions
             focus: page.zone === 0
+            onTriggered: if (buttonIndex === 0) page.play()
             model: [
                 { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 },
                 { label: "Add to library", icon: "plus", round: true },

@@ -4,3 +4,4 @@ FrameStats 1.0 FrameStats.qml
 LogTap 1.0 Stub.qml
 WindowTools 1.0 WindowTools.qml
 LunaClient 1.0 LunaClient.qml
+NativePlayer 1.0 NativePlayer.qml

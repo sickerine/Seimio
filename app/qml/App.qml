@@ -1,5 +1,5 @@
 // The app window. State lives here and nowhere else:
-//   layer        which screen has the remote: home | tabs | show | title | menu
+//   layer        which screen has the remote: home | tabs | show | title | menu | streams | player
 //   focusItem    the title the remote is on (from Home), changes instantly
 //   displayItem  the one title the backdrop, info and the title pages render; it changes only through
 //                commit(). Moving focus commits once it settles, so key presses stay light; opening
@@ -19,7 +19,7 @@ WebOSWindow {
     keyMask: WebOSWindow.KeyMaskBack | WebOSWindow.KeyMaskInfo | WebOSWindow.KeyMaskOk | WebOSWindow.KeyMaskLeft | WebOSWindow.KeyMaskRight | WebOSWindow.KeyMaskUp | WebOSWindow.KeyMaskDown | WebOSWindow.KeyMaskDefault
     visible: true
     width: Theme.screenWidth; height: Theme.screenHeight
-    color: "black"
+    color: watching ? "transparent" : "black"
 
     property string layer: "home"
     // today's date ("YYYY-MM-DD"), checked every minute so the calendar moves on at midnight; previews
@@ -50,8 +50,13 @@ WebOSWindow {
         if (displayItem && catalog.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
+    // MOCK: the stream picker and player, on lab data (app/art/streams.json, tools/fetch-streams.mjs)
+    property var streamData: ({})
+    property string pageLayer: "title"          // the page the picker returns to
+    function openStreams() { pageLayer = layer; streamPage.open(displayItem, streamData[displayItem.id]); layer = "streams" }
+    readonly property bool watching: layer === "player" && player.playing
     function openMenu() { commit(); layer = "menu"; probe.captures() }
-    onLayerChanged: probe.act(layer)
+    onLayerChanged: { probe.act(layer); probe.captures() }
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
     // compile before anyone opens them
@@ -71,7 +76,8 @@ WebOSWindow {
             return { layer: app.layer, row: home.row, dayOpen: home.dayOpen, scrolled: home.scrolled,
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
-                             visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy } };
+                             visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
+                     player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
@@ -86,6 +92,8 @@ WebOSWindow {
         Item {
             id: scene
             anchors.fill: parent
+            opacity: app.watching ? 0 : 1
+            Behavior on opacity { NumberAnimation { duration: 500 } }
 
             Backdrop {
                 id: hero
@@ -103,12 +111,12 @@ WebOSWindow {
                 anchors.fill: parent
                 source: hero
                 frozen: true; sourceBusy: hero.busy || panning.running
-                opacity: app.onHome && home.scrolled && !home.dayOpen ? 1 : (app.warming ? 0.003 : 0)
+                opacity: (app.onHome && home.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
                 anchors.fill: parent
-                readonly property bool page: app.layer === "show" || app.layer === "title" || home.dayOpen
+                readonly property bool page: app.layer === "show" || app.layer === "title" || app.layer === "streams" || home.dayOpen
                 side: page ? 0.95 : 0.85
                 sideMid: page ? 0.35 : 0.15
                 footMid: page ? 0.7 : 0.55
@@ -123,7 +131,7 @@ WebOSWindow {
                 // it only glides while on screen; hidden, it takes its new place at once and fades in there
                 Behavior on y { enabled: info.visible; NumberAnimation { duration: 460; easing.type: Theme.ease } }
                 // below Home's first row, and on the show page, the info steps aside
-                property real away: (home.scrolled && app.onHome && !home.dayOpen) || app.layer === "show" ? 1 : 0
+                property real away: (home.scrolled && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
                 Behavior on away { NumberAnimation { duration: 380; easing.type: Theme.ease } }
                 opacity: 1 - away
                 visible: away < 1
@@ -131,6 +139,7 @@ WebOSWindow {
             ShowScreen {
                 id: showPage
                 focus: app.layer === "show"
+                onPlay: app.openStreams()
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: probe.act("show " + ["actions", "seasons", "episodes"][zone])
@@ -138,6 +147,7 @@ WebOSWindow {
             TitleScreen {
                 id: titlePage
                 focus: app.layer === "title"
+                onPlay: app.openStreams()
                 active: app.layer === "title"
             }
             HomeScreen {
@@ -183,6 +193,19 @@ WebOSWindow {
             Behavior on opacity { NumberAnimation { duration: 300 } }
             onCurrentIndexChanged: probe.act("tabs")
         }
+        StreamScreen {
+            id: streamPage
+            focus: app.layer === "streams"
+            active: app.layer === "streams"
+            source: backdropFrost
+            onPlay: { player.start(stream, app.displayItem); app.layer = "player" }
+        }
+        PlayerScreen {
+            id: player
+            window: app
+            focus: app.layer === "player"
+            active: app.layer === "player"
+        }
         QuickMenu {
             id: menu
             focus: app.layer === "menu"
@@ -194,7 +217,9 @@ WebOSWindow {
         }
 
         Keys.onPressed: {
-            if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.layer = "home" }
+            if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; player.stop(); streamPage.starting = -1; app.layer = "streams" }
+            else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; app.layer = app.pageLayer }
+            else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
         }
     }
@@ -203,5 +228,9 @@ WebOSWindow {
         // Back reaches the app only with this window property; without it webOS opens the exit menu
         tools.setWindowProperty(app, "_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
         requestActivate();
+        // MOCK: the picker's lab streams
+        var x = new XMLHttpRequest();
+        x.onreadystatechange = function () { if (x.readyState === XMLHttpRequest.DONE && x.responseText) app.streamData = JSON.parse(x.responseText) };
+        x.open("GET", Qt.resolvedUrl("../art/streams.json")); x.send();
     }
 }

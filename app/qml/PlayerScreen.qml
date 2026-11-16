@@ -1,0 +1,121 @@
+// MOCK, to prove the picked stream plays: start(stream, title) loads it into LG's media server through
+// NativePlayer, shows the title over its art until the video is playing, then hides everything so the
+// video (under the window) shows. OK pauses and resumes, Left and Right seek 10 s, Back stops (App).
+// `playing` turns true with the first played frame; the app clears its scene and window colour then.
+import QtQuick 2.12
+import Seimio.UI 1.0
+import Seimio.Native 1.0
+
+FocusScope {
+    id: page
+    property bool active: false
+    property var window
+    property var item: null
+    property var stream: null
+    property bool playing: false
+    property bool paused: false
+    property string failure: ""
+    property real position: 0            // ms
+    property real duration: 0            // ms
+    property string pendingUrl: ""
+    property var seen: ({})              // lab: the latest of each event the player sent
+    width: Theme.screenWidth; height: Theme.screenHeight
+    opacity: active ? 1 : 0
+    visible: opacity > 0
+    Behavior on opacity { NumberAnimation { duration: 220 } }
+
+    function start(s, title) {
+        item = title; stream = s; playing = false; paused = false; failure = ""; position = 0; duration = 0;
+        pendingUrl = s.url;
+        if (player.windowId) load(); else { player.setEventSlot(48); var e = player.exportWindow(window); if (e) failure = e }
+    }
+    function load() {
+        if (!pendingUrl) return;
+        var ok = player.load(pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: player.windowId } }));
+        pendingUrl = "";
+        if (!ok) failure = "The player didn't take the stream";
+    }
+    function stop() { player.unload(); playing = false; stream = null }
+
+    NativePlayer {
+        id: player
+        onWindowIdChanged: page.load()
+        onEvent: {
+            var e; try { e = JSON.parse(json) } catch (x) { return }
+            for (var k in e) if (k !== "currentTime" && k !== "bufferRange") { var seen = page.seen; seen[k] = json.slice(0, 300); page.seen = seen }
+            if (e.loadCompleted) player.play();
+            else if (e.playing) { page.playing = true; page.paused = false }
+            else if (e.paused) page.paused = true;
+            else if (e.currentTime) page.position = e.currentTime.currentTime;
+            else if (e.sourceInfo && e.sourceInfo.programInfo && e.sourceInfo.programInfo.length) page.duration = e.sourceInfo.programInfo[0].duration;
+            else if (e.error) { page.failure = "Couldn't play this stream (" + (e.error.errorText || e.error.errorCode) + ")"; player.unload() }
+        }
+    }
+
+    Keys.onPressed: {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { if (paused) player.play(); else player.pause(); poke() }
+        else if (event.key === Qt.Key_Left) { player.seek(Math.max(0, position - 10000)); poke() }
+        else if (event.key === Qt.Key_Right) { player.seek(position + 10000); poke() }
+        else return;
+        event.accepted = true;
+    }
+    function poke() { controls.shown = true; hide.restart() }
+    Timer { id: hide; interval: 3000; onTriggered: if (!page.paused) controls.shown = false }
+
+    // loading: the title over its art, until the first frame
+    Column {
+        anchors.centerIn: parent; spacing: 34
+        opacity: !page.playing ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 400 } }
+        TitleArt {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 640; height: 200
+            logo: page.item && page.item.logo ? page.item.logo : ""; name: page.item ? page.item.name : ""
+        }
+        // a light that runs along a hairline while the stream loads
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 360; height: 4; radius: 2; color: "#26ffffff"; clip: true
+            visible: !page.failure
+            Rectangle {
+                width: 120; height: 4; radius: 2
+                gradient: Gradient { orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "#00ffffff" } GradientStop { position: 0.5; color: "white" } GradientStop { position: 1; color: "#00ffffff" } }
+                NumberAnimation on x { from: -120; to: 360; duration: 1100; loops: Animation.Infinite; running: page.active && !page.playing; easing.type: Easing.InOutSine }
+            }
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: !!page.failure; text: page.failure
+            color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 28
+        }
+    }
+
+    // transport: shown for a moment after a key, and while paused
+    Item {
+        id: controls
+        property bool shown: false
+        anchors.fill: parent
+        opacity: page.playing && (shown || page.paused) ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.base } }
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient { GradientStop { position: 0.55; color: "#00000000" } GradientStop { position: 1; color: "#b3000000" } }
+        }
+        TitleArt {
+            x: Theme.margin; y: 760; width: 420; height: 120
+            logo: page.item && page.item.logo ? page.item.logo : ""; name: page.item ? page.item.name : ""; nameSize: 48
+        }
+        Rectangle {
+            id: track
+            x: Theme.margin; y: 940; width: parent.width - 2 * Theme.margin; height: 8; radius: 4; color: "#40ffffff"
+            Rectangle { width: page.duration ? track.width * Math.min(1, page.position / page.duration) : 0; height: 8; radius: 4; color: "white" }
+        }
+        function clock(ms) {
+            var s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;
+            return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        }
+        Text { x: Theme.margin; y: 966; text: controls.clock(page.position); color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
+        Text { anchors.right: track.right; y: 966; text: "-" + controls.clock(Math.max(0, page.duration - page.position)); color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
+    }
+}

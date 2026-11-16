@@ -8,6 +8,7 @@ FocusScope {
     id: page
     property bool active: false
     property var item: null
+    signal play()
     readonly property real actionsY: 884        // the actions' top; the info sits 40 px above them
     width: Theme.screenWidth; height: Theme.screenHeight
 
@@ -22,6 +23,7 @@ FocusScope {
         ButtonRow {
             id: actions
             focus: true
+            onTriggered: if (buttonIndex === 0) page.play()
             model: [
                 { label: page.item && page.item.progress > 0 ? "Resume" : "Play", icon: "play", primary: true,
                   progress: page.item && page.item.progress > 0 ? page.item.progress : -1 },
