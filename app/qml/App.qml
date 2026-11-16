@@ -21,12 +21,18 @@ WebOSWindow {
     color: "black"
 
     property string layer: "home"
+    // today's date ("YYYY-MM-DD"), checked every minute so the calendar moves on at midnight; previews
+    // set it to a fixed day
+    property string today: Qt.formatDate(new Date(), "yyyy-MM-dd")
+    Timer { interval: 60000; running: true; repeat: true; onTriggered: { var t = Qt.formatDate(new Date(), "yyyy-MM-dd"); if (t !== app.today) app.today = t } }
     readonly property bool onHome: layer === "home" || layer === "tabs" || layer === "menu"
     readonly property var focusItem: home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
     onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures() }
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
+    // opening or closing a calendar day changes the whole screen, so it commits at once
+    Connections { target: home; onDayOpenChanged: app.commit() }
     // the show page for the selected title is built once Home has been still for a moment (after the
     // backdrop and info have changed), so opening it costs nothing
     onDisplayItemChanged: prepareShow.restart()
@@ -50,7 +56,7 @@ WebOSWindow {
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
     // compile before anyone opens them
     property bool warming: true
-    Timer { running: home.rows.length > 0; interval: 600; onTriggered: app.warming = false }
+    Timer { running: catalog.continueWatching.length > 0; interval: 600; onTriggered: app.warming = false }
 
     LabCatalog { id: catalog }
     WindowTools { id: tools }
@@ -75,22 +81,23 @@ WebOSWindow {
                 width: parent.width; height: parent.height
                 target: app.displayItem ? app.displayItem.backdrop : ""
                 // parallax: the backdrop drifts a little against moves along a row
-                pan: app.onHome ? Math.min(8, home.cols[home.row] || 0) * 5 : 0
+                pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
                 Behavior on pan { NumberAnimation { id: panning; duration: 700; easing.type: Theme.ease } }
                 onCrossfadeStarted: probe.act("hero crossfade")
             }
             // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
             // is only a background
             Frost {
+                id: backdropFrost
                 anchors.fill: parent
                 source: hero
                 frozen: true; sourceBusy: hero.busy || panning.running
-                opacity: app.onHome && home.scrolled ? 1 : (app.warming ? 0.003 : 0)
+                opacity: app.onHome && home.scrolled && !home.dayOpen ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
                 anchors.fill: parent
-                readonly property bool page: app.layer === "show" || app.layer === "title"
+                readonly property bool page: app.layer === "show" || app.layer === "title" || home.dayOpen
                 side: page ? 0.95 : 0.85
                 sideMid: page ? 0.35 : 0.15
                 footMid: page ? 0.7 : 0.55
@@ -100,10 +107,11 @@ WebOSWindow {
                 x: Theme.margin
                 item: app.displayItem
                 // on the title page it moves down to sit just above the actions
-                y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : (home.scrolled ? 90 : 150)
-                Behavior on y { NumberAnimation { duration: 460; easing.type: Theme.ease } }
+                y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (home.scrolled ? 90 : 150)
+                // it only glides while on screen; hidden, it takes its new place at once and fades in there
+                Behavior on y { enabled: info.visible; NumberAnimation { duration: 460; easing.type: Theme.ease } }
                 // below Home's first row, and on the show page, the info steps aside
-                property real away: (home.scrolled && app.onHome) || app.layer === "show" ? 1 : 0
+                property real away: (home.scrolled && app.onHome && !home.dayOpen) || app.layer === "show" ? 1 : 0
                 Behavior on away { NumberAnimation { duration: 380; easing.type: Theme.ease } }
                 opacity: 1 - away
                 visible: away < 1
@@ -126,11 +134,14 @@ WebOSWindow {
                 focus: app.layer === "home"
                 shown: app.onHome
                 holdFocus: app.layer === "menu"
-                rows: catalog.rows
+                continueWatching: catalog.continueWatching
+                calendar: catalog.calendar
+                glassSource: backdropFrost
+                today: app.today
                 onActivated: app.open()
                 onHeld: app.openMenu()
                 onExitTop: app.layer = "tabs"
-                onColsChanged: probe.act("row move")
+                onColumnChanged: probe.act("row move")
                 onRowChanged: probe.act("row change")
             }
         }
@@ -150,9 +161,11 @@ WebOSWindow {
             id: tabs
             focus: app.layer === "tabs"
             source: scene
-            model: ["Home", "Movies", "Series", "Library", { icon: "search" }]
-            shadow: app.onHome ? 0.8 : 0
-            x: (parent.width - width) / 2; y: app.onHome ? 44 : -100
+            model: ["Home", "Anime", "Movies", "Series", "Library", { icon: "search" }]
+            // the tab bar belongs to the top of Home; pages and the calendar move it away
+            readonly property bool shown: app.onHome && !home.scrolled
+            shadow: shown ? 0.8 : 0
+            x: (parent.width - width) / 2; y: shown ? 44 : -100
             opacity: app.layer === "menu" ? 0.3 : 1
             Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
             Behavior on opacity { NumberAnimation { duration: 300 } }

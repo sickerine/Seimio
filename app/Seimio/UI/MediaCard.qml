@@ -14,10 +14,18 @@ Item {
     property bool nextLabel: true       // Home's Continue Watching marks unstarted next episodes "Next"
     property bool watched: false        // a check badge, and the art dims a little
     property string upcoming: ""        // air date of an episode that isn't out yet; dims the card
+    property string caption: ""         // a name on the card itself, above the episode chip (always shown)
+    property string label: ""           // a pill above the card (an air time); white while focused
+    // darkens the art (0 to 1) without making the card see-through, for cards that overlap others
+    property real fade: 0
     property bool focused: false
     property int moveDir: 0             // -1 left, 1 right: the tilt leans into the move
     property bool showTitle: true
     property real radius: 16
+    // darkens the bottom half for text over the art; on by default when there's a chip or progress bar
+    property real shade: progress >= 0 || episode ? 0.7 : 0
+    // children go on the card face, so they lift and tilt with it (a calendar day's date, for example)
+    default property alias content: overlay.data
     width: 220; height: 330
 
     property real lift: focused ? 1.1 : 1
@@ -56,6 +64,11 @@ Item {
             // so no hard rectangle edge is left to step when the card tilts
             anchors.fill: parent; anchors.margins: -3
             property var tex: img
+            // the art covers the card and is cropped to its shape (the texture is the whole image, so
+            // the crop happens here: uv scale per axis from the image's and the card's aspect ratios)
+            readonly property real imageAspect: img.implicitHeight > 0 ? img.implicitWidth / img.implicitHeight : 1
+            readonly property real cardAspect: card.width / Math.max(1, card.height)
+            property size crop: imageAspect > cardAspect ? Qt.size(cardAspect / imageAspect, 1) : Qt.size(1, imageAspect / cardAspect)
             property real pad: 3
             property size box: Qt.size(width, height)
             property real radius: card.radius
@@ -67,8 +80,10 @@ Item {
             property real focusAmt: card.focused ? 1 : 0
             // darkening, also in the shader so no separate layer sits on the tilting card:
             // dim for watched or upcoming episodes, and a bottom shade under the chip and progress bar
-            property real dim: card.upcoming ? 0.55 : (card.watched ? 0.25 : 0)
-            property real bottomShade: card.progress >= 0 || card.episode ? 0.7 : 0
+            property real dim: Math.max(card.fade, card.upcoming ? 0.55 : (card.watched ? 0.25 : 0))
+            property real bottomShade: card.caption !== "" ? Math.max(card.shade, 0.85) : card.shade
+            // where the shade starts, as a fraction of the height: higher for a caption over the art
+            property real shadeTop: card.caption !== "" ? 0.25 : 0.5
             Behavior on focusAmt { NumberAnimation { duration: 220 } }
             // fade the art in once decoded instead of popping
             opacity: img.status === Image.Ready ? 1 : 0
@@ -76,6 +91,7 @@ Item {
             fragmentShader: "
                 varying highp vec2 qt_TexCoord0;
                 uniform sampler2D tex;
+                uniform highp vec2 crop;
                 uniform highp vec2 box;
                 uniform highp float pad;
                 uniform highp float radius;
@@ -83,17 +99,18 @@ Item {
                 uniform lowp float focusAmt;
                 uniform lowp float dim;
                 uniform lowp float bottomShade;
+                uniform highp float shadeTop;
                 uniform lowp float qt_Opacity;
                 void main() {
                     highp vec2 size = box - vec2(2.0 * pad);
                     highp vec2 p = qt_TexCoord0 * box - vec2(pad);        // card pixels; outside the card near the rim
                     highp vec2 q = abs(p - size * 0.5) - (size * 0.5 - vec2(radius));
                     highp float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
-                    lowp vec4 c = texture2D(tex, clamp(p / size, 0.0, 1.0));
+                    lowp vec4 c = texture2D(tex, clamp(0.5 + (p / size - 0.5) * crop, 0.0, 1.0));
                     // band position along a diagonal in pixels, so it has the same slant on any card shape
                     highp float along = (p.x + p.y * 0.35) / (size.x + size.y * 0.35);
                     highp float b = (along - sheen) / 0.16;
-                    c.rgb *= (1.0 - dim) * (1.0 - bottomShade * smoothstep(0.5, 1.0, p.y / size.y));
+                    c.rgb *= (1.0 - dim) * (1.0 - bottomShade * smoothstep(shadeTop, 1.0, p.y / size.y));
                     c.rgb += vec3(0.13 * exp(-b * b)) * c.a;
                     // border: a 1.5px ring just inside the edge, brighter when focused
                     highp float ring = smoothstep(-2.0, -0.5, d);
@@ -118,7 +135,19 @@ Item {
             Text { id: upText; anchors.centerIn: parent; text: card.upcoming; color: "white"; font.family: Theme.face; font.pixelSize: 20; font.weight: Font.DemiBold }
         }
         // a placeholder of the card's exact shape while the art decodes, so nothing shifts
-        Rectangle { anchors.fill: parent; radius: card.radius; color: "#1affffff"; visible: img.status !== Image.Ready }
+        // (also the whole card when it has no art, so it brightens when focused)
+        Rectangle {
+            anchors.fill: parent; radius: card.radius; visible: img.status !== Image.Ready
+            color: card.focused ? "#40ffffff" : "#1affffff"
+            border.width: card.focused ? 2 : 0; border.color: "#59ffffff"
+            Behavior on color { ColorAnimation { duration: Theme.fast } }
+        }
+        Text {
+            visible: card.caption !== ""
+            x: 18; width: parent.width - 36; elide: Text.ElideRight
+            y: parent.height - (card.progress > 0 ? 62 : 48) - (card.episode !== "" ? 40 : 0)
+            text: card.caption; color: "white"; font.family: Theme.face; font.pixelSize: 22; font.weight: Font.DemiBold
+        }
         Rectangle {
             visible: card.episode !== ""
             x: 18; y: parent.height - (card.progress > 0 ? 62 : 48); height: 30; radius: 15; width: epText.implicitWidth + 22; color: "#40ffffff"
@@ -136,6 +165,21 @@ Item {
                 Connections { target: card; onProgressChanged: { fill.width = 0; fillAnim.restart() } }
                 NumberAnimation { id: fillAnim; target: fill; property: "width"; to: Math.max(6, fill.parent.width * Math.min(100, card.progress) / 100); duration: 900; easing.type: Easing.OutCubic }
             }
+        }
+        Item { id: overlay; anchors.fill: parent }
+    }
+    // the pill above the card; it stays put while the card lifts
+    Rectangle {
+        visible: card.label !== ""
+        y: -54; height: 34; radius: 17; width: labelText.implicitWidth + 28
+        color: card.focused ? Theme.focusFill : "#40000000"
+        border.width: card.focused ? 0 : 1; border.color: "#33ffffff"
+        Behavior on color { ColorAnimation { duration: Theme.fast } }
+        Text {
+            id: labelText
+            anchors.centerIn: parent
+            text: card.label; color: card.focused ? Theme.inkOnLight : Theme.ink
+            font.family: Theme.face; font.pixelSize: 19; font.weight: Font.DemiBold
         }
     }
     // title under the focused card

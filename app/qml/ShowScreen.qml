@@ -51,9 +51,11 @@ FocusScope {
         return { s: 0, e: 0 };
     }
     readonly property var resumePos: currentPos()
-    readonly property var resumeEp: seasons.length ? seasons[resumePos.s].episodes[resumePos.e] : null
+    // (bindings update in no set order when the show changes, so resumePos can still be the last show's)
+    readonly property var resumeSeason: seasons[resumePos.s] || null
+    readonly property var resumeEp: resumeSeason ? resumeSeason.episodes[resumePos.e] || null : null
     readonly property string resumeLabel: resumeEp
-        ? (resumeEp.progress > 0 ? "Resume " : "Play ") + (seasons.length > 1 ? "S" + seasons[resumePos.s].season + " " : "") + "E" + resumeEp.episode
+        ? (resumeEp.progress > 0 ? "Resume " : "Play ") + (seasons.length > 1 ? "S" + resumeSeason.season + " " : "") + "E" + resumeEp.episode
         : "Play"
 
     function load(title, seasonsAndEpisodes) {

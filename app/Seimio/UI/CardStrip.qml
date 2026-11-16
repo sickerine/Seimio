@@ -1,13 +1,14 @@
 // A horizontal row of MediaCards walked with Left/Right. The focused card always sits at the left
 // `inset` and the row slides under it. OK comes out as `activated` (tap) or `held` (long press) with
-// the index. Up, Down and Back pass on to the parent.
+// the index. Up, Down and Back pass on to the parent, and so do Left at the first card and Right at the
+// last, so a screen can go on past the ends.
 //
 // The row keeps a fixed set of cards, just enough to cover its width while sliding, and hands them
 // new data as it moves: card slot k shows whichever index in the visible window leaves remainder k
 // when divided by the number of slots. Moving along the row, or swapping in a new model, never creates
 // or destroys a card, so it costs no item creation and no new scene graph nodes on the TV.
 //
-// `model` is a JS array of card data: { art, title, episode, progress, watched, upcoming }.
+// `model` is a JS array of card data: { art, title, caption, label, episode, progress, watched, upcoming }.
 import QtQuick 2.12
 
 FocusScope {
@@ -58,6 +59,8 @@ FocusScope {
             progress: d && d.progress !== undefined ? d.progress : -1
             watched: !!(d && d.watched)
             upcoming: d && d.upcoming || ""
+            caption: d && d.caption || ""
+            label: d && d.label || ""
             showTitle: strip.showTitles
             nextLabel: strip.nextLabels
             focused: idx === strip.currentIndex && strip.showFocus
@@ -67,6 +70,6 @@ FocusScope {
 
     OkPress { id: ok; onTapped: strip.activated(strip.currentIndex); onHeld: strip.held(strip.currentIndex) }
     Keys.forwardTo: [ok]
-    Keys.onLeftPressed: if (currentIndex > 0) { moveDir = -1; currentIndex-- }
-    Keys.onRightPressed: if (currentIndex < count - 1) { moveDir = 1; currentIndex++ }
+    Keys.onLeftPressed: if (currentIndex > 0) { moveDir = -1; currentIndex-- } else event.accepted = false
+    Keys.onRightPressed: if (currentIndex < count - 1) { moveDir = 1; currentIndex++ } else event.accepted = false
 }

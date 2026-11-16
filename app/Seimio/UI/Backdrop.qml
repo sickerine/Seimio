@@ -19,6 +19,7 @@ Item {
     property string target
     property size decodeSize: Qt.size(960, 540)
     property real pan: 0
+    property real radius: 0                   // rounded corners for a framed backdrop (blends then)
     property string shown: ""
     property string incoming: ""
     readonly property bool busy: target !== shown
@@ -73,7 +74,9 @@ Item {
 
     ShaderEffect {
         anchors.fill: parent
-        blending: false
+        blending: root.radius > 0
+        property size box: Qt.size(width, height)
+        property real radius: root.radius
         property var tex0: l0
         property var tex1: l1
         // uv scale for each image's aspect-fill crop
@@ -95,13 +98,21 @@ Item {
             uniform lowp float fadeIn;
             uniform highp float zoom;
             uniform highp float pan;
+            uniform highp vec2 box;
+            uniform highp float radius;
+            uniform lowp float qt_Opacity;
             void main() {
                 highp vec2 p = (qt_TexCoord0 - 0.5 + vec2(pan, 0.0)) / zoom;
                 lowp vec3 a = texture2D(tex0, clamp(0.5 + p * crop0, 0.0, 1.0)).rgb;
                 lowp vec3 b = texture2D(tex1, clamp(0.5 + p * crop1, 0.0, 1.0)).rgb;
                 lowp vec3 f = mix(a, b, front);
                 lowp vec3 k = mix(b, a, front);
-                gl_FragColor = vec4(mix(f * frontOn, k, fadeIn), 1.0);
+                lowp float mask = 1.0;
+                if (radius > 0.0) {
+                    highp vec2 q = abs(qt_TexCoord0 * box - box * 0.5) - (box * 0.5 - vec2(radius));
+                    mask = clamp(0.5 - (length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius), 0.0, 1.0);
+                }
+                gl_FragColor = vec4(mix(f * frontOn, k, fadeIn), 1.0) * mask * qt_Opacity;
             }"
     }
     function crop(i) {

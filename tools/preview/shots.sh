@@ -6,17 +6,22 @@
 # usage: tools/preview/shots.sh [--approve] [state...]
 P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); OUT="$REPO/.lab/shots"; mkdir -p "$OUT"
 approve=0; [ "$1" = --approve ] && { approve=1; shift; }
-# finds HomeScreen in the window's tree (screen ids aren't reachable from the preview)
-HOME_JS='function f(o) { if (o && o.rowY && o.rows !== undefined) return o; for (var i = 0; o && i < o.children.length; i++) { var r = f(o.children[i]); if (r) return r } return null }'
+# finds an item in the window's tree by a test (screen ids aren't reachable from the preview)
+FIND_JS='function f(o, t) { if (o && t(o)) return o; for (var i = 0; o && i < o.children.length; i++) { var r = f(o.children[i], t); if (r) return r } return null }
+var home = f(win.canvas, function (o) { return o.continueWatching !== undefined && o.calendar !== undefined });'
+# every state renders on the same day, so the calendar and its baselines don't change with the date
+DAY_JS='win.today = "2026-11-16";'
 js() {
+  echo -n "$DAY_JS "
   case $1 in
-    home-row2) echo "$HOME_JS f(win.canvas).row = 1" ;;
+    calendar) echo "$FIND_JS home.row = 1; var g = f(home, function (o) { return o.cellWidth !== undefined && o.today !== undefined });"\
+                   ' g.showFocus = true; g.select("2026-11-17")' ;;
     show) echo 'win.open()' ;;
     menu) echo 'win.openMenu()' ;;
-    title) echo "$HOME_JS f(win.canvas).row = 1; win.open()" ;;
+    title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home home-row2 show menu title gallery)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title gallery)
 fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; [ "$s" = gallery ] && screen="$P/gallery.qml"

@@ -10,8 +10,8 @@ WebOSWindow {
     visible: true
     Rectangle { width: 1920; height: 1080; color: "#202024" }   // the grab has no window colour behind it
     LabCatalog { id: catalog }
-    readonly property var cw: catalog.rows.length ? catalog.rows[0].items : []
-    readonly property var pop: catalog.rows.length > 1 ? catalog.rows[1].items : []
+    readonly property var cw: catalog.continueWatching
+    readonly property var pop: catalog.popular.length ? catalog.popular[0].items : []
     function art(list, i) { return list.length > i ? list[i].art : "" }
 
     Row {

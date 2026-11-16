@@ -1,6 +1,7 @@
 // A rounded label. kind "glass" (translucent, the default), "solid" (white with dark text) or "rating"
 // (gold with dark text). `icon` adds a leading icon; `size` is the font size and the chip scales with it.
-// The padding is measured from the drawn icon, so both ends look equal.
+// The padding is measured from the drawn icon, so both ends look equal. `fade` (0 to 1) darkens it
+// without making it see-through, for chips on art that is darkened too.
 import QtQuick 2.12
 
 Rectangle {
@@ -9,14 +10,16 @@ Rectangle {
     property string icon
     property string kind: "glass"
     property int size: 22
+    property real fade: 0
+    function darken(c) { return Qt.tint(c, Qt.rgba(0, 0, 0, fade)) }
     readonly property bool glass: kind === "glass"
-    readonly property color ink: glass ? "#f2ffffff" : "#1a1a1a"
+    readonly property color ink: darken(glass ? "#f2ffffff" : "#1a1a1a")
     readonly property int padX: Math.round(size * 0.75)
 
     height: Math.round(size * 1.9)
     radius: height / 2
     width: label.x + label.implicitWidth + padX
-    color: kind === "solid" ? Theme.focusFill : kind === "rating" ? Theme.rating : Theme.fill
+    color: darken(kind === "solid" ? Theme.focusFill : kind === "rating" ? Theme.rating : Theme.fill)
     border.width: glass ? 1 : 0
     border.color: Theme.hairline
 
