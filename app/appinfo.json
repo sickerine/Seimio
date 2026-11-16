@@ -1,0 +1,9 @@
+{
+  "id": "com.seimio.tv",
+  "version": "0.1.0",
+  "vendor": "Seimio",
+  "type": "qml",
+  "main": "main.qml",
+  "title": "Seimio",
+  "icon": "icon.png"
+}

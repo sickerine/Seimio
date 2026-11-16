@@ -1,21 +1,25 @@
 #!/bin/bash
-# usage: deploy.sh <appdir> <appid> <wait_s> <report-substring>
-# Bumps the version, packages, installs, launches, waits, then prints load errors and new reports.
+# Packages app/ (with the built plugin and the lab art), installs it on the TV and launches it, then
+# prints the load result from the lab server. Needs ares-cli on Node 20 and the TV set up as device "tv".
+# usage: tools/deploy.sh [seconds to wait]
 set -u
-D=$(cd "$(dirname "$0")" && pwd); cd "$D"
+REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
-app=$1 id=$2 wait=$3 rep=$4
-v=$(python3 -c "import json;print(json.load(open('$app/appinfo.json'))['version'])"); n=$(( ${v##*.} + 1 )); nv=${v%.*}.$n
-perl -0pi -e "s/\"version\": \"$v\"/\"version\": \"$nv\"/" $app/appinfo.json
-mkdir -p ipk; ares-package $app -o ipk >/dev/null || exit 1
-ares-launch -d tv --close $id >/dev/null 2>&1
-ares-install -d tv ipk/${id}_${nv}_all.ipk >/dev/null || exit 1
-s=$(date +%H%M%S); ares-launch -d tv $id >/dev/null; sleep $wait
-for f in $(ls reports | awk -v s=$s '$0 >= s' | grep -E "loadreport|$rep"); do
-  python3 -c "
-import json
-d=json.load(open('reports/$f'))
-if isinstance(d,list):
-    [print(str(e)[:900]) for e in d]
-else: print('$f', str(d)[:1500])"
-done
+mkdir -p app/native .lab/ipk .lab/reports
+cp native/out/libseimionative.so native/out/libass.so.9 native/out/qmldir app/native/
+[ -f app/art/rows.json ] || { echo "no lab art: run tools/fetch-art.py first"; exit 1; }
+id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
+ver=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['version'])")
+# a fresh build number each time, or ares-install keeps the old files
+build=$(date +%s); next="${ver%.*}.$((build % 100000))"
+tmp=$(mktemp -d); rsync -a --exclude .DS_Store app/ "$tmp/app/"
+python3 - "$tmp/app/appinfo.json" "$next" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["version"] = sys.argv[2]; json.dump(d, open(p, "w"), indent=2)
+PY
+ares-package "$tmp/app" -o .lab/ipk >/dev/null || exit 1
+ares-launch -d tv --close "$id" >/dev/null 2>&1
+ares-install -d tv ".lab/ipk/${id}_${next}_all.ipk" >/dev/null || exit 1
+rm -rf "$tmp"
+start=$(date +%H%M%S); ares-launch -d tv "$id" >/dev/null; sleep "${1:-6}"
+for f in $(ls .lab/reports | awk -v s=$start '$0 >= s' | grep loadreport); do echo "$f: $(cat .lab/reports/$f)"; done

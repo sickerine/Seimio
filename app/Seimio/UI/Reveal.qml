@@ -1,0 +1,27 @@
+// Fades and slides its content in each time `shown` turns true, after `delay` ms, so groups of items can
+// arrive one after another. Turning `shown` off hides it at once. A Reveal created with `shown` already
+// true plays its entrance once.
+import QtQuick 2.12
+
+Item {
+    id: reveal
+    property bool shown: true
+    property int delay: 0
+    property real dx: 0
+    property real dy: 24
+    property int duration: Theme.slow
+    property real t: 0
+    implicitWidth: childrenRect.width
+    implicitHeight: childrenRect.height
+    opacity: t
+    transform: Translate { x: (1 - reveal.t) * reveal.dx; y: (1 - reveal.t) * reveal.dy }
+
+    function play() { t = 0; anim.restart() }
+    onShownChanged: if (shown) play(); else { anim.stop(); t = 0 }
+    Component.onCompleted: if (shown) play()
+    SequentialAnimation {
+        id: anim
+        PauseAnimation { duration: reveal.delay }
+        NumberAnimation { target: reveal; property: "t"; to: 1; duration: reveal.duration; easing.type: Theme.ease }
+    }
+}

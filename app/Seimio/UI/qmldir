@@ -1,0 +1,21 @@
+module Seimio.UI
+singleton Theme 1.0 Theme.qml
+singleton Remote 1.0 Remote.qml
+OkPress 1.0 OkPress.qml
+Icon 1.0 Icon.qml
+Chip 1.0 Chip.qml
+Reveal 1.0 Reveal.qml
+Shadow 1.0 Shadow.qml
+Button 1.0 Button.qml
+ButtonRow 1.0 ButtonRow.qml
+MenuList 1.0 MenuList.qml
+GaussPass 1.0 GaussPass.qml
+BlurChain 1.0 BlurChain.qml
+Glass 1.0 Glass.qml
+Frost 1.0 Frost.qml
+Scrim 1.0 Scrim.qml
+SegmentedBar 1.0 SegmentedBar.qml
+MediaCard 1.0 MediaCard.qml
+CardStrip 1.0 CardStrip.qml
+Backdrop 1.0 Backdrop.qml
+TitleArt 1.0 TitleArt.qml

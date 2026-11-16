@@ -2,10 +2,13 @@
 design/art/
 native/out/
 native/qt512/
-native/plugin/plugin.moc
+
 tvlibs/
 core/target/
-libass/build/
-libass/out/
+third_party/libass/build/
+third_party/libass/out/
 tools/.tv-client-key
 .DS_Store
+app/art/
+app/native/
+.lab/
