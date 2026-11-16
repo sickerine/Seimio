@@ -29,10 +29,10 @@ WebOSWindow {
     readonly property var focusItem: home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
-    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures() }
+    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
-    Connections { target: home; onDayOpenChanged: app.commit() }
+    Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
     // the show page for the selected title is built once Home has been still for a moment (after the
     // backdrop and info have changed), so opening it costs nothing
     onDisplayItemChanged: prepareShow.restart()
@@ -105,7 +105,8 @@ WebOSWindow {
             HeroInfo {
                 id: info
                 x: Theme.margin
-                item: app.displayItem
+                // hidden on the calendar, so it doesn't swap to every day there (logo loads, text layout)
+                item: home.scrolled && app.onHome && !home.dayOpen ? null : app.displayItem
                 // on the title page it moves down to sit just above the actions
                 y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (home.scrolled ? 90 : 150)
                 // it only glides while on screen; hidden, it takes its new place at once and fades in there

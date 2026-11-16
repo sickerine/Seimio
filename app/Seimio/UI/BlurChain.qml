@@ -4,8 +4,9 @@
 // blur wide for little cost. `output` is the blurred texture, `outputSize` its size.
 //
 // Capturing re-renders the source region every frame, so it runs only while `active`. A `frozen` chain
-// captures once when it becomes active, keeps capturing while `sourceBusy` (the source is mid-change),
-// and takes one last capture when that settles, so a frozen blur is never stale.
+// captures once when it becomes active, refreshes every `busyInterval` ms while `sourceBusy` (the source
+// is mid-change; a blur this wide hides a 20 Hz refresh, and every frame cost ~10 render passes on the
+// TV), and takes one last capture when that settles, so a frozen blur is never stale.
 import QtQuick 2.12
 
 Item {
@@ -15,6 +16,7 @@ Item {
     property bool active: true
     property bool frozen: false
     property bool sourceBusy: false
+    property int busyInterval: 50
     readonly property alias output: v2.output
     readonly property size quarterSize: Qt.size(Math.max(1, Math.round(sourceRect.width / 4)), Math.max(1, Math.round(sourceRect.height / 4)))
     readonly property size outputSize: Qt.size(Math.max(1, Math.round(sourceRect.width / 8)), Math.max(1, Math.round(sourceRect.height / 8)))
@@ -27,8 +29,13 @@ Item {
         sourceItem: chain.source
         sourceRect: chain.sourceRect
         textureSize: chain.quarterSize
-        live: chain.active && (!chain.frozen || chain.sourceBusy)
+        live: chain.active && !chain.frozen
         hideSource: false; visible: false; smooth: true
+    }
+    Timer {
+        running: chain.active && chain.frozen && chain.sourceBusy
+        interval: chain.busyInterval; repeat: true; triggeredOnStart: true
+        onTriggered: quarter.scheduleUpdate()
     }
     GaussPass { id: h1; input: quarter; inputSize: chain.quarterSize; live: chain.active }
     GaussPass { id: v1; input: h1.output; inputSize: chain.quarterSize; outputSize: chain.outputSize; vertical: true; live: chain.active }

@@ -50,12 +50,66 @@ FocusScope {
     function sameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() }
     // the Monday on or before the 1st
     readonly property var start: new Date(month.getFullYear(), month.getMonth(), 1 - (month.getDay() + 6) % 7)
-    function dayAt(i) { return new Date(start.getFullYear(), start.getMonth(), start.getDate() + i) }
+    // everything day i of the grid shows, as plain fields: a day's own bindings only read these (helper
+    // calls and Date maths in each day's bindings were part of ~3 ms a day on the TV)
+    function dayData(i) {
+        var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        var k = key(d), list = entries[k] || [], n = list.length;
+        return {
+            k: k, date: d.getDate(), count: n,
+            opacity: d.getMonth() !== month.getMonth() || d.getFullYear() !== month.getFullYear() ? 0.28 : (k < today ? 0.72 : 1),
+            isToday: k === today,
+            art0: n ? list[0].art : "", art1: n > 1 ? list[1].art : "", art2: n > 2 ? list[2].art : "",
+            name: n ? list[0].name : "", episode: n ? "E" + list[0].episode : "", more: n > 1 ? "+" + (n - 1) : "",
+            stackRoom: Math.min(2, Math.max(0, n - 1)) * 6
+        };
+    }
+
+    // A new month reaches the days a few at a time: the week `firstWeek` (the one on screen, or where a
+    // ripple starts) at once, then three days a frame, nearest weeks first. A day's update (its texts'
+    // layout above all) is ~3 ms on the TV, so all 42 at once took ~80 ms and a week at a time ~25 ms a
+    // frame; days updated later are invisible until their own fade-in starts.
+    property var cells: []
+    property int firstWeek: -1                   // -1: all at once
+    property var pending: []
+    function fill(i) { var c = cells[i]; if (c) c.d = dayData(i) }
+    function refill() {
+        stager.stop();
+        if (firstWeek < 0 || cells.length < 42) { for (var i = 0; i < 42; i++) fill(i); pending = []; firstWeek = -1; return }
+        var f = firstWeek, order = [];
+        firstWeek = -1;
+        for (var c = 0; c < 7; c++) fill(f * 7 + c);
+        [0, 1, 2, 3, 4, 5].filter(function (r) { return r !== f }).sort(function (a, b) { return Math.abs(a - f) - Math.abs(b - f) })
+            .forEach(function (r) { for (var c = 0; c < 7; c++) order.push(r * 7 + c) });
+        pending = order;
+        stager.start();
+    }
+    onMonthChanged: refill()
+    onEntriesChanged: refill()
+    onTodayChanged: refill()
+    Timer {
+        id: stager; interval: 16; repeat: true
+        onTriggered: {
+            for (var n = 0; n < 3 && grid.pending.length; n++) grid.fill(grid.pending.shift());
+            if (!grid.pending.length) stop();
+        }
+    }
     function indexOf(k) { return Math.round((parse(k) - start) / 86400000) }
     // a day's rectangle in the grid
     function cellRect(k) { var i = indexOf(k); return Qt.rect((i % 7) * (cellWidth + gap), Math.floor(i / 7) * (cellHeight + gap), cellWidth, cellHeight) }
 
     function select(k) { if (k >= first && k <= last) selected = k }
+    // go to day k without any animation, a week at a time starting with k's (for when the grid is off
+    // screen or moving away, e.g. returning to today as the calendar leaves)
+    function jump(k) {
+        var d = parse(k);
+        if (!sameMonth(d, month)) {
+            var m = firstOf(d), ms = new Date(m.getFullYear(), m.getMonth(), 1 - (m.getDay() + 6) % 7);
+            firstWeek = Math.floor(Math.round((d - ms) / 86400000) / 7);
+            month = m;
+        }
+        selected = k;
+    }
     function move(days) {
         var d = parse(selected); d.setDate(d.getDate() + days);
         var k = key(d);
@@ -106,6 +160,7 @@ FocusScope {
         ScriptAction {
             script: {
                 grid.snap = true;
+                grid.firstWeek = grid.shareNew;
                 grid.month = grid.nextMonth;
                 grid.slide = (grid.shareOld - grid.shareNew) * (grid.cellHeight + grid.gap);
                 grid.arriving(grid.shareNew);
@@ -125,7 +180,7 @@ FocusScope {
     SequentialAnimation {
         id: turn
         NumberAnimation { target: grid; property: "fade"; to: 0; duration: 110; easing.type: Easing.InQuad }
-        ScriptAction { script: { grid.month = grid.nextMonth; grid.fade = 1; grid.turned() } }
+        ScriptAction { script: { grid.firstWeek = grid.turnDir > 0 ? 0 : 5; grid.month = grid.nextMonth; grid.fade = 1; grid.turned() } }
     }
 
     // a light running around today's day
@@ -138,181 +193,203 @@ FocusScope {
         y: grid.slide
         opacity: grid.fade
         Repeater {
-            model: 42
+            model: 6
             Item {
-                id: cell
-                readonly property var day: grid.dayAt(index)
-                readonly property string k: grid.key(day)
-                readonly property var list: grid.entries[k] || []
-                // neighbouring months' days are faded most, past days a little. The cards are darkened
-                // rather than made see-through, so the stacked ones don't show through the top card.
-                readonly property real baseFade: !grid.sameMonth(day, grid.month) ? 0.72 : (k < grid.today ? 0.3 : 0)
-                property real peekFade: 0            // 1 while this day is part of a peek
-                // the month part eases, so a day joining or leaving the month brightens or dims; the peek part
-                // follows its own animation directly (easing both made the peek lag dark behind it)
-                property real baseShown: baseFade
-                Behavior on baseShown { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-                readonly property real fadeShown: 1 - (1 - baseShown) * (1 - 0.7 * peekFade)
-                function settle(animate) {
-                    var above = row < grid.peekRow;
-                    var show = grid.revealAll || !above ? 1 : 0, pf = grid.revealAll ? 0 : 1;
-                    if (!animate) { reveal.stop(); grow.opacity = show; peekFade = pf; return }
-                    revealPause.duration = grid.revealAll && above ? 60 + (grid.peekRow - 1 - row) * 80 : 0;
-                    showAnim.to = show; showAnim.duration = show ? 360 : 160;
-                    fadeAnim.to = pf;
-                    reveal.restart();
-                }
-                Component.onCompleted: settle(false)
-                Connections { target: grid; onRevealed: cell.settle(true) }
-                SequentialAnimation {
-                    id: reveal
-                    PauseAnimation { id: revealPause }
-                    ParallelAnimation {
-                        NumberAnimation { id: showAnim; target: grow; property: "opacity"; easing.type: Easing.OutCubic }
-                        NumberAnimation { id: fadeAnim; target: cell; property: "peekFade"; duration: 420; easing.type: Easing.OutCubic }
-                    }
-                }
-                // room at the top for the cards behind to peek out: 6 px per card behind, up to two
-                readonly property real stackRoom: Math.max(0, Math.min(2, list.length - 1)) * 6
-                readonly property bool isToday: k === grid.today
-                readonly property bool focused: k === grid.selected && grid.showFocus
-                readonly property int row: Math.floor(index / 7)
-                readonly property int col: index % 7
-                x: col * (grid.cellWidth + grid.gap)
+                id: week
+                readonly property int row: index
                 y: row * (grid.cellHeight + grid.gap)
-                width: grid.cellWidth; height: grid.cellHeight
-                z: focused ? 2 : 1
-                transform: Translate { id: rise }
-
-                // the scroll: the other weeks fade before the month changes, and the new month's weeks fade
-                // in by their distance from the shared week as it slides
-                Connections {
-                    target: grid
-                    onLeaving: if (cell.row !== keepRow) { arrive.stop(); enter.stop(); leave.restart() }
-                    onArriving: {
-                        arrive.stop(); leave.stop();
-                        if (cell.row === fromRow) { enter.stop(); cell.opacity = 1; return }
-                        cell.opacity = 0;
-                        enterPause.duration = Math.abs(cell.row - fromRow) * 90;
-                        enter.restart();
-                    }
-                }
-                NumberAnimation { id: leave; target: cell; property: "opacity"; to: 0; duration: 150; easing.type: Easing.InQuad }
-                SequentialAnimation {
-                    id: enter
-                    PauseAnimation { id: enterPause }
-                    NumberAnimation { target: cell; property: "opacity"; to: 1; duration: 300; easing.type: Easing.OutCubic }
-                }
-                // the ripple: days nearer the side the grid turned toward arrive first
-                Connections { target: grid; onTurned: { cell.opacity = 0; arrive.restart() } }
-                SequentialAnimation {
-                    id: arrive
-                    PauseAnimation { duration: ((grid.turnDir > 0 ? cell.row + cell.col : (5 - cell.row) + (6 - cell.col)) / 11) * 300 }
-                    ParallelAnimation {
-                        NumberAnimation { target: cell; property: "opacity"; from: 0; to: 1; duration: 340; easing.type: Easing.OutQuad }
-                        NumberAnimation { target: rise; property: "y"; from: 26 * grid.turnDir; to: 0; duration: 440; easing.type: Easing.OutCubic }
-                        NumberAnimation { target: grow; property: "scale"; from: 0.88; to: 1; duration: 440; easing.type: Easing.OutCubic }
-                    }
-                }
-
-                Item {
-                    id: grow
-                    anchors.fill: parent
+                width: grid.width; height: grid.cellHeight
+                // the focused day's week above the others, so its lifted day isn't covered by the next week
+                z: Math.floor(grid.focusIndex / 7) === row ? 2 : 1
+                Repeater {
+                    model: 7
                     Item {
-                        id: face
-                        anchors.fill: parent
-                        scale: cell.focused ? 1.06 : 1
-                        transform: Translate { y: cell.focused ? grid.nudge : 0 }
-                        Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.OutBack; easing.overshoot: 1.3 } }
+                        id: cell
+                        // what this day shows; handed over by the grid (see `refill`)
+                        property var d: ({ k: "", date: 0, count: 0, opacity: 1, isToday: false, art0: "", art1: "", art2: "",
+                                          name: "", episode: "", more: "", stackRoom: 0 })
+                        Component.onCompleted: { grid.cells[row * 7 + col] = cell; grid.fill(row * 7 + col); settle(false) }
+                        readonly property string k: d.k
+                        // neighbouring months' days are faded most, past days a little. The day is one texture (see
+                        // `deck`), so fading it fades the stack as a whole, without its cards showing through each
+                        // other, and costs no JavaScript or re-drawing per frame.
+                        readonly property real dayOpacity: d.opacity
+                        // a peek shows only the selected week, faded; revealing brings it to full and fades the weeks
+                        // above in, nearest first (the weeks under it come up from below the screen)
+                        function settle(animate) {
+                            var above = row < grid.peekRow;
+                            var show = grid.revealAll ? 1 : (row === grid.peekRow ? 0.3 : 0);
+                            if (!animate) { reveal.stop(); grow.opacity = show; return }
+                            revealPause.duration = grid.revealAll && above ? 60 + (grid.peekRow - 1 - row) * 80 : 0;
+                            showAnim.to = show; showAnim.duration = show > 0 ? 400 : 160;
+                            reveal.restart();
+                        }
+                        Connections { target: grid; onRevealed: cell.settle(true) }
+                        SequentialAnimation {
+                            id: reveal
+                            PauseAnimation { id: revealPause }
+                            NumberAnimation { id: showAnim; target: grow; property: "opacity"; easing.type: Easing.OutCubic }
+                        }
+                        // room at the top for the cards behind to peek out: 6 px per card behind, up to two
+                        readonly property real stackRoom: d.stackRoom
+                        readonly property bool isToday: d.isToday
+                        readonly property bool focused: k === grid.selected && grid.showFocus
+                        readonly property int row: week.row
+                        readonly property int col: index
+                        x: col * (grid.cellWidth + grid.gap)
+                        width: grid.cellWidth; height: grid.cellHeight
+                        z: focused ? 2 : 1
+                        transform: Translate { id: rise }
 
-                        // an empty day
-                        Rectangle {
-                            visible: cell.list.length === 0
-                            anchors.fill: parent; radius: 14
-                            opacity: 1 - cell.fadeShown
-                            color: cell.focused ? "#33ffffff" : "#17ffffff"
-                            Behavior on color { ColorAnimation { duration: Theme.fast } }
-                        }
-                        // the day's other releases, as up to two cards behind the top one: their top edges
-                        // peek out above it, narrower and darker the further back, and rise when focused
-                        Repeater {
-                            model: Math.max(0, Math.min(2, cell.list.length - 1))
-                            MediaCard {
-                                readonly property real inset: (index + 1) * cell.width * 0.05
-                                z: -1 - index
-                                x: inset; width: cell.width - 2 * inset
-                                y: cell.stackRoom - (index + 1) * (cell.focused ? 10 : 6)
-                                height: cell.height - cell.stackRoom
-                                Behavior on y { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
-                                radius: 12
-                                art: cell.list[index + 1].art
-                                showTitle: false
-                                fade: 1 - (1 - cell.fadeShown) * (0.6 - index * 0.25)
+                        // the scroll: the other weeks fade before the month changes, and the new month's weeks fade
+                        // in by their distance from the shared week as it slides
+                        Connections {
+                            target: grid
+                            onLeaving: if (cell.row !== keepRow) { arrive.stop(); enter.stop(); leave.restart() }
+                            onArriving: {
+                                arrive.stop(); leave.stop();
+                                if (cell.row === fromRow) { enter.stop(); cell.opacity = 1; return }
+                                cell.opacity = 0;
+                                enterPause.duration = Math.abs(cell.row - fromRow) * 90;
+                                enter.restart();
                             }
                         }
-                        // the day's first release
-                        MediaCard {
-                            id: top
-                            visible: cell.list.length > 0
-                            y: cell.stackRoom; width: cell.width; height: cell.height - cell.stackRoom
-                            radius: 14
-                            art: cell.list.length ? cell.list[0].art : ""
-                            showTitle: false
-                            shade: 0.8
-                            fade: cell.fadeShown
-                            Text {
-                                x: 12; y: parent.height - height - 10; width: parent.width - 70
-                                elide: Text.ElideRight
-                                text: cell.list.length ? cell.list[0].name : ""; color: Qt.tint(Theme.ink, Qt.rgba(0, 0, 0, cell.fadeShown))
-                                font.family: Theme.face; font.pixelSize: 17; font.weight: Font.DemiBold
-                            }
-                            Chip {
-                                anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8
-                                size: 14; text: cell.list.length ? "E" + cell.list[0].episode : ""; fade: cell.fadeShown
-                            }
-                            // how many more the day has
-                            Chip {
-                                visible: cell.list.length > 1
-                                anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8
-                                size: 14; kind: "solid"; text: "+" + (cell.list.length - 1); fade: cell.fadeShown
+                        NumberAnimation { id: leave; target: cell; property: "opacity"; to: 0; duration: 150; easing.type: Easing.InQuad }
+                        SequentialAnimation {
+                            id: enter
+                            PauseAnimation { id: enterPause }
+                            NumberAnimation { target: cell; property: "opacity"; to: 1; duration: 300; easing.type: Easing.OutCubic }
+                        }
+                        // the ripple: days nearer the side the grid turned toward arrive first
+                        Connections { target: grid; onTurned: { cell.opacity = 0; arrive.restart() } }
+                        SequentialAnimation {
+                            id: arrive
+                            PauseAnimation { duration: ((grid.turnDir > 0 ? cell.row + cell.col : (5 - cell.row) + (6 - cell.col)) / 11) * 300 }
+                            ParallelAnimation {
+                                NumberAnimation { target: cell; property: "opacity"; from: 0; to: 1; duration: 340; easing.type: Easing.OutQuad }
+                                NumberAnimation { target: rise; property: "y"; from: 26 * grid.turnDir; to: 0; duration: 440; easing.type: Easing.OutCubic }
+                                NumberAnimation { target: grow; property: "scale"; from: 0.88; to: 1; duration: 440; easing.type: Easing.OutCubic }
                             }
                         }
-                        // the date, top left; today's in a white pill
-                        Rectangle {
-                            x: 8; y: cell.stackRoom + 8
-                            height: 30; radius: 15; width: Math.max(30, date.implicitWidth + 16)
-                            color: cell.isToday ? Theme.focusFill : (cell.list.length ? "#73000000" : "transparent")
-                            Text {
-                                id: date
-                                anchors.centerIn: parent
-                                text: cell.day.getDate()
-                                color: cell.isToday ? Theme.inkOnLight : Qt.tint(Theme.ink, Qt.rgba(0, 0, 0, cell.fadeShown))
-                                font.family: Theme.face; font.pixelSize: 19; font.weight: Font.DemiBold
+
+                        Item {
+                            id: grow
+                            anchors.fill: parent
+                            Item {
+                                id: face
+                                anchors.fill: parent
+                                scale: cell.focused ? 1.06 : 1
+                                transform: Translate { y: cell.focused ? grid.nudge : 0 }
+                                Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.OutBack; easing.overshoot: 1.3 } }
+
+                                // the day drawn into one texture: a stack of cards with their chips and text is about a dozen
+                                // draw calls, and a month of them was 12-15 ms a frame on the TV. As one texture each day is a
+                                // single quad, re-drawn only when it changes (art loading, the stack rising, fading). It reaches
+                                // past the day for the stack that rises above it, and is a little larger so the lift stays sharp.
+                                Item {
+                                    id: deck
+                                    x: -4; y: -24; width: cell.width + 8; height: cell.height + 28
+                                    layer.enabled: true
+                                    opacity: cell.dayOpacity
+                                    Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+                                    layer.smooth: true
+                                    layer.textureSize: Qt.size(Math.ceil(width * 1.1), Math.ceil(height * 1.1))
+                                    Item {
+                                        x: 4; y: 24; width: cell.width; height: cell.height
+                                        // an empty day
+                                        Rectangle {
+                                            visible: cell.d.count === 0
+                                            anchors.fill: parent; radius: 14
+                                            color: cell.focused ? "#33ffffff" : "#17ffffff"
+                                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                        }
+                                        // the day's other releases, as up to two cards behind the top one: their top edges
+                                        // peek out above it, narrower and darker the further back, and rise when focused.
+                                        // Every day keeps both cards and shows what it needs, so turning the month creates
+                                        // no cards (creating them per month cost about 100 ms on the TV)
+                                        Repeater {
+                                            model: 2
+                                            MediaCard {
+                                                visible: index < cell.d.count - 1
+                                                readonly property real inset: (index + 1) * cell.width * 0.05
+                                                z: -1 - index
+                                                x: inset; width: cell.width - 2 * inset
+                                                y: cell.stackRoom - (index + 1) * (cell.focused ? 10 : 6)
+                                                height: cell.height - cell.stackRoom
+                                                Behavior on y { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
+                                                radius: 12
+                                                art: index ? cell.d.art2 : cell.d.art1
+                                                showTitle: false
+                                                fade: 0.4 + index * 0.25
+                                            }
+                                        }
+                                        // the day's first release
+                                        MediaCard {
+                                            id: top
+                                            visible: cell.d.count > 0
+                                            y: cell.stackRoom; width: cell.width; height: cell.height - cell.stackRoom
+                                            radius: 14
+                                            art: cell.d.art0
+                                            showTitle: false
+                                            shade: 0.8
+                                            Text {
+                                                x: 12; y: parent.height - height - 10; width: parent.width - 70
+                                                elide: Text.ElideRight
+                                                text: cell.d.name; color: Theme.ink; textFormat: Text.PlainText
+                                                font.family: Theme.face; font.pixelSize: 17; font.weight: Font.DemiBold
+                                            }
+                                            Chip {
+                                                anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 8
+                                                size: 14; text: cell.d.episode
+                                            }
+                                            // how many more the day has
+                                            Chip {
+                                                visible: cell.d.count > 1
+                                                anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8
+                                                size: 14; kind: "solid"; text: cell.d.more
+                                            }
+                                        }
+                                        // the date, top left; today's in a white pill
+                                        Rectangle {
+                                            x: 8; y: cell.stackRoom + 8
+                                            height: 30; radius: 15; width: Math.max(30, date.implicitWidth + 16)
+                                            color: cell.isToday ? Theme.focusFill : (cell.d.count ? "#73000000" : "transparent")
+                                            Text {
+                                                id: date
+                                                anchors.centerIn: parent
+                                                text: cell.d.date; textFormat: Text.PlainText
+                                                color: cell.isToday ? Theme.inkOnLight : Theme.ink
+                                                font.family: Theme.face; font.pixelSize: 19; font.weight: Font.DemiBold
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // today: a light runs around the top card
+                                ShaderEffect {
+                                    visible: cell.isToday
+                                    x: -2; y: cell.stackRoom - 2; width: cell.width + 4; height: cell.height - cell.stackRoom + 4
+                                    property size box: Qt.size(width, height)
+                                    property real radius: 16
+                                    property real angle: grid.sweep
+                                    fragmentShader: "
+                                        varying highp vec2 qt_TexCoord0;
+                                        uniform highp vec2 box;
+                                        uniform highp float radius;
+                                        uniform highp float angle;
+                                        uniform lowp float qt_Opacity;
+                                        void main() {
+                                            highp vec2 p = qt_TexCoord0 * box - box * 0.5;
+                                            highp vec2 q = abs(p) - (box * 0.5 - vec2(radius));
+                                            highp float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+                                            highp float ring = smoothstep(-3.0, -1.0, d) * (1.0 - smoothstep(-1.0, 0.5, d));
+                                            highp float a = atan(p.y, p.x) - angle;
+                                            a = mod(a + 3.14159, 6.28318) - 3.14159;
+                                            lowp float light = 0.25 + 0.75 * exp(-a * a * 2.5);
+                                            gl_FragColor = vec4(ring * light) * qt_Opacity;
+                                        }"
+                                }
                             }
-                        }
-                        // today: a light runs around the top card
-                        ShaderEffect {
-                            visible: cell.isToday
-                            x: -2; y: cell.stackRoom - 2; width: cell.width + 4; height: cell.height - cell.stackRoom + 4
-                            property size box: Qt.size(width, height)
-                            property real radius: 16
-                            property real angle: grid.sweep
-                            fragmentShader: "
-                                varying highp vec2 qt_TexCoord0;
-                                uniform highp vec2 box;
-                                uniform highp float radius;
-                                uniform highp float angle;
-                                uniform lowp float qt_Opacity;
-                                void main() {
-                                    highp vec2 p = qt_TexCoord0 * box - box * 0.5;
-                                    highp vec2 q = abs(p) - (box * 0.5 - vec2(radius));
-                                    highp float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
-                                    highp float ring = smoothstep(-3.0, -1.0, d) * (1.0 - smoothstep(-1.0, 0.5, d));
-                                    highp float a = atan(p.y, p.x) - angle;
-                                    a = mod(a + 3.14159, 6.28318) - 3.14159;
-                                    lowp float light = 0.25 + 0.75 * exp(-a * a * 2.5);
-                                    gl_FragColor = vec4(ring * light) * qt_Opacity;
-                                }"
                         }
                     }
                 }

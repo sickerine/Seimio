@@ -11,10 +11,17 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   and compares them with `tools/preview/baseline/`. A CHANGED state leaves the render and a brightened
   diff in `.lab/shots/`. Look at both: an intended change gets `tools/preview/shots.sh --approve <state>`,
   anything else gets fixed. A new control or state goes into the gallery or the state list too.
-- The TV check deploys and runs `tools/tour.sh home|show|menu` against the frame budget in `tour.sh`.
-  An OVER BUDGET line means a regression: find it with `VARIANT='{"timing": true}' tools/tour.sh <route>`
-  and `.lab/reports/*-design.json`, whose `log` lines stamp key presses, late frames and GUI-thread
-  stalls. Raise a budget only with measurements showing why.
+- The TV check deploys and runs `tools/tour.sh home|calendar|show|menu` against the frame budget in
+  `tour.sh`. A new screen or interaction gets a route there too. TV runs vary by about 2x, so judge a
+  change by three runs, not one. An OVER BUDGET line means a regression; find it like this:
+  1. `VARIANT='{"timing": true}' tools/tour.sh <route>`, then `tools/lab-timeline.py` lines up key
+     presses with GUI stalls and late frames. A stall a fixed time after a key (280 ms is the selection
+     committing) names its cause.
+  2. With Qt's renderer timing in the variant, `tools/lab-frames.py` says whether slow frames are
+     JavaScript-bound (short render, long GUI stall), draw-call bound (long render, one pass) or
+     capture-bound (many passes).
+  Timing logs perturb the TV; take counts from runs without them. Raise a budget only with
+  measurements showing why.
 
 ## Performance rules
 
@@ -32,6 +39,30 @@ Each rule comes from a measured stall on the C5.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.
 - State has one source: selection is `App.displayItem`, changed only by `commit()`; components take one
   input and apply explicit rules, as `Backdrop` and `HeroInfo` document at their top.
+- Each item costs a draw call and Qt draws items that are off screen. A screen of repeated composites
+  (a month of calendar days, each a stack of cards with chips and text) draws each one into its own
+  texture (`layer.enabled`): 460 draw calls became 42 quads and the main pass went from 12-15 ms to 2-3.
+  Keep anything that animates every frame (today's light) outside the layer, or it re-renders it.
+- Fade, move and scale whole composites, never their parts. Opacity on a layered item fades it as one
+  piece, natively, without re-rendering it. Per-part fades (darkening colours, child opacities) are
+  JavaScript bindings per frame per item and re-render the layer each frame.
+- Never drive many items from one animated value: a 0-to-1 property read by 42 days' bindings cost
+  30 ms a frame. Give each item its own animation on its own properties (with per-item delays for a
+  ripple or stagger), which runs without JavaScript.
+- Never ease (Behavior) a value that another animation already drives: the easing restarts every frame
+  and lags far behind, so the result looks stuck.
+- Bulk updates go a few items per frame. A day's update (bindings, text layout, image source) is ~3 ms
+  on the TV: a month at once was 80-110 ms, a week at a time 25 ms a frame. `MonthGrid.refill()` updates
+  what's on screen at once and the rest three days a frame, each before its own fade-in starts.
+- Precompute what an item shows in one JavaScript call and hand it over as plain fields; Date maths and
+  helper calls inside each item's bindings multiply by the item count.
+- A Repeater's count never depends on data in something that refreshes: keep a fixed pool and hide what
+  isn't needed (two back cards per day; creating them per month cost ~100 ms).
+- Hidden things don't follow the selection (`HeroInfo` gets `null` while the calendar hides it), and
+  work that runs while something slides away waits until it has (the calendar returns to today 520 ms
+  after it leaves).
+- A frozen blur refreshes every 50 ms, not every frame, while its source changes (`BlurChain`); every
+  frame cost ~10 render passes and a blur that wide hides the difference.
 
 ## Visual rules
 

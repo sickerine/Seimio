@@ -203,8 +203,13 @@ FocusScope {
             }
         }
     }
-    // leaving returns the grid to today, then folds it back into a peek of this week
-    onActiveChanged: { if (!active) { closeTheDay(); grid.select(today) } grid.revealAll = active }
+    // leaving folds the grid back into a peek and, once it has slid away, returns it to today without
+    // animating: a month turn played during the slide cost frames
+    onActiveChanged: {
+        if (active) backToToday.stop(); else { closeTheDay(); backToToday.restart() }
+        grid.revealAll = active;
+    }
+    Timer { id: backToToday; interval: 520; onTriggered: grid.jump(section.today) }
     Component.onCompleted: grid.revealAll = active
 
     // the peek's title, like the other rows of Home

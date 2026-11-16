@@ -26,7 +26,7 @@ fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; [ "$s" = gallery ] && screen="$P/gallery.qml"
   rm -f "$OUT/$s.png" "$OUT/$s-diff.png"
-  (cd "$REPO/app" && perl -e 'alarm 40; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 >/dev/null 2>&1)
+  (cd "$REPO/app" && perl -e 'alarm 60; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 >/dev/null 2>&1)
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }
   base="$P/baseline/$s.png"
   if [ $approve = 1 ]; then

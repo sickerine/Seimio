@@ -1,8 +1,9 @@
 #!/bin/bash
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
-# phase (render-thread stamps from LabProbe). Routes: home (rows, tabs, a movie's title page), show (a show page),
-# menu (quick actions opening and closing on a timer).
-# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|show|menu   (VARIANT: LabProbe switches)
+# phase (render-thread stamps from LabProbe). Routes: home (Continue Watching, tabs, a movie's title
+# page), calendar (entering it, moving, scrolling into the next month, a day opening and turning,
+# leaving), show (a show page), menu (quick actions opening and closing on a timer).
+# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
@@ -10,12 +11,16 @@ route=${1:-home}
 mkdir -p .lab/www
 python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v.update({"autopop": True} if sys.argv[2] == "menu" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
 failed=0
-ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null || { echo "  launch failed"; failed=1; }; sleep 5
+# 8 s: the catalog loads and the calendar's art decodes for about 5 s after launch; that's startup, not
+# what a tour measures
+ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null || { echo "  launch failed"; failed=1; }; sleep 8
 N=~/.nvm/versions/node/v22.22.0/bin/node; S=$(date +%s)
 p() { $N tools/tvremote.mjs press $1 ${2:-1} ${3:-350} 2>&1 | grep -q sent || { echo "  press $1 failed"; failed=1; }; }
 case $route in
-  home) p RIGHT 8 300; p DOWN 1 900; p RIGHT 5 300; p LEFT 3 300; p UP 1 900; p UP 1 700; p RIGHT 3 400; p DOWN 1 700
-        p DOWN 1 700; p ENTER 1 1500; p RIGHT 2 400; p BACK 1 1500 ;;
+  home) p RIGHT 6 300; p LEFT 4 300; p UP 1 900; p RIGHT 3 400; p LEFT 3 400; p DOWN 1 900
+        p RIGHT 2 600; p ENTER 1 1500; p RIGHT 2 400; p BACK 1 1500 ;;
+  calendar) p DOWN 1 1500; p RIGHT 4 300; p LEFT 3 300; p ENTER 1 1800; p RIGHT 4 400; p RIGHT 6 300; p RIGHT 1 1500
+        p BACK 1 1500; p DOWN 2 500; p DOWN 1 1500; p LEFT 3 300; p UP 6 500; p UP 1 1500 ;;
   show) p RIGHT 1 600; p ENTER 1 1500; p RIGHT 2 400; p DOWN 1 600; p LEFT 1 900; p RIGHT 1 900; p DOWN 1 600
         p RIGHT 4 350; p LEFT 2 350; p UP 1 600; p UP 1 600; p BACK 1 1500 ;;
   menu) sleep 15 ;;
