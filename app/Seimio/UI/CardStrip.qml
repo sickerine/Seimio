@@ -41,6 +41,7 @@ FocusScope {
     function jumpTo(i) { currentIndex = i; slide.stop(); scroll = i * stride }
     onCurrentIndexChanged: { slide.to = currentIndex * stride; slide.restart() }
     onCountChanged: if (currentIndex >= count) jumpTo(Math.max(0, count - 1))
+    onStrideChanged: jumpTo(currentIndex)
     NumberAnimation { id: slide; target: strip; property: "scroll"; duration: 400; easing.type: Theme.ease }
 
     Repeater {

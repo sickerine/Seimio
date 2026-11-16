@@ -61,6 +61,8 @@ FocusScope {
                     focus: home.row === index
                     showFocus: activeFocus || (home.holdFocus && home.row === index)
                     onCurrentIndexChanged: home.setCol(index, currentIndex)
+                    // a row recreated with new rows picks up where it was
+                    Component.onCompleted: jumpTo(Math.max(0, Math.min(home.cols[index] || 0, count - 1)))
                     onActivated: home.activated(parent.r.items[cardIndex])
                     onHeld: home.held(parent.r.items[cardIndex])
                 }

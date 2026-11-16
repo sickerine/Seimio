@@ -96,7 +96,7 @@ Item {
             uniform highp float zoom;
             uniform highp float pan;
             void main() {
-                highp vec2 p = (qt_TexCoord0 - 0.5) / zoom + vec2(pan, 0.0);
+                highp vec2 p = (qt_TexCoord0 - 0.5 + vec2(pan, 0.0)) / zoom;
                 lowp vec3 a = texture2D(tex0, clamp(0.5 + p * crop0, 0.0, 1.0)).rgb;
                 lowp vec3 b = texture2D(tex1, clamp(0.5 + p * crop1, 0.0, 1.0)).rgb;
                 lowp vec3 f = mix(a, b, front);

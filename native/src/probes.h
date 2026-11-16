@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <QLoggingCategory>
 #include <time.h>
+#include <atomic>
 
 inline double monoMs() { timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
@@ -13,7 +14,7 @@ inline double monoMs() { timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return 
 // monoMs(), so a slow frame can be lined up with the key press or GUI stall behind it.
 inline QStringList g_logLines;
 inline QMutex g_logMutex;
-inline bool g_logOn = false;
+inline std::atomic<bool> g_logOn{false};      // set on the GUI thread, read on the render thread
 inline void labLog(const QString &line) {
     if (!g_logOn) return;
     QMutexLocker l(&g_logMutex);
