@@ -1,5 +1,5 @@
 // HeroInfo never settles on its item while faded out. Run by tools/check.sh:
-//   qmltestrunner -input tools/tests -import app
+//   qmltestrunner -input tools/tests -import app -import tools/preview/imports
 import QtQuick 2.12
 import QtTest 1.2
 import "../../app/qml"

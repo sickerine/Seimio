@@ -6,7 +6,7 @@
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 fail=0
 echo "visual check"; tools/preview/shots.sh || fail=1
-echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
+echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app -import tools/preview/imports 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
 [ "$1" = --mac ] && exit $fail
 
 started=""

@@ -2,8 +2,8 @@
 // Home's tabs are (anime: All, Seasonal, BD; anything else: All, Supported, Unsupported, starting on
 // Supported), the title and a summary of what's listed on the left, the streams on the right. Anime lists
 // by seeders, anything else keeps Torrentio's quality-first order (as in the patched Stremio app).
-// open(item, entry) shows the loading rows, then the streams (entry is from app/art/streams.json; the lab
-// data arrives after a pause so the loading state shows). OK on a stream emits play(stream).
+// open(item, type, videoId, label) shows the loading rows while `streams` (Seimio.Data) fetches and reads
+// the video's streams, then deals them in. OK on a stream emits play(stream).
 import QtQuick 2.12
 import Seimio.UI 1.0
 
@@ -11,7 +11,9 @@ FocusScope {
     id: page
     property bool active: false
     property var item: null
-    property var entry: null
+    property var entry: null             // { anime, streams, failure }
+    property var streams                 // Seimio.Data Streams
+    property string label: ""            // the episode, "S2 E3" or "E7"; empty for a movie
     property Item source                 // what the filter bar's glass shows (already blurred)
     property bool loading: true
     property bool fresh: false           // rows deal in one after another while true
@@ -23,20 +25,23 @@ FocusScope {
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: page.active ? 240 : 200 } }
 
-    readonly property bool anime: !!(entry && entry.anime)
+    readonly property bool anime: animeOpen
     readonly property var kinds: anime ? ["All", "Seasonal", "BD"] : ["All", "Supported", "Unsupported"]
     readonly property var captions: anime ? ["streams", "seasonal releases", "Blu-ray releases"] : ["streams", "play here", "won't play here"]
     readonly property int kind: bar.currentIndex
-    property var pendingEntry: null
+    property bool animeOpen: false
 
-    function open(title, data) {
-        item = title; entry = null; rows = []; loading = true; starting = -1;
-        pendingEntry = data || { anime: title && title.id.indexOf("kitsu:") === 0, streams: [] };
-        bar.currentIndex = pendingEntry.anime ? 0 : 1;
+    function open(title, type, videoId, episodeLabel) {
+        item = title; label = episodeLabel; entry = null; rows = []; loading = true; starting = -1;
+        animeOpen = videoId.indexOf("kitsu:") === 0;
+        bar.currentIndex = animeOpen ? 0 : 1;
         list.currentIndex = 0; list.focus = true;
-        arrive.restart();
+        streams.fetch(type, videoId);
     }
-    Timer { id: arrive; interval: 1100; onTriggered: { page.entry = page.pendingEntry; page.loading = false; page.refilter() } }
+    Connections {
+        target: page.streams
+        onReady: { page.entry = { anime: page.animeOpen, streams: streams, failure: failure }; page.loading = false; page.refilter() }
+    }
     onKindChanged: if (!loading) refilter()
 
     function refilter() {
@@ -81,7 +86,7 @@ FocusScope {
             TitleArt { width: 480; height: 150; logo: page.item && page.item.logo ? page.item.logo : ""; name: page.item ? page.item.name : ""; nameSize: 56 }
             Row {
                 spacing: 10
-                Chip { visible: !!(page.item && page.item.episode); kind: "solid"; icon: "play"; text: page.item && page.item.episode ? page.item.episode : "" }
+                Chip { visible: page.label !== ""; kind: "solid"; icon: "play"; text: page.label }
                 Chip { visible: !!(page.item && page.item.year); text: page.item && page.item.year ? page.item.year : "" }
             }
             Item { width: 1; height: 24 }
@@ -168,7 +173,9 @@ FocusScope {
         }
         Text {
             width: 900; wrapMode: Text.WordWrap
-            text: page.entry && page.entry.streams.length ? "Try All to see every release." : "Nobody has released " + (page.item && page.item.episode ? page.item.episode : "this") + " yet. It shows here once someone does."
+            text: page.entry && page.entry.failure ? "Couldn't reach Torrentio: " + page.entry.failure
+                : page.entry && page.entry.streams.length ? "Try All to see every release."
+                : "Nobody has released " + (page.label || "this") + " yet. It shows here once someone does."
             color: Theme.inkDim; font.family: Theme.face; font.pixelSize: 26
         }
     }
@@ -247,14 +254,15 @@ FocusScope {
         }
     }
 
-    // a release name without the title in front: from just after the episode tag or year, when that
-    // leaves enough to tell releases apart
+    // a release name without the title in front: its group, then what follows the episode tag or year,
+    // when that leaves enough to tell releases apart
     function shortName(name) {
         var t = name.replace(/\./g, " ");
         var m = /\bS\d{1,2}E\d{1,4}\b|\[S\d{1,2}E\d{1,4}\]|\s-\s\d{1,4}\b|[(\[ ](19|20)\d\d[)\] ]/i.exec(t);
         if (!m || m.index < 4 || m.index > t.length * 0.6) return t;
-        var rest = t.slice(m.index + m[0].length).replace(/^[\s\]\)\-:]+/, "");
-        return rest.length > 12 ? rest : t;
+        var rest = t.slice(m.index + m[0].length).replace(/^[\s\]\)\-:]+/, "").replace(/\s(mkv|mp4|avi)$/i, "");
+        var group = /^\[[^\]]+\]/.exec(t);                   // the release group, as anime names lead with it
+        return rest.length > 12 ? (group ? group[0] + " " : "") + rest : t;
     }
 
     function choose() {

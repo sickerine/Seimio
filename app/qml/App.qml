@@ -50,10 +50,17 @@ WebOSWindow {
         if (displayItem && catalog.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
-    // MOCK: the stream picker and player, on lab data (app/art/streams.json, tools/fetch-streams.mjs)
-    property var streamData: ({})
+    // MOCK: the stream picker and player. A show's page passes the episode; the title page plays the movie,
+    // or the show's only episode
     property string pageLayer: "title"          // the page the picker returns to
-    function openStreams() { pageLayer = layer; streamPage.open(displayItem, streamData[displayItem.id]); layer = "streams" }
+    function openStreams(episode) {
+        if (!episode) {
+            var show = showData(displayItem.id), only = show && show.seasons && show.seasons.length ? show.seasons[0].episodes[0] : null;
+            episode = only ? { id: only.id, label: "E" + only.episode } : null;
+        }
+        pageLayer = layer; layer = "streams";
+        streamPage.open(displayItem, episode ? "series" : "movie", episode ? episode.id : displayItem.id, episode ? episode.label : "");
+    }
     readonly property bool watching: layer === "player" && player.playing
     function openMenu() { commit(); layer = "menu"; probe.captures() }
     onLayerChanged: { probe.act(layer); probe.captures() }
@@ -69,6 +76,7 @@ WebOSWindow {
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     WindowTools { id: tools }
+    Streams { id: streams; addon: "https://torrentio.strem.fun/torbox=TORBOX_KEY/" }
     LabProbe {
         id: probe; window: app
         stateOf: function () {
@@ -139,7 +147,7 @@ WebOSWindow {
             ShowScreen {
                 id: showPage
                 focus: app.layer === "show"
-                onPlay: app.openStreams()
+                onPlay: app.openStreams(episode)
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: probe.act("show " + ["actions", "seasons", "episodes"][zone])
@@ -198,6 +206,7 @@ WebOSWindow {
             focus: app.layer === "streams"
             active: app.layer === "streams"
             source: backdropFrost
+            streams: streams
             onPlay: { player.start(stream, app.displayItem); app.layer = "player" }
         }
         PlayerScreen {
@@ -228,9 +237,5 @@ WebOSWindow {
         // Back reaches the app only with this window property; without it webOS opens the exit menu
         tools.setWindowProperty(app, "_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
         requestActivate();
-        // MOCK: the picker's lab streams
-        var x = new XMLHttpRequest();
-        x.onreadystatechange = function () { if (x.readyState === XMLHttpRequest.DONE && x.responseText) app.streamData = JSON.parse(x.responseText) };
-        x.open("GET", Qt.resolvedUrl("../art/streams.json")); x.send();
     }
 }

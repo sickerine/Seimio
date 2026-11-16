@@ -18,7 +18,9 @@ FocusScope {
     width: Theme.screenWidth; height: Theme.screenHeight
 
     readonly property var seasons: show ? show.seasons : []
-    signal play()
+    // OK on Play or on an episode: { id, label } of the episode to play
+    signal play(var episode)
+    function target(season, ep) { return ep ? { id: ep.id, label: (seasons.length > 1 ? "S" + season + " " : "") + "E" + ep.episode } : null }
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
     // the season the episode row shows and its card data, set together by showSeason(), so the row is
     // built once per change instead of once per binding that moves
@@ -124,7 +126,7 @@ FocusScope {
         ButtonRow {
             id: actions
             focus: page.zone === 0
-            onTriggered: if (buttonIndex === 0) page.play()
+            onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.target(page.resumeSeason.season, page.resumeEp))
             model: [
                 { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 },
                 { label: "Add to library", icon: "plus", round: true },
@@ -160,6 +162,7 @@ FocusScope {
                 model: page.episodeData
                 cardWidth: 384; cardHeight: 216; spacing: 32
                 showTitles: false; nextLabels: false
+                onActivated: if (page.episodes[cardIndex]) page.play(page.target(page.seasons[page.shownSeason].season, page.episodes[cardIndex]))
             }
             // the focused episode (or the resume episode while focus is above the row)
             Item {
