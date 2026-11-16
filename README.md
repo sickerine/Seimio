@@ -9,7 +9,7 @@ with a C++ plugin for LG's media server and libass subtitles. Built and measured
 |---|---|
 | `app/` | The webOS app package: `appinfo.json`, `main.qml` (loads the plugin, then `qml/App.qml`) |
 | `app/Seimio/UI/` | The UI library (`import Seimio.UI 1.0`): theme, controls, glass and frost, cards, strips |
-| `app/qml/` | Screens built from the library: Home, the show page, the movie sheet, quick actions |
+| `app/qml/` | Screens built from the library: Home, the show page, the title page (movies, single episodes), quick actions |
 | `native/` | The `Seimio.Native` plugin: Luna calls, the media server player, libass subtitles, window properties, lab probes |
 | `core/` | stremio-core built natively for the TV (currently a probe; the app still uses lab data) |
 | `third_party/libass/` | libass with FriBidi and HarfBuzz, built for the TV |

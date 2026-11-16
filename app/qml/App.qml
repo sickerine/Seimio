@@ -1,7 +1,7 @@
 // The app window. State lives here and nowhere else:
-//   layer        which screen has the remote: home | tabs | show | sheet | menu
+//   layer        which screen has the remote: home | tabs | show | title | menu
 //   focusItem    the title the remote is on (from Home), changes instantly
-//   displayItem  the one title the backdrop, info, show page and sheet render; it changes only through
+//   displayItem  the one title the backdrop, info and the title pages render; it changes only through
 //                commit(). Moving focus commits once it settles, so key presses stay light; opening
 //                anything commits first, so nothing opens on a stale title.
 // Screens and controls handle their own keys (Qt focus scopes); a key nobody handles reaches the root
@@ -37,9 +37,12 @@ WebOSWindow {
 
     function open() {
         commit();
+        // the title page is for a movie, or a show whose whole run is one season with one episode; any
+        // other show gets the show page, even when one of its seasons has a single episode
         var show = displayItem ? catalog.series[displayItem.id] : null;
-        if (show) { showPage.open(displayItem, show); layer = "show" }
-        else layer = "sheet";
+        var episodes = show ? show.seasons.reduce(function (n, s) { return n + s.episodes.length }, 0) : 0;
+        if (episodes > 1) { showPage.open(displayItem, show); layer = "show" }
+        else { titlePage.open(displayItem); layer = "title" }
     }
     function openMenu() { commit(); layer = "menu"; probe.captures() }
     onLayerChanged: probe.act(layer)
@@ -76,26 +79,28 @@ WebOSWindow {
                 Behavior on pan { NumberAnimation { id: panning; duration: 700; easing.type: Theme.ease } }
                 onCrossfadeStarted: probe.act("hero crossfade")
             }
-            // the backdrop frosts under the movie sheet, and on Home below the first row, where the info
-            // has stepped aside and the art is only a background
+            // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
+            // is only a background
             Frost {
                 anchors.fill: parent
                 source: hero
                 frozen: true; sourceBusy: hero.busy || panning.running
-                opacity: app.layer === "sheet" || (app.onHome && home.scrolled) ? 1 : (app.warming ? 0.003 : 0)
+                opacity: app.onHome && home.scrolled ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
                 anchors.fill: parent
-                side: app.layer === "show" ? 0.95 : 0.85
-                sideMid: app.layer === "show" ? 0.35 : 0.15
-                footMid: app.layer === "show" ? 0.7 : 0.55
+                readonly property bool page: app.layer === "show" || app.layer === "title"
+                side: page ? 0.95 : 0.85
+                sideMid: page ? 0.35 : 0.15
+                footMid: page ? 0.7 : 0.55
             }
             HeroInfo {
                 id: info
                 x: Theme.margin
                 item: app.displayItem
-                y: app.layer === "sheet" ? 120 : (home.scrolled ? 90 : 150)
+                // on the title page it moves down to sit just above the actions
+                y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : (home.scrolled ? 90 : 150)
                 Behavior on y { NumberAnimation { duration: 460; easing.type: Theme.ease } }
                 // below Home's first row, and on the show page, the info steps aside
                 property real away: (home.scrolled && app.onHome) || app.layer === "show" ? 1 : 0
@@ -109,6 +114,11 @@ WebOSWindow {
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: probe.act("show " + ["actions", "seasons", "episodes"][zone])
+            }
+            TitleScreen {
+                id: titlePage
+                focus: app.layer === "title"
+                active: app.layer === "title"
             }
             HomeScreen {
                 id: home
@@ -147,13 +157,6 @@ WebOSWindow {
             Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
             Behavior on opacity { NumberAnimation { duration: 300 } }
             onCurrentIndexChanged: probe.act("tabs")
-        }
-        MovieSheet {
-            id: sheet
-            focus: app.layer === "sheet"
-            open: app.layer === "sheet"
-            source: scene
-            related: catalog.rows.length > 1 ? catalog.rows[1].items.slice(0, 11) : []
         }
         QuickMenu {
             id: menu

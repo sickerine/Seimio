@@ -13,6 +13,8 @@ Item {
     id: info
     property var item: null
     width: 900; height: 400
+    // where the description ends, for placing things under the info
+    readonly property real contentHeight: description.y + description.height
 
     property var m: null
     property var pending: null
@@ -53,6 +55,7 @@ Item {
             ChipRow { model: info.m ? info.m.chips : []; stagger: 50 }
         }
         Text {
+            id: description
             y: 272; width: 780; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight
             text: info.m ? info.m.description : ""; color: Theme.inkSoft
             font.family: Theme.face; font.pixelSize: 26; lineHeight: 1.22

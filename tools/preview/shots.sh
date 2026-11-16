@@ -13,10 +13,10 @@ js() {
     home-row2) echo "$HOME_JS f(win.canvas).row = 1" ;;
     show) echo 'win.open()' ;;
     menu) echo 'win.openMenu()' ;;
-    sheet) echo 'win.layer = "sheet"' ;;
+    title) echo "$HOME_JS f(win.canvas).row = 1; win.open()" ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home home-row2 show menu sheet gallery)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home home-row2 show menu title gallery)
 fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; [ "$s" = gallery ] && screen="$P/gallery.qml"

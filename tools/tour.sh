@@ -1,6 +1,6 @@
 #!/bin/bash
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
-# phase (render-thread stamps from LabProbe). Routes: home (rows, tabs, sheet), show (a show page),
+# phase (render-thread stamps from LabProbe). Routes: home (rows, tabs, a movie's title page), show (a show page),
 # menu (quick actions opening and closing on a timer).
 # usage: [VARIANT='{"timing": true}'] tools/tour.sh home|show|menu   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
