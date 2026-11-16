@@ -27,19 +27,10 @@ OK goes through `OkPress` in each control and one app-wide gesture in `Remote`, 
 a hold (LG's remote sends a held key as release and press pairs). A hold that opens quick actions keeps
 its owner, so the rest of the hold can't press anything in the menu.
 
-## Performance rules
+## Rules and checks
 
-Measured on the C5 with `tools/tour.sh` (frame pacing per phase) and `VARIANT='{"timing": true}'`,
-which adds stamped key presses, late frames, GUI-thread stalls and Qt's render loop timing.
-
-- The plugin turns off Qt's texture atlas: adding an image to it while the GPU still reads it stalls the
-  driver for 10 to 15 ms.
-- `CardStrip` keeps a fixed pool of cards and hands them new data as the row moves, so moving or
-  swapping a model never creates items. Repeaters key on the model's length for the same reason.
-- Hidden screens don't bind to the selection. The show page is built ahead of time while Home is idle
-  (`ShowScreen.load`), and its episode row changes only through `showSeason()`.
-- Full-screen layers are single shaders: `Backdrop` crossfades both images in one opaque pass.
-- Icons are distance-field shaders, not Canvas: no painting or texture upload per icon.
+`AGENTS.md` holds the performance and visual rules and the check to run before pushing
+(`tools/check.sh`).
 
 ## Building and running
 
@@ -48,4 +39,5 @@ which adds stamped key presses, late frames, GUI-thread stalls and Qt's render l
 3. `tools/fetch-art.py` fetches lab art and your watch state into `app/art/`.
 4. `python3 -I tools/lab-server.py &` then `tools/deploy.sh`.
 5. `tools/tour.sh home|show|menu` drives the TV with the network remote and prints frame pacing.
-6. `tools/preview/shot.sh out.png` renders the app on the Mac (Qt 5 from Homebrew) for screenshots.
+6. `tools/preview/shot.sh out.png` renders the app on the Mac (Qt 5 from Homebrew) for screenshots;
+   `tools/preview/shots.sh` compares fixed states with the approved images.
