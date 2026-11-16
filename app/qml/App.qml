@@ -73,14 +73,16 @@ WebOSWindow {
                 target: app.displayItem ? app.displayItem.backdrop : ""
                 // parallax: the backdrop drifts a little against moves along a row
                 pan: app.onHome ? Math.min(8, home.cols[home.row] || 0) * 5 : 0
-                Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
+                Behavior on pan { NumberAnimation { id: panning; duration: 700; easing.type: Theme.ease } }
                 onCrossfadeStarted: probe.act("hero crossfade")
             }
+            // the backdrop frosts under the movie sheet, and on Home below the first row, where the info
+            // has stepped aside and the art is only a background
             Frost {
                 anchors.fill: parent
                 source: hero
-                frozen: true; sourceBusy: hero.busy
-                opacity: app.layer === "sheet" ? 1 : (app.warming ? 0.003 : 0)
+                frozen: true; sourceBusy: hero.busy || panning.running
+                opacity: app.layer === "sheet" || (app.onHome && home.scrolled) ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
