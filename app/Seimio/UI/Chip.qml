@@ -1,5 +1,6 @@
 // A rounded label. kind "glass" (translucent, the default), "solid" (white with dark text) or "rating"
 // (gold with dark text). `icon` adds a leading icon; `size` is the font size and the chip scales with it.
+// The padding is measured from the drawn icon, so both ends look equal.
 import QtQuick 2.12
 
 Rectangle {
@@ -24,11 +25,11 @@ Rectangle {
         visible: chip.icon !== ""
         name: chip.icon; color: chip.ink
         width: chip.size; height: chip.size
-        x: Math.round(chip.size * 0.65); anchors.verticalCenter: parent.verticalCenter
+        x: chip.padX - inkLeft; anchors.verticalCenter: parent.verticalCenter
     }
     Text {
         id: label
-        x: chip.icon !== "" ? glyph.x + glyph.width + Math.round(chip.size * 0.3) : chip.padX
+        x: chip.icon !== "" ? glyph.x + glyph.inkRight + Math.round(chip.size * 0.35) : chip.padX
         anchors.verticalCenter: parent.verticalCenter
         text: chip.text; color: chip.ink
         font.family: Theme.face; font.pixelSize: chip.size; font.weight: chip.glass ? Font.Medium : Font.Bold

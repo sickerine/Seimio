@@ -1,6 +1,8 @@
 // A pill button with an icon and a label, or a round icon-only button whose name appears under it while
 // focused. Focus turns it white with dark ink and lifts it with a small overshoot. `primary` keeps it
-// white at rest. `progress` (0 to 100) draws a thin bar inside, for "Resume" buttons.
+// white at rest. `progress` (0 to 100) draws a thin bar under the label, for "Resume" buttons. The
+// padding is measured from the drawn icon and text, equal on both sides, and the label and bar are
+// centred together as one block, with the bar spanning exactly the icon and label above it.
 import QtQuick 2.12
 
 Item {
@@ -14,7 +16,10 @@ Item {
     readonly property bool light: focused || primary
     readonly property color inkColor: light ? Theme.inkOnLight : Theme.ink
 
-    implicitWidth: round ? 76 : text.implicitWidth + (icon !== "" ? 104 : 64)
+    readonly property int padX: 34
+    readonly property int gap: 16                  // between the drawn icon and the label
+    readonly property bool hasBar: !round && progress > 0
+    implicitWidth: round ? 76 : text.x + text.implicitWidth + padX
     implicitHeight: 76
     width: implicitWidth; height: implicitHeight
 
@@ -29,23 +34,29 @@ Item {
         Behavior on scale { NumberAnimation { duration: 240; easing.type: Theme.spring; easing.overshoot: 1.6 } }
         Behavior on color { ColorAnimation { duration: Theme.fast } }
 
+        // with a bar, the label rises so the block from the top of its capitals to the bottom of the bar
+        // is centred (measured on the render: the line box has room above the capitals, so centring
+        // the box would sit the block low)
+        readonly property real labelY: parent.height / 2 - (btn.hasBar ? 9.5 : 0)
         Icon {
+            id: glyph
             visible: btn.icon !== ""
             name: btn.icon; color: btn.inkColor
-            x: btn.round ? (parent.width - width) / 2 : 32
-            anchors.verticalCenter: parent.verticalCenter
+            x: btn.round ? (parent.width - width) / 2 : btn.padX - inkLeft
+            y: (btn.round ? parent.height / 2 : body.labelY) - height / 2
         }
         Text {
             id: text
             visible: !btn.round
-            x: btn.icon !== "" ? 72 : 32
-            anchors.verticalCenter: parent.verticalCenter
+            x: btn.icon !== "" ? glyph.x + glyph.inkRight + btn.gap : btn.padX
+            y: body.labelY - height / 2
             text: btn.label; color: btn.inkColor
             font.family: Theme.face; font.pixelSize: 28; font.weight: Font.DemiBold
         }
         Rectangle {
-            visible: btn.progress > 0
-            x: 34; y: parent.height - 14; width: parent.width - 68; height: 4; radius: 2
+            visible: btn.hasBar
+            x: btn.padX; width: parent.width - 2 * btn.padX
+            y: body.labelY + 17 + 9; height: 4; radius: 2
             color: btn.light ? "#26000000" : "#33ffffff"
             Rectangle { width: parent.width * Math.min(100, btn.progress) / 100; height: parent.height; radius: 2; color: btn.inkColor }
         }

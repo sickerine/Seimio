@@ -1,6 +1,7 @@
 // Small vector icons: play, plus, check, search, info, star. Each is a distance field drawn by one
 // shader, so an icon costs no painting, no texture and no upload when it's created or recoloured,
-// and stays sharp at any size or scale.
+// and stays sharp at any size or scale. `inkLeft`/`inkRight` are where the drawn shape starts and ends
+// in pixels, so a control can pad an icon by what you see rather than by its box.
 import QtQuick 2.12
 
 ShaderEffect {
@@ -9,6 +10,9 @@ ShaderEffect {
     width: 28; height: 28
     property real kind: ["play", "plus", "check", "search", "info", "star"].indexOf(name)
     property real px: 1 / Math.max(1, width)        // one pixel in icon units, for antialiasing
+    readonly property var ink: [[0.28, 0.84], [0.125, 0.875], [0.145, 0.875], [0.145, 0.895], [0.085, 0.915], [0.063, 0.937]][kind] || [0, 1]
+    readonly property real inkLeft: ink[0] * width
+    readonly property real inkRight: ink[1] * width
     fragmentShader: "
         varying highp vec2 qt_TexCoord0;
         uniform lowp vec4 color;                         // Qt passes colours premultiplied
