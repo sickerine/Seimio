@@ -85,8 +85,10 @@ FocusScope {
         stager.start();
     }
     onMonthChanged: refill()
-    onEntriesChanged: refill()
-    onTodayChanged: refill()
+    // new data or a new day: the selected week at once, the rest a few days a frame
+    function refreshAll() { firstWeek = Math.max(0, Math.min(5, Math.floor(indexOf(selected) / 7))); refill() }
+    onEntriesChanged: refreshAll()
+    onTodayChanged: refreshAll()
     Timer {
         id: stager; interval: 16; repeat: true
         onTriggered: {

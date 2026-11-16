@@ -159,6 +159,7 @@ FocusScope {
             x: (section.width - width) / 2; y: 44 - 64
             focus: section.zone === 0
             source: section.glassSource
+            preblurred: true                 // the source is the backdrop's frost
             sx: x; sy: section.sceneY + y
             shadow: 0.8
             model: section.months.map(function (m) { return m.toLocaleDateString(Qt.locale(), "MMMM") })

@@ -15,17 +15,28 @@ Item {
     property real sx: x
     property real sy: y
     readonly property real pad: 32     // margin captured around the panel for the refraction to pull from
+    // the source is already blurred (a Frost): the panel samples it directly instead of blurring it again
+    property bool preblurred: false
     readonly property bool onScreen: visible && opacity > 0 && sy < (source ? source.height : 0) && sy + height > 0
 
+    readonly property rect captured: Qt.rect(sx - pad, sy - pad, width + 2 * pad, height + 2 * pad)
     BlurChain {
         id: blur
         source: glass.source
-        sourceRect: Qt.rect(glass.sx - glass.pad, glass.sy - glass.pad, glass.width + 2 * glass.pad, glass.height + 2 * glass.pad)
-        active: glass.onScreen
+        sourceRect: glass.captured
+        active: glass.onScreen && !glass.preblurred
+    }
+    ShaderEffectSource {
+        id: direct
+        sourceItem: glass.preblurred ? glass.source : null
+        sourceRect: glass.captured
+        textureSize: blur.quarterSize
+        live: glass.onScreen && glass.preblurred
+        hideSource: false; visible: false; smooth: true
     }
     ShaderEffect {
         anchors.fill: parent
-        property var tex: blur.output
+        property var tex: glass.preblurred ? direct : blur.output
         property size box: Qt.size(width, height)
         property size inset: Qt.size(glass.pad / (glass.width + 2 * glass.pad), glass.pad / (glass.height + 2 * glass.pad))
         property real radius: glass.radius

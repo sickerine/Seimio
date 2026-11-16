@@ -33,12 +33,13 @@ WebOSWindow {
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
-    // the show page for the selected title is built once Home has been still for a moment (after the
-    // backdrop and info have changed), so opening it costs nothing
+    // the show page for the selected Continue Watching title is built once Home has been still for a
+    // moment (after the backdrop and info have changed), so opening it costs nothing. Not from the
+    // calendar: resting on its days would build a page each time (~25 ms) for an open that's rarer there
     onDisplayItemChanged: prepareShow.restart()
     Timer {
         id: prepareShow; interval: 1200
-        onTriggered: { var show = app.displayItem && catalog.series[app.displayItem.id]; if (show && app.onHome) showPage.load(app.displayItem, show) }
+        onTriggered: { var show = app.displayItem && catalog.series[app.displayItem.id]; if (show && app.onHome && home.row === 0) showPage.load(app.displayItem, show) }
     }
 
     function open() {

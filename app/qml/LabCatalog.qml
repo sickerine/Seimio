@@ -18,6 +18,10 @@ QtObject {
     property var series: ({})
     property var calendar: ({})
     property var airing: []
+    // the calendar is built once, when the three files it needs have arrived: each build refreshes every
+    // day of the calendar, which costs about 100 ms on the TV
+    property int waiting: 3
+    function arrived() { if (--waiting === 0) buildCalendar() }
     readonly property string base: Qt.resolvedUrl("../art/")
 
     function load(name, done) {
@@ -56,12 +60,13 @@ QtObject {
 
     Component.onCompleted: {
         load("series.json", function (t) {
-            if (!t) return;
-            var all = JSON.parse(t);
-            for (var id in all)
-                all[id].seasons.forEach(function (s) { s.episodes.forEach(function (e) { e.thumb = catalog.art(e.thumb) }) });
-            catalog.series = all;
-            catalog.buildCalendar();
+            if (t) {
+                var all = JSON.parse(t);
+                for (var id in all)
+                    all[id].seasons.forEach(function (s) { s.episodes.forEach(function (e) { e.thumb = catalog.art(e.thumb) }) });
+                catalog.series = all;
+            }
+            catalog.arrived();
         });
         load("cw.json", function (t) {
             catalog.continueWatching = JSON.parse(t).filter(function (i) { return i.backdrop }).map(function (i) {
@@ -69,12 +74,11 @@ QtObject {
                          description: i.description, chips: [String(i.year).replace(/[-–]$/, "")].concat(i.genres).filter(function (s) { return s }),
                          rating: "", episode: i.episode, progress: i.progress };
             });
-            catalog.buildCalendar();
+            catalog.arrived();
         });
         load("airing.json", function (t) {
-            if (!t) return;
-            catalog.airing = JSON.parse(t).map(function (a) { a.art = catalog.art(a.art); return a });
-            catalog.buildCalendar();
+            if (t) catalog.airing = JSON.parse(t).map(function (a) { a.art = catalog.art(a.art); return a });
+            catalog.arrived();
         });
         load("rows.json", function (t) {
             catalog.popular = JSON.parse(t).map(function (r) {

@@ -15,7 +15,8 @@ FocusScope {
     property int fontSize: 26
     property int barHeight: 76
     property int segmentPad: 52
-    property real shadow: 0          // opacity of a drop shadow under the bar, 0 for none
+    property real shadow: 0
+    property bool preblurred: false      // `source` is already blurred (see Glass)          // opacity of a drop shadow under the bar, 0 for none
     property int moveDir: 1
     property bool showFocus: activeFocus  // draws the focused look; previews set it directly
     width: glass.width
@@ -25,6 +26,7 @@ FocusScope {
     Glass {
         id: glass
         source: bar.source
+        preblurred: bar.preblurred
         sx: bar.sx; sy: bar.sy
         width: segments.width + 2 * inset; height: bar.barHeight; radius: height / 2
         readonly property int inset: Math.round(bar.barHeight * 0.13)
