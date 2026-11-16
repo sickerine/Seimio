@@ -9,14 +9,16 @@ echo "visual check"; tools/preview/shots.sh || fail=1
 [ "$1" = --mac ] && exit $fail
 
 started=""
+stop() { [ -n "$started" ] && kill $started 2>/dev/null && wait $started 2>/dev/null; started=""; }
+trap stop EXIT; trap 'exit 130' INT TERM
 if ! lsof -nP -iTCP:8091 -sTCP:LISTEN >/dev/null 2>&1; then
   python3 -I tools/lab-server.py 8091 >/dev/null 2>&1 & started=$!; sleep 1
 fi
-echo "deploy"; tools/deploy.sh 6 | grep -q '"ok":true' || { echo "  the app didn't report a load"; fail=1; }
+echo "deploy"; out=$(tools/deploy.sh 6); rc=$?
+{ [ $rc = 0 ] && echo "$out" | grep -q '"ok":true'; } || { echo "  deploy failed or the app didn't report a load"; fail=1; }
 for r in home show menu; do
   echo "tour $r"; out=$(tools/tour.sh $r); rc=$?
   echo "$out" | grep -E "total|OVER"; [ $rc = 0 ] || fail=1
 done
-[ -n "$started" ] && kill $started
 [ $fail = 0 ] && echo "all checks passed" || echo "CHECKS FAILED"
 exit $fail

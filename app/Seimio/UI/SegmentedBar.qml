@@ -17,6 +17,7 @@ FocusScope {
     property int segmentPad: 52
     property real shadow: 0          // opacity of a drop shadow under the bar, 0 for none
     property int moveDir: 1
+    property bool showFocus: activeFocus  // draws the focused look; previews set it directly
     width: glass.width
     height: barHeight
 
@@ -35,7 +36,7 @@ FocusScope {
         Rectangle {
             x: glass.edgeL; width: glass.edgeR - glass.edgeL
             y: glass.inset; height: glass.height - 2 * glass.inset; radius: height / 2
-            color: bar.activeFocus ? Theme.focusFill : "#2effffff"
+            color: bar.showFocus ? Theme.focusFill : "#2effffff"
             Behavior on color { ColorAnimation { duration: 200 } }
         }
         Row {
@@ -48,7 +49,7 @@ FocusScope {
                     readonly property string label: typeof m === "string" ? m : (m && m.label || "")
                     readonly property string icon: typeof m === "string" ? "" : (m && m.icon || "")
                     readonly property bool current: bar.currentIndex === index
-                    readonly property color ink: bar.activeFocus && current ? Theme.inkOnLight : Theme.ink
+                    readonly property color ink: bar.showFocus && current ? Theme.inkOnLight : Theme.ink
                     width: icon !== "" ? bar.barHeight : text.implicitWidth + bar.segmentPad
                     height: segments.height
                     Text {

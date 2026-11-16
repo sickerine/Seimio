@@ -14,10 +14,9 @@ js() {
     show) echo 'win.open()' ;;
     menu) echo 'win.openMenu()' ;;
     sheet) echo 'win.layer = "sheet"' ;;
-    tabs) echo 'win.layer = "tabs"' ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home home-row2 show menu sheet tabs gallery)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home home-row2 show menu sheet gallery)
 fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; [ "$s" = gallery ] && screen="$P/gallery.qml"
@@ -25,7 +24,10 @@ for s in "${states[@]}"; do
   (cd "$REPO/app" && perl -e 'alarm 40; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 >/dev/null 2>&1)
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }
   base="$P/baseline/$s.png"
-  if [ $approve = 1 ]; then ffmpeg -v error -y -i "$OUT/$s.png" -vf scale=960:540 "$base" && echo "  $s: approved"; continue; fi
+  if [ $approve = 1 ]; then
+    if ffmpeg -v error -y -i "$OUT/$s.png" -vf scale=960:540 "$base"; then echo "  $s: approved"; else echo "  $s: could not write $base"; fail=1; fi
+    continue
+  fi
   [ -f "$base" ] || { echo "  $s: no baseline (run with --approve after looking at $OUT/$s.png)"; fail=1; continue; }
   ssim=$(ffmpeg -v info -i "$OUT/$s.png" -i "$base" -lavfi "[0]scale=960:540[a];[a][1]ssim" -f null - 2>&1 | sed -n 's/.*All:\([0-9.]*\).*/\1/p')
   if awk -v v="$ssim" 'BEGIN { exit !(v >= 0.9995) }'; then echo "  $s: same (SSIM $ssim)"

@@ -9,9 +9,10 @@ id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 route=${1:-home}
 mkdir -p .lab/www
 python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v.update({"autopop": True} if sys.argv[2] == "menu" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
-ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null; sleep 5
-N=~/.nvm/versions/node/v22.22.0/bin/node; S=$(date +%H%M%S)
-p() { $N tools/tvremote.mjs press $1 ${2:-1} ${3:-350} 2>&1 | grep -q sent || echo "press $1 failed"; }
+failed=0
+ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null || { echo "  launch failed"; failed=1; }; sleep 5
+N=~/.nvm/versions/node/v22.22.0/bin/node; S=$(date +%s)
+p() { $N tools/tvremote.mjs press $1 ${2:-1} ${3:-350} 2>&1 | grep -q sent || { echo "  press $1 failed"; failed=1; }; }
 case $route in
   home) p RIGHT 8 300; p DOWN 1 900; p RIGHT 5 300; p LEFT 3 300; p UP 1 900; p UP 1 700; p RIGHT 3 400; p DOWN 1 700
         p DOWN 1 700; p ENTER 1 1500; p RIGHT 2 400; p BACK 1 1500 ;;
@@ -28,7 +29,7 @@ import json, os, sys, collections
 d, s = sys.argv[1], sys.argv[2]
 agg = collections.defaultdict(lambda: [0, 0, 0, 0])
 for f in sorted(os.listdir(d)):
-    if 'design' not in f or f < s: continue
+    if 'design' not in f or os.path.getmtime(os.path.join(d, f)) < float(s): continue   # this run's reports only
     for k, v in json.load(open(os.path.join(d, f))).items():
         if k.startswith('rt '): a = agg[k]; a[0] += v['frames']; a[1] += v['late20']; a[2] += v['late30']; a[3] = max(a[3], v['max'])
 tot = [0, 0, 0]
@@ -47,5 +48,5 @@ for o in over: print("  OVER BUDGET:", o)
 sys.exit(1 if over else 0)
 PY
 ok=$?
-[ "$route" = menu ] && { ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null; }
-exit $ok
+[ "$route" = menu ] && { ares-launch -d tv --close "$id" >/dev/null 2>&1; ares-launch -d tv "$id" >/dev/null || failed=1; }
+[ $ok = 0 ] && [ $failed = 0 ]
