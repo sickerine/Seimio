@@ -310,7 +310,7 @@ WebOSWindow {
             // another stream of the same video, from where it is now
             onSwitchStream: { app.playTarget.resumeMs = player.position; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
-            group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"
+            group: streams.anime ? "anime" : "other"
             focus: app.layer === "player"
             active: app.layer === "player"
         }

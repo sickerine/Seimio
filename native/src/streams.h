@@ -318,19 +318,43 @@ private:
         });
     }
 
+    // Anime or not (the ranking, the AI's rules, and whose track choices the player uses): a Kitsu id is
+    // anime; an IMDb id is when the community anime mapping (Fribb's anime-lists, through ARM) lists it,
+    // asked alongside the streams and kept per show for the session.
     void load(const QString &type, const QString &videoId) {
         const int ticket = ++m_ticket;
         m_videoId = videoId;
         beginResetModel(); m_all.clear(); m_rows.clear(); endResetModel();
-        m_anime = videoId.startsWith("kitsu:"); m_loading = true; m_failure.clear(); m_mix.clear();
+        const QString imdb = videoId.section(':', 0, 0);
+        m_anime = videoId.startsWith("kitsu:") || m_animeIds.value(imdb, false); m_loading = true; m_failure.clear(); m_mix.clear();
         emit listChanged();
+        auto join = std::make_shared<Join>();
+        if (imdb.startsWith("tt") && !m_animeIds.contains(imdb)) {
+            join->pending++;
+            QNetworkReply *arm = m_net.get(request(QUrl("https://arm.haglund.dev/api/v2/imdb?id=" + imdb)));
+            QTimer::singleShot(4000, arm, &QNetworkReply::abort);
+            connect(arm, &QNetworkReply::finished, this, [this, arm, ticket, imdb, join] {
+                arm->deleteLater();
+                if (arm->error() == QNetworkReply::NoError) m_animeIds.insert(imdb, !QJsonDocument::fromJson(arm->readAll()).array().isEmpty());
+                if (ticket != m_ticket) return;
+                m_anime = m_animeIds.value(imdb, false);
+                if (--join->pending == 0) parse(join, ticket);
+            });
+        }
         QNetworkReply *reply = m_net.get(request(QUrl(m_addon + "stream/" + type + "/" + videoId + ".json")));
-        connect(reply, &QNetworkReply::finished, this, [this, reply, ticket] {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, ticket, join] {
             reply->deleteLater();
             if (ticket != m_ticket) return;
-            if (reply->error() != QNetworkReply::NoError) { listed({}, reply->errorString()); return; }
+            if (reply->error() != QNetworkReply::NoError) join->failure = reply->errorString(); else join->body = reply->readAll();
+            if (--join->pending == 0) parse(join, ticket);
+        });
+    }
+    struct Join { int pending = 1; QByteArray body; QString failure; };
+    void parse(const std::shared_ptr<Join> &join, int ticket) {
+        if (!join->failure.isEmpty()) { listed({}, join->failure); return; }
+        {
             auto out = std::make_shared<QVector<Item>>();
-            QThread *worker = QThread::create([out, body = reply->readAll(), anime = m_anime] {
+            QThread *worker = QThread::create([out, body = join->body, anime = m_anime] {
                 for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("streams").toArray()) {
                     const QJsonObject s = v.toObject();
                     const QString name = s.value("name").toString(), title = s.value("title").toString(), url = s.value("url").toString();
@@ -342,7 +366,7 @@ private:
             connect(worker, &QThread::finished, this, [this, out, ticket] { if (ticket == m_ticket) listed(*out, QString()); });
             connect(worker, &QThread::finished, worker, &QObject::deleteLater);
             worker->start();
-        });
+        }
     }
     void listed(const QVector<Item> &items, const QString &failure) {
         m_all = items; m_loading = false; m_failure = failure;
@@ -468,4 +492,5 @@ private:
     QVariantMap m_mix, m_chosen;
     int m_kind = 0, m_ticket = 0;
     bool m_anime = false, m_loading = false, m_auto = false;
+    QHash<QString, bool> m_animeIds;                    // IMDb id -> anime, as the mapping answered
 };

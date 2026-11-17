@@ -17,6 +17,24 @@ It has setSubtitleEnable/Sync/Source and its own (plain) text rendering, setAudi
 
 So track names, flags, fonts, chapters and the subtitle events come from the file itself.
 
+## Where the track logic comes from
+
+Nothing in the selection is our own rule; each part is taken from a player or library that does it at
+scale, and checked against its current source:
+- Language codes and matching: mpv `misc/language.c` (`mp_match_lang`: ISO 639-1 and both 639-2 forms
+  are one language, BCP 47 subtags narrow it), ported line for line, with mpv's code table. ffmpeg's
+  `libavformat/avlanguage.c` and Kodi's `LangCodeExpander` hold the same 639-1/639-2 B/T equivalences.
+- Languages from track titles ("Japanese (Original)", "日本語"): Unicode CLDR names through Qt's
+  `QLocale`, the data ICU and every browser use.
+- Which track plays: mpv `player/loadfile.c` (`select_default_track`, `compare_track`) with its default
+  options. Kodi (`StreamUtils::CompareAudioPreference`) and Jellyfin (`MediaStreamSelector`) rank the
+  same way, language first; none of them treats a commentary track specially, so neither do we.
+- Signs and songs against dialogue: mpv-sub-select's default rules (CogentRedTester/mpv-sub-select).
+- Online subtitles' languages: OpenSubtitles' own table (`export_languages.php`); anime episodes to IMDb
+  through Stremio's Kitsu addon (as Torrentio maps them); anime or not through Fribb's anime-lists (the
+  community mapping Kometa and Jellyfin plugins use, served by ARM).
+- Image subtitles: ffmpeg's `pgssubdec.c` and `dvdsubdec.c`; MP4 text and edit lists: ffmpeg's `mov.c`.
+
 ## Design
 
 1. Track engine (C++, Seimio.Data `tracks.h`)
