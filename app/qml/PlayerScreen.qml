@@ -40,7 +40,7 @@ FocusScope {
     readonly property string failure: media.failure
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
-        + " start " + startMs + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
+        + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes) + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0

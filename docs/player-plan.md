@@ -65,6 +65,12 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 - [x] 3 UI (overlay, menus, sheet, episode row, skip from chapters and from AniSkip, IntroDB,
   TheIntroDB). Verified on the TV: a stream switch resumes where it was, an episode from the row plays,
   an addon subtitle downloads and draws, delay steps 0.1 s and comes back with the file, audio Off sticks.
-- [x] 4 performance: every tour within budget, and GUI stalls measured apart (a heartbeat). Entering
+- [x] 4 performance. The finish line, all measured on the TV with `tools/check.sh`: every tour within
+  its frame budget; no GUI stall over 100 ms and at most two over 50 ms in any tour (a heartbeat,
+  apart from the TV's slow swaps over video); memory bounded (about 130 MB with a UHD remux's 18 PGS
+  tracks, steady over minutes and seeks); a Matroska anime episode starting in about 1.4 s. Entering
   the player and the streams page stalled 50-65 ms building stream rows; rows are now made
-  asynchronously, and neither stalls.
+  asynchronously, and neither stalls. What's left under the video (late frames during overlay
+  animations) is the TV's compositor, measured with our code idle.
+- [x] Skip times for anime: Kitsu's API answers 406 to a plain JSON Accept header, so AniSkip was never
+  reached; skip.h now asks for JSON:API. Demon Slayer S3E9 (no chapters) gets its OP and ED on the TV.

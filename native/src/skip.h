@@ -114,7 +114,8 @@ private:
     template <typename F> void fetch(const QUrl &url, int ticket, F onDone) {
         QNetworkRequest r(url);
         r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
-        r.setRawHeader("Accept", "application/json");
+        // Kitsu answers 406 to plain JSON: it serves JSON:API's own type
+        r.setRawHeader("Accept", "application/vnd.api+json, application/json");
         r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         QNetworkReply *reply = m_net.get(r);
         QTimer::singleShot(12000, reply, &QNetworkReply::abort);
