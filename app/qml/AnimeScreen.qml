@@ -240,6 +240,25 @@ FocusScope {
         Keys.onDownPressed: if (anime.rows.length) anime.row = 0
     }
 
+    // ---- covers kept decoded -------------------------------------------------------------------------------
+    // Every cover of the rows on screen, held by a hidden image at the size the cards decode it (MediaCard's
+    // sourceSize), so they share one cached decode. Qt keeps only ~2 MB of images nothing shows, so a row
+    // scrolled away and back decoded its covers again: cards came back empty and faded in. A fixed pool,
+    // made once; ~25 MB for the chart's covers, ~40 MB for the schedule's stills.
+    readonly property var covers: {
+        var out = [];
+        for (var i = 0; i < rows.length; i++) for (var j = 0; j < rows[i].items.length; j++) out.push(rows[i].items[j].art || "");
+        return out;
+    }
+    // the cards: the chart's covers, the schedule's episode stills
+    readonly property size chartCard: Qt.size(190, 285)
+    readonly property size scheduleCard: Qt.size(384, 216)
+    readonly property size coverSize: { var c = rowsView === "schedule" ? scheduleCard : chartCard; return Qt.size(c.width * Theme.cardDecode, c.height * Theme.cardDecode) }
+    Repeater {
+        model: anime.shown || anime.covers.length ? 128 : 0
+        Image { visible: false; asynchronous: true; source: index < anime.covers.length ? anime.covers[index] : ""; sourceSize: anime.coverSize }
+    }
+
     // ---- the rows --------------------------------------------------------------------------------------------
     SequentialAnimation {
         id: swap
@@ -314,8 +333,8 @@ FocusScope {
                     model: slot.r ? slot.r.items : []
                     slides: slot.schedule
                     nextLabels: false
-                    cardWidth: slot.schedule ? 384 : 190
-                    cardHeight: slot.schedule ? 216 : 285
+                    cardWidth: slot.schedule ? anime.scheduleCard.width : anime.chartCard.width
+                    cardHeight: slot.schedule ? anime.scheduleCard.height : anime.chartCard.height
                     spacing: 36
                     showFocus: activeFocus
                     onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) anime.rememberColumn(slot.idx, currentIndex); else anime.column = currentIndex }

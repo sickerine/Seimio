@@ -63,7 +63,7 @@ Item {
             onStatusChanged: if (status === Image.Error && !failed) failed = true
             Connections { target: card; onArtChanged: img.failed = false }
             asynchronous: true; fillMode: Image.PreserveAspectCrop
-            sourceSize: Qt.size(card.width * 1.15, card.height * 1.15)
+            sourceSize: Qt.size(card.width * Theme.cardDecode, card.height * Theme.cardDecode)
         }
         ShaderEffect {
             // drawn 3px larger than the card: the rounded edge is antialiased inside this rectangle,
