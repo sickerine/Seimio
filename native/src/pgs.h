@@ -7,7 +7,7 @@
 // epoch start or acquisition point reuses the objects and palettes of the sets before it.
 //
 // A set usually comes as one block, but muxers that write a segment a block give several with the same
-// time: they're joined (each block once, however often it's read). Sets are kept by start time. A film's track is about 6 KB a second and a remux can carry thirty, so
+// time: they're joined until the set's End segment, and a set read again after a seek is ignored. Sets are kept by start time. A film's track is about 6 KB a second and a remux can carry thirty, so
 // only a window around where the player is reading stays (keepNear()): a seek makes the player read
 // those bytes again, and the tee hands them over again. The window follows the reading, not the
 // clock: right after a seek the player reads the new place before it reports its new position.
@@ -15,16 +15,15 @@
 #include <QMap>
 #include <QHash>
 #include <QVector>
-#include <QSet>
 
 class Pgs {
 public:
     // a display set (or part of one) at its start (ms); `duration` 0 when the next set ends it
     bool add(qint64 start, qint64 duration, const QByteArray &segments) {
         Set &set = m_sets[start];
-        const uint key = qHash(segments);
-        if (set.parts.contains(key)) return false;                  // read again after a seek
-        set.parts.insert(key); set.data += segments; set.duration = qMax(set.duration, duration);
+        if (set.complete) return false;                             // read again after a seek
+        set.data += segments; set.duration = qMax(set.duration, duration);
+        set.complete = endsSet(set.data);
         return true;
     }
     // keeps the sets from 90 s before `ms` (the one showing then, and its epoch's start) to 30 s after:
@@ -81,7 +80,13 @@ public:
     }
 
 private:
-    struct Set { QByteArray data; qint64 duration = 0; QSet<uint> parts; };
+    struct Set { QByteArray data; qint64 duration = 0; bool complete = false; };
+    // the last segment is End (0x80)
+    static bool endsSet(const QByteArray &set) {
+        auto b = reinterpret_cast<const uchar *>(set.constData()); const int n = set.size(); int last = -1;
+        for (int i = 0; i + 3 <= n; i += 3 + u16(b + i + 1)) last = b[i];
+        return last == 0x80;
+    }
     struct Object { int width = 0, height = 0; QByteArray rle; };
     struct Placed { int object, x, y; };
     struct Composition { int width = 0, height = 0, palette = 0; QVector<Placed> placed; };

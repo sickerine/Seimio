@@ -345,25 +345,41 @@ private:
                     }
                 }
             }
-            // the edit list: empty edits (media time -1) delay the track, in the movie's timescale; the first
-            // real edit says which media time plays first
-            qint64 delayMs = 0, firstMs = 0;
+            // the edit list maps media time to presentation: each edit plays [media, media + duration) of
+            // the track at the presentation time where the edits before it end (an empty edit, media -1,
+            // is a gap). A sample is placed through the edit that holds its start, cut to it, or dropped
+            // when none does. Without one, media time is presentation time. Times here in ms.
+            struct Edit { qint64 at, media, length; };
+            QVector<Edit> edits;
             if (elst.size() >= 8 && movieScale > 0) {
                 const bool v1 = elst.at(0) == 1; const int entry = v1 ? 20 : 12;
+                qint64 at = 0;
                 for (int e = 0, n = int(be32(elst, 4)); e < n && 8 + entry * (e + 1) <= elst.size(); e++) {
-                    const int at = 8 + entry * e;
-                    const qint64 duration = v1 ? qint64((quint64(be32(elst, at)) << 32) | be32(elst, at + 4)) : be32(elst, at);
-                    const qint64 media = v1 ? qint64((quint64(be32(elst, at + 8)) << 32) | be32(elst, at + 12)) : qint32(be32(elst, at + 4));
-                    if (media == -1) { delayMs += duration * 1000 / movieScale; continue; }
-                    firstMs = media * 1000 / scale;
-                    break;
+                    const int p = 8 + entry * e;
+                    const qint64 duration = (v1 ? qint64((quint64(be32(elst, p)) << 32) | be32(elst, p + 4)) : qint64(be32(elst, p))) * 1000 / movieScale;
+                    const qint64 media = v1 ? qint64((quint64(be32(elst, p + 8)) << 32) | be32(elst, p + 12)) : qint32(be32(elst, p + 4));
+                    if (media >= 0) edits.append({ at, media * 1000 / scale, duration > 0 ? duration : LLONG_MAX / 4 });
+                    at += duration;
                 }
             }
             qint64 t = 0; int i = 0;
             for (int r = 0; r < int(be32(stts, 4)) && 8 + 8 * r + 8 <= stts.size(); r++) {
                 const int n = int(be32(stts, 8 + 8 * r)); const qint64 d = be32(stts, 12 + 8 * r);
-                for (int k = 0; k < n && i < out.size(); k++, i++) { out[i].start = t * 1000 / scale - firstMs + delayMs; out[i].duration = d * 1000 / scale; t += d; }
+                for (int k = 0; k < n && i < out.size(); k++, i++) {
+                    const qint64 from = t * 1000 / scale, to = (t + d) * 1000 / scale;
+                    t += d;
+                    out[i].start = from; out[i].duration = to - from;
+                    if (edits.isEmpty()) continue;
+                    out[i].duration = -1;                                            // dropped unless an edit holds it
+                    for (const Edit &e : edits) {
+                        if (from < e.media || from >= e.media + e.length) continue;
+                        out[i].start = e.at + from - e.media;
+                        out[i].duration = qMin(to, e.media + e.length) - from;
+                        break;
+                    }
+                }
             }
+            out.erase(std::remove_if(out.begin(), out.end(), [](const Sample &x) { return x.duration < 0; }), out.end());
             sh.samples += out;
         });
         std::sort(sh.samples.begin(), sh.samples.end(), [](const Sample &a, const Sample &b) { return a.offset < b.offset; });
@@ -616,7 +632,7 @@ private:
             return;
         }
         const qint64 real = c->next + m_cut.cut, realLast = c->last + m_cut.cut;
-        if (m_cut.cuesAt >= 0 && real >= m_cut.cuesAt && m_cuesState == 0) { m_cuesWaiting << c; return; }  // being rewritten
+        if (m_cut.cuesAt >= 0 && real >= m_cut.cuesAt && m_cuesState == 0) { if (!m_cuesWaiting.contains(c)) m_cuesWaiting << c; return; }  // being rewritten
         if (m_cuesState == 1 && real >= m_cut.cuesAt && real < m_cut.cuesAt + m_cues.size()) {
             const QByteArray piece = m_cues.mid(int(real - m_cut.cuesAt), int(qMin(m_cut.cuesAt + m_cues.size(), realLast + 1) - real));
             c->next += piece.size(); c->socket->write(piece);
@@ -692,7 +708,7 @@ private:
     }
     // ---- the view ----
     enum View { Pending, Whole, Cut };
-    static constexpr qint64 kHeadMax = 8 << 20, kCuesMax = 16 << 20;
+    static constexpr qint64 kHeadMax = 8 << 20, kCuesMax = 16 << 20, kBootPast = 64 << 20;   // how far past the fonts to look for a Cluster
     static constexpr int kViewWait = 8000;
     // the bootstrap: real [from, to] into its own parser (tracks, then fonts), planning while Pending
     void boot(qint64 from, qint64 to) {
@@ -722,8 +738,9 @@ private:
             m_boot = nullptr;
             if (session != m_session) return;
             if (m_view == Pending) plan(true);
-            if (m_view == Cut && r->error() == QNetworkReply::NoError && !m_bootParser->clusterSeen && m_bootAt < m_cut.end + kChunk)
-                boot(m_bootAt, m_cut.end + kChunk - 1);                                                   // the rest of the fonts
+            // the rest of the fonts, then on a piece at a time to the first Cluster (Void, Chapters, Tags)
+            if (m_view == Cut && r->error() == QNetworkReply::NoError && !m_bootParser->clusterSeen && m_bootAt < m_size && m_bootAt < m_cut.end + kBootPast)
+                boot(m_bootAt, qMax(m_cut.end, m_bootAt + kChunk) - 1);
         });
     }
     void stopBoot() { if (QNetworkReply *r = m_boot) { m_boot = nullptr; r->abort(); } }
@@ -766,7 +783,7 @@ private:
         if (!ok && ++m_cuesTries < 3) { loadCues(); return; }
         if (!ok) { m_cuesState = -1; m_cues.clear(); }
         const auto waiting = m_cuesWaiting; m_cuesWaiting.clear();
-        for (const auto &c : waiting) if (!c->done) pump(c);
+        for (const auto &c : waiting) more(c);
     }
     void stopCues() { if (QNetworkReply *r = m_cuesReply) { m_cuesReply = nullptr; r->abort(); } }
 

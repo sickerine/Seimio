@@ -76,7 +76,7 @@ public slots:
             for (const QJsonValue &v : meta.value("videos").toArray()) {
                 const QJsonObject e = v.toObject();
                 const QString id = e.value("imdb_id").toString(imdb);
-                if (!id.isEmpty() && e.value("imdbSeason").toInt() > 0)
+                if (!id.isEmpty() && e.contains("imdbSeason") && e.value("imdbEpisode").toInt() > 0)     // season 0: specials
                     map.insert(e.value("id").toString(), id + ":" + QString::number(e.value("imdbSeason").toInt()) + ":" + QString::number(e.value("imdbEpisode").toInt()));
             }
             if (reply->error() == QNetworkReply::NoError) m_kitsu.insert(show, map);
