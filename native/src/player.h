@@ -46,12 +46,16 @@ class NativePlayer : public QObject {
     Q_PROPERTY(int audioTrack MEMBER m_audioTrack NOTIFY stateChanged)
     Q_PROPERTY(double startFraction MEMBER m_startFraction NOTIFY settingsChanged)
     Q_PROPERTY(QStringList languages MEMBER m_languages NOTIFY settingsChanged)
-    Q_PROPERTY(QVariantMap seen MEMBER m_seen NOTIFY stateChanged)
-    Q_PROPERTY(QVariantList audioTracks MEMBER m_audioTracks NOTIFY stateChanged)     // { lang, codec } per audio track
+    Q_PROPERTY(QVariantMap seen MEMBER m_seen NOTIFY seenChanged)
+    Q_PROPERTY(QVariantList audioTracks MEMBER m_audioTracks NOTIFY audioTracksChanged)     // { lang, codec } per audio track
     Q_PROPERTY(int preferredAudio MEMBER m_preferredAudio NOTIFY settingsChanged)     // chosen before load ends, or -1
 public:
     // Unload before the client goes, so a pipeline never outlives the app (a leaked one jammed the TV's audio).
-    ~NativePlayer() override { live().removeAll(this); if (m_client) { m_client->unload(); delete m_client; } }
+    ~NativePlayer() override {
+        live().removeAll(this);
+        m_control.quit(); m_control.wait();                             // queued commands finish first
+        if (m_client) { m_client->unload(); delete m_client; }
+    }
     QString windowId() const { return m_windowId; }
     // Asks LG's window manager for a video window under `window` and polls until it assigns an id.
     Q_INVOKABLE QString exportWindow(QObject *window) {
@@ -84,17 +88,19 @@ public:
         emit stateChanged(); emit positionChanged();
         return m_client->loadAsync(uri.toStdString(), "media", payload.toStdString());
     }
-    Q_INVOKABLE bool play() { return m_client && m_client->play(); }
-    Q_INVOKABLE bool pause() { return m_client && m_client->pause(); }
-    Q_INVOKABLE bool seek(double ms) { return m_client && m_client->seek((long long)ms); }
+    // LG's client calls are synchronous calls to the media server (50-150 ms on the TV), so they run on
+    // their own thread, in order; the GUI thread never waits on them
+    Q_INVOKABLE void play() { command([](Client *c) { c->play(); }); }
+    Q_INVOKABLE void pause() { command([](Client *c) { c->pause(); }); }
+    Q_INVOKABLE void seek(double ms) { command([ms](Client *c) { c->seek((long long)ms); }); }
     Q_INVOKABLE bool selectTrack(const QString &type, int index) {
         if (!m_client) return false;
         std::string t = type.toStdString();
         return m_client->selectTrack(t, index);
     }
-    Q_INVOKABLE bool selectAudio(int index) { std::string a("audio"); if (!m_client || !m_client->selectTrack(a, index)) return false; m_audioTrack = index; emit stateChanged(); return true; }
-    Q_INVOKABLE bool mute(bool on) { return m_client && m_client->setAudioMute(on); }
-    Q_INVOKABLE bool unload() { m_playing = m_loaded = false; emit stateChanged(); return m_client && m_client->unload(); }
+    Q_INVOKABLE void selectAudio(int index) { command([index](Client *c) { std::string a("audio"); c->selectTrack(a, index); }); m_audioTrack = index; emit stateChanged(); }
+    Q_INVOKABLE void mute(bool on) { command([on](Client *c) { c->setAudioMute(on); }); }
+    Q_INVOKABLE void unload() { m_playing = m_loaded = false; emit stateChanged(); command([](Client *c) { c->unload(); }); }
     // "slot:count" for every slot that has fired, to find which one carries raw events.
     Q_INVOKABLE QString slotCounts() const {
         QStringList out;
@@ -110,20 +116,26 @@ public:
         if (kind == "currentTime") { m_position = v.value("currentTime").toDouble(); emit positionChanged(); return; }
         if (kind == "bufferRange") return;
         m_seen[kind] = kind == "sourceInfo" ? json : json.left(600);
+        emit seenChanged();
         if (kind == "sourceInfo") {
             const QJsonObject program = v.value("programInfo").toArray().first().toObject();
             m_duration = program.value("duration").toDouble();
             m_tracks = program.value("audioTrackInfo").toArray();
             m_audioTracks.clear();
             for (const QJsonValue &t : m_tracks) m_audioTracks << QVariantMap { { "lang", t.toObject().value("language").toString() }, { "codec", t.toObject().value("codec").toString() } };
+            emit audioTracksChanged();
         } else if (kind == "loadCompleted") {
             m_loaded = true;
-            m_client->setSubtitleEnable(false);                                // ours draws them (SubtitleLayer)
             const int best = m_preferredAudio >= 0 && m_preferredAudio < m_tracks.size() ? m_preferredAudio : bestAudio();
-            if (best > 0 || (best == 0 && m_tracks.size() > 1)) { std::string a("audio"); m_client->selectTrack(a, best); }
+            const bool select = best > 0 || (best == 0 && m_tracks.size() > 1);
+            const long long at = m_startFraction > 0 && m_duration > 0 ? (long long)(m_duration * m_startFraction) : -1;
             m_audioTrack = best;
-            if (m_startFraction > 0 && m_duration > 0) m_client->seek((long long)(m_duration * m_startFraction));
-            m_client->play();
+            command([select, best, at](Client *c) {
+                c->setSubtitleEnable(false);                                    // ours draws them (SubtitleLayer)
+                if (select) { std::string a("audio"); c->selectTrack(a, best); }
+                if (at >= 0) c->seek(at);
+                c->play();
+            });
         } else if (kind == "playing") { m_playing = true; m_paused = false; m_buffering = false; }
         else if (kind == "paused") m_paused = true;
         else if (kind == "bufferingStart") m_buffering = true;
@@ -131,7 +143,7 @@ public:
         else if (kind == "endOfStream") m_playing = false;
         else if (kind == "error" && v.value("errorCode").toInt() != 0) {
             m_failure = v.value("errorText").toString(QString::number(v.value("errorCode").toInt()));
-            m_playing = false; m_client->unload();
+            m_playing = false; command([](Client *c) { c->unload(); });
         }
         emit stateChanged();
     }
@@ -140,9 +152,19 @@ signals:
     void stateChanged();
     void positionChanged();
     void settingsChanged();
+    void seenChanged();
+    void audioTracksChanged();
     void event(const QString &json);
 private:
     friend class Client;
+    template <typename F> void command(F f) {
+        if (!m_client) return;
+        if (!m_control.isRunning()) { m_controlObject.moveToThread(&m_control); m_control.start(); }
+        Client *c = m_client;
+        QMetaObject::invokeMethod(&m_controlObject, [c, f] { f(c); }, Qt::QueuedConnection);
+    }
+    QThread m_control;
+    QObject m_controlObject;
     void ensure() { if (!m_client) { m_client = new Client(this); guard(this); } }
     // Every player unloads before the app goes, when it quits or when webOS closes it (SIGTERM), so no
     // pipeline outlives the app (a leaked one once jammed the TV's audio). The signal handler only writes to a pipe; the unloading

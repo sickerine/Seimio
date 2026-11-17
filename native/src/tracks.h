@@ -137,6 +137,8 @@ public:
         prefs[group] = g; m_store.data()["prefs"] = prefs;
         m_status = m_store.save(); emit changed();
     }
+    // the lab: forget every choice (test runs make choices of their own)
+    Q_INVOKABLE void clearPreferences() { m_store.data().remove("prefs"); m_status = m_store.save(); emit changed(); }
     Q_INVOKABLE QVariantMap preferences(const QString &group) { return m_store.data().value("prefs").toObject().value(group).toObject().toVariantMap(); }
     // subtitle delay for a file, in ms (positive shows them later)
     Q_INVOKABLE int delay(const QString &file) { return m_store.data().value("delays").toObject().value(file).toInt(); }

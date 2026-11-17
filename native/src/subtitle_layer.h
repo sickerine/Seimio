@@ -1,13 +1,17 @@
 #pragma once
 // SubtitleLayer: draws the chosen subtitle track over the video with libass. Its `source` is the Tee,
 // which hands over every text subtitle track's header and blocks as the player's bytes pass through, and
-// the file's fonts; the layer keeps every track's blocks, so switching tracks is instant and needs no
-// download. Matroska ASS blocks go to libass as they are (ass_process_chunk, as mpv feeds it); SRT text
-// becomes the same with a plain style (as stremio-webos service/srt-ass.js did).
+// the file's fonts; every track's blocks are kept, so switching tracks is instant and needs no download.
+// Matroska ASS blocks go to libass as they are (ass_process_chunk, as mpv feeds it); SRT text becomes the
+// same with a plain style (as stremio-webos service/srt-ass.js did).
+//
+// All the subtitle work happens on its own thread (SubtitleWorker): the blocks and fonts come straight
+// from the Tee's thread, libass parses, lays out and draws there, and the GUI thread only receives the
+// finished image when a frame changes. On the TV, doing this on the GUI thread cost 20-120 ms stalls
+// (thousands of blocks arriving as the player reads ahead, font setup on the first frame).
 //
 // The clock is the player's `position`, moved on smoothly between its updates while `playing`, minus
-// `delay` (ms; positive shows subtitles later). It draws only while there's a track: libass reports
-// when a frame changes, and only then is the image blended and uploaded.
+// `delay` (ms; positive shows subtitles later).
 #include <QtQml>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -15,80 +19,39 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QImage>
+#include <QThread>
+#include <atomic>
 #include <ass/ass.h>
 #include "tee.h"
 
-class SubtitleLayer : public QQuickItem {
+class SubtitleWorker : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QObject *source READ source WRITE setSource NOTIFY sourceChanged)
-    Q_PROPERTY(int track READ track WRITE setTrack NOTIFY trackChanged)         // a track number, or -1 for none
-    Q_PROPERTY(double position READ position WRITE setPosition)                 // the player's position, ms
-    Q_PROPERTY(bool playing READ playing WRITE setPlaying)
-    Q_PROPERTY(int delay READ delay WRITE setDelay NOTIFY delayChanged)
 public:
-    // for the lab: tracks, blocks, frames drawn
-    Q_INVOKABLE QString info() const {
-        int blocks = 0; for (const Track &t : m_tracks) blocks += t.blocks.size();
-        return QString("tracks %1 blocks %2 track %3 frames %4 fonts %5").arg(m_tracks.size()).arg(blocks).arg(m_trackNumber).arg(m_frames).arg(m_fonts);
-    }
-    SubtitleLayer() {
-        setFlag(ItemHasContents);
+    SubtitleWorker() {
         m_lib = ass_library_init();
         ass_set_extract_fonts(m_lib, 1);
         m_renderer = ass_renderer_init(m_lib);
         ass_set_frame_size(m_renderer, 1920, 1080);
         ass_set_storage_size(m_renderer, 1920, 1080);
-        m_tick.setInterval(16);
-        connect(&m_tick, &QTimer::timeout, this, [this] { render(); });
     }
-    ~SubtitleLayer() override {
+    ~SubtitleWorker() override {
         if (m_track) ass_free_track(m_track);
         ass_renderer_done(m_renderer);
         ass_library_done(m_lib);
     }
-    QObject *source() const { return m_source; }
-    void setSource(QObject *o) {
-        if (o == m_source) return;
-        if (m_source) disconnect(m_source, nullptr, this, nullptr);
-        m_source = o;
-        if (auto tee = qobject_cast<Tee *>(o)) {
-            connect(tee, &Tee::subtitleHeader, this, &SubtitleLayer::addHeader);
-            connect(tee, &Tee::subtitleBlock, this, &SubtitleLayer::addBlock);
-            connect(tee, &Tee::font, this, &SubtitleLayer::addFont);
-        }
-        emit sourceChanged();
-    }
-    int track() const { return m_trackNumber; }
-    void setTrack(int n) { if (n == m_trackNumber) return; m_trackNumber = n; rebuild(); emit trackChanged(); }
-    double position() const { return m_position; }
-    void setPosition(double ms) { m_position = ms; m_since.restart(); if (!m_playing) render(); }
-    bool playing() const { return m_playing; }
-    void setPlaying(bool on) { if (on == m_playing) return; m_playing = on; m_since.restart(); updateTick(); }
-    int delay() const { return m_delay; }
-    void setDelay(int ms) { if (ms == m_delay) return; m_delay = ms; render(); emit delayChanged(); }
-
-    // A new stream: forget its tracks and fonts.
-    Q_INVOKABLE void reset() {
-        m_tracks.clear(); m_trackNumber = -1;
+public slots:
+    void start() { m_tick = new QTimer(this); m_tick->setInterval(16); connect(m_tick, &QTimer::timeout, this, [this] { render(); }); }
+    void reset() {
+        m_tracks.clear(); m_number = -1;
         if (m_track) { ass_free_track(m_track); m_track = nullptr; }
-        ass_clear_fonts(m_lib); m_fontsChanged = true;
-        clearImage(); updateTick();
+        ass_clear_fonts(m_lib); m_fontsChanged = true; statTracks = 0; statBlocks = 0; statFonts = 0;
+        emit frame(QImage(), QRect()); updateTick();
     }
-
-signals:
-    void sourceChanged();
-    void trackChanged();
-    void delayChanged();
-
-private:
-    struct Block { qint64 start, duration; QByteArray data; };
-    struct Track { QByteArray header; bool srt = false; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; };
-
     void addHeader(int number, const QString &codec, const QByteArray &header) {
-        Track &t = m_tracks[number];
+        Track &t = m_tracks[number]; statTracks = m_tracks.size();
         t.srt = codec.startsWith("S_TEXT/UTF8");
         t.header = t.srt ? srtHeader() : header;
-        if (number == m_trackNumber) rebuild();
+        if (number == m_number) rebuild();
     }
     void addBlock(int number, qint64 start, qint64 duration, const QByteArray &payload) {
         auto it = m_tracks.find(number);
@@ -99,24 +62,40 @@ private:
         it->seen.insert(key);
         QByteArray data = it->srt ? srtChunk(it->readOrder++, payload) : payload;
         if (data.isEmpty()) return;
-        it->blocks.append({ start, qMax<qint64>(duration, it->srt ? 60 : 0), data });
-        if (number == m_trackNumber && m_track) { Block &b = it->blocks.last(); ass_process_chunk(m_track, b.data.data(), b.data.size(), b.start, b.duration); render(); }
+        it->blocks.append({ start, qMax<qint64>(duration, it->srt ? 60 : 0), data }); statBlocks++;
+        if (number == m_number && m_track) { Block &b = it->blocks.last(); ass_process_chunk(m_track, b.data.data(), b.data.size(), b.start, b.duration); }
     }
     void addFont(const QString &name, const QByteArray &data) {
-        ass_add_font(m_lib, name.toUtf8().constData(), data.constData(), data.size()); m_fonts++;
-        m_fontsChanged = true;
+        ass_add_font(m_lib, name.toUtf8().constData(), data.constData(), data.size());
+        m_fontsChanged = true; statFonts++;
     }
+    void setTrack(int number) { if (number != m_number) { m_number = number; rebuild(); } }
+    // the player's clock: its position (ms) as of now, whether it's moving, and the delay
+    void setClock(double position, bool playing, int delay) {
+        m_position = position; m_playing = playing; m_delay = delay; m_since.restart();
+        updateTick();
+        if (!playing) render();
+    }
+public:
+    // for the lab, read from the GUI thread without waiting on this one
+    std::atomic<int> statTracks { 0 }, statBlocks { 0 }, statFrames { 0 }, statFonts { 0 };
+signals:
+    void frame(const QImage &image, const QRect &box);
+private:
+    struct Block { qint64 start, duration; QByteArray data; };
+    struct Track { QByteArray header; bool srt = false; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; };
+
     void rebuild() {
         if (m_track) { ass_free_track(m_track); m_track = nullptr; }
-        auto it = m_tracks.find(m_trackNumber);
+        auto it = m_tracks.find(m_number);
         if (it != m_tracks.end() && !it->header.isEmpty()) {
             m_track = ass_new_track(m_lib);
             ass_process_codec_private(m_track, it->header.data(), it->header.size());
-            for (const Block &b : it->blocks) ass_process_chunk(m_track, const_cast<char *>(b.data.data()), b.data.size(), b.start, b.duration);
+            for (Block &b : it->blocks) ass_process_chunk(m_track, b.data.data(), b.data.size(), b.start, b.duration);
         }
-        clearImage(); updateTick(); render();
+        emit frame(QImage(), QRect()); updateTick(); render();
     }
-    void updateTick() { if (m_playing && m_track) m_tick.start(); else m_tick.stop(); }
+    void updateTick() { if (!m_tick) return; if (m_playing && m_track) { if (!m_tick->isActive()) m_tick->start(); } else m_tick->stop(); }
     void render() {
         if (!m_track) return;
         if (m_fontsChanged) { ass_set_fonts(m_renderer, "/usr/share/fonts/DroidSans.ttf", "sans-serif", ASS_FONTPROVIDER_NONE, nullptr, 0); m_fontsChanged = false; }
@@ -132,11 +111,9 @@ private:
             out.fill(0);
             for (ASS_Image *p = img; p; p = p->next) blend(out, box.topLeft(), p);
         }
-        m_image = out; m_box = box; m_dirty = true; m_frames++;
-        update();
+        statFrames++;
+        emit frame(out, box);
     }
-    void clearImage() { m_image = QImage(); m_box = QRect(); m_dirty = true; update(); }
-
     static QByteArray srtHeader() {
         return "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n"
                "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
@@ -149,9 +126,10 @@ private:
         static const QRegularExpression braces("\\{([^}]*)\\}"), an("^\\\\an[1-9]$"), tag("<[^>]+>");
         for (auto m = braces.match(t); m.hasMatch(); m = braces.match(t, m.capturedStart() + 1))
             if (!an.match(m.captured(1).trimmed()).hasMatch()) t.remove(m.capturedStart(), m.capturedLength());
-        t.replace(QRegularExpression("<\\s*i\\s*>", QRegularExpression::CaseInsensitiveOption), "{\\i1}").replace(QRegularExpression("<\\s*/\\s*i\\s*>", QRegularExpression::CaseInsensitiveOption), "{\\i0}")
-         .replace(QRegularExpression("<\\s*b\\s*>", QRegularExpression::CaseInsensitiveOption), "{\\b1}").replace(QRegularExpression("<\\s*/\\s*b\\s*>", QRegularExpression::CaseInsensitiveOption), "{\\b0}")
-         .replace(QRegularExpression("<\\s*u\\s*>", QRegularExpression::CaseInsensitiveOption), "{\\u1}").replace(QRegularExpression("<\\s*/\\s*u\\s*>", QRegularExpression::CaseInsensitiveOption), "{\\u0}")
+        const auto ci = QRegularExpression::CaseInsensitiveOption;
+        t.replace(QRegularExpression("<\\s*i\\s*>", ci), "{\\i1}").replace(QRegularExpression("<\\s*/\\s*i\\s*>", ci), "{\\i0}")
+         .replace(QRegularExpression("<\\s*b\\s*>", ci), "{\\b1}").replace(QRegularExpression("<\\s*/\\s*b\\s*>", ci), "{\\b0}")
+         .replace(QRegularExpression("<\\s*u\\s*>", ci), "{\\u1}").replace(QRegularExpression("<\\s*/\\s*u\\s*>", ci), "{\\u0}")
          .remove(tag);
         t = t.trimmed().replace('\n', "\\N");
         return t.isEmpty() ? QByteArray() : (QString::number(readOrder) + ",0,Default,,0,0,0,," + t).toUtf8();
@@ -170,6 +148,65 @@ private:
             }
         }
     }
+    ASS_Library *m_lib = nullptr;
+    ASS_Renderer *m_renderer = nullptr;
+    ASS_Track *m_track = nullptr;
+    QHash<int, Track> m_tracks;
+    QTimer *m_tick = nullptr;
+    QElapsedTimer m_since;
+    double m_position = 0;
+    int m_number = -1, m_delay = 0;
+    bool m_playing = false, m_fontsChanged = true;
+};
+
+class SubtitleLayer : public QQuickItem {
+    Q_OBJECT
+    Q_PROPERTY(QObject *source READ source WRITE setSource NOTIFY sourceChanged)
+    Q_PROPERTY(int track READ track WRITE setTrack NOTIFY trackChanged)         // a track number, or -1 for none
+    Q_PROPERTY(double position READ position WRITE setPosition)                 // the player's position, ms
+    Q_PROPERTY(bool playing READ playing WRITE setPlaying)
+    Q_PROPERTY(int delay READ delay WRITE setDelay NOTIFY delayChanged)
+public:
+    SubtitleLayer() {
+        setFlag(ItemHasContents);
+        m_worker = new SubtitleWorker;
+        m_worker->moveToThread(&m_thread);
+        connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
+        connect(m_worker, &SubtitleWorker::frame, this, [this](const QImage &image, const QRect &box) { m_image = image; m_box = box; m_dirty = true; update(); });
+        m_thread.start();
+        QMetaObject::invokeMethod(m_worker, "start", Qt::QueuedConnection);
+    }
+    ~SubtitleLayer() override { m_thread.quit(); m_thread.wait(); }
+    QObject *source() const { return m_source; }
+    void setSource(QObject *o) {
+        if (o == m_source) return;
+        if (m_source) disconnect(m_source, nullptr, m_worker, nullptr);
+        m_source = o;
+        if (auto tee = qobject_cast<Tee *>(o)) {
+            connect(tee, &Tee::subtitleHeader, m_worker, &SubtitleWorker::addHeader);
+            connect(tee, &Tee::subtitleBlock, m_worker, &SubtitleWorker::addBlock);
+            connect(tee, &Tee::font, m_worker, &SubtitleWorker::addFont);
+        }
+        emit sourceChanged();
+    }
+    int track() const { return m_track; }
+    void setTrack(int n) { if (n == m_track) return; m_track = n; QMetaObject::invokeMethod(m_worker, "setTrack", Qt::QueuedConnection, Q_ARG(int, n)); emit trackChanged(); }
+    double position() const { return m_position; }
+    void setPosition(double ms) { m_position = ms; clock(); }
+    bool playing() const { return m_playing; }
+    void setPlaying(bool on) { if (on == m_playing) return; m_playing = on; clock(); }
+    int delay() const { return m_delay; }
+    void setDelay(int ms) { if (ms == m_delay) return; m_delay = ms; clock(); emit delayChanged(); }
+    // a new stream: forget its tracks and fonts
+    Q_INVOKABLE void reset() { m_track = -1; QMetaObject::invokeMethod(m_worker, "reset", Qt::QueuedConnection); emit trackChanged(); }
+    // for the lab: tracks, blocks, frames drawn
+    Q_INVOKABLE QString info() const {
+        return QString("tracks %1 blocks %2 track %3 frames %4 fonts %5").arg(m_worker->statTracks).arg(m_worker->statBlocks).arg(m_track).arg(m_worker->statFrames).arg(m_worker->statFonts);
+    }
+signals:
+    void sourceChanged();
+    void trackChanged();
+    void delayChanged();
 protected:
     QSGNode *updatePaintNode(QSGNode *old, UpdatePaintNodeData *) override {
         auto node = static_cast<QSGSimpleTextureNode *>(old);
@@ -182,16 +219,13 @@ protected:
         return node;
     }
 private:
+    void clock() { QMetaObject::invokeMethod(m_worker, "setClock", Qt::QueuedConnection, Q_ARG(double, m_position), Q_ARG(bool, m_playing), Q_ARG(int, m_delay)); }
+    QThread m_thread;
+    SubtitleWorker *m_worker;
     QPointer<QObject> m_source;
-    ASS_Library *m_lib = nullptr;
-    ASS_Renderer *m_renderer = nullptr;
-    ASS_Track *m_track = nullptr;
-    QHash<int, Track> m_tracks;
-    int m_trackNumber = -1, m_delay = 0, m_frames = 0, m_fonts = 0;
+    int m_track = -1, m_delay = 0;
     double m_position = 0;
-    bool m_playing = false, m_fontsChanged = true, m_dirty = false;
-    QElapsedTimer m_since;
-    QTimer m_tick;
+    bool m_playing = false, m_dirty = false;
     QImage m_image;
     QRect m_box;
 };

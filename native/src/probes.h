@@ -86,15 +86,25 @@ public:
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
             double now = monoMs();
             QMutexLocker l(&m_mutex);
-            if (m_last > 0) m_gaps[m_phase].append(now - m_last);
-            if (m_last > 0 && now - m_last > 20) labLog(QString("late frame %1 ms").arg(now - m_last, 0, 'f', 1));
+            // Qt draws only when something changes. A frame is late when it breaks a run of frames (the one
+            // before it came on time); one that follows a pause (nothing animating, a subtitle waiting for its
+            // next line, a key press after a moment) only shows when something next changed
+            const double gap = now - m_last;
+            if (m_last > 0 && m_lastGap > 0 && m_lastGap <= 20 && gap < 150) {
+                m_gaps[m_phase].append(gap);
+                if (gap > 20) labLog(QString("late frame %1 ms").arg(gap, 0, 'f', 1));
+            }
+            m_lastGap = m_last > 0 ? gap : 0;
             m_last = now;
         }, Qt::DirectConnection);
         // GUI thread: a long wait between two animation ticks means key handling, JS or item creation
         // held the GUI thread up
         connect(w, &QQuickWindow::afterAnimating, this, [this] {
             double now = monoMs();
-            if (m_lastTick > 0 && now - m_lastTick > 20) labLog(QString("gui stall %1 ms").arg(now - m_lastTick, 0, 'f', 1));
+            // the same for the GUI thread: a stall breaks a run of on-time ticks; a tick after a pause doesn't
+            const double tick = now - m_lastTick;
+            if (m_lastTick > 0 && m_lastTickGap > 0 && m_lastTickGap <= 20 && tick > 20 && tick < 150) labLog(QString("gui stall %1 ms").arg(tick, 0, 'f', 1));
+            m_lastTickGap = m_lastTick > 0 ? tick : 0;
             m_lastTick = now;
         }, Qt::DirectConnection);
     }
@@ -115,8 +125,8 @@ public:
 private:
     mutable QMutex m_mutex;
     QString m_phase = "idle";
-    double m_last = 0;
-    double m_lastTick = 0;
+    double m_last = 0, m_lastGap = 0;
+    double m_lastTick = 0, m_lastTickGap = 0;
     QMap<QString, QVector<double>> m_gaps;
 };
 

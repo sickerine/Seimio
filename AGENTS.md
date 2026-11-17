@@ -11,7 +11,7 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   and compares them with `tools/preview/baseline/`. A CHANGED state leaves the render and a brightened
   diff in `.lab/shots/`. Look at both: an intended change gets `tools/preview/shots.sh --approve <state>`,
   anything else gets fixed. A new control or state goes into the gallery or the state list too.
-- The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams` against the frame budget in
+- The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams|player` against the frame budget in
   `tour.sh`. A new screen or interaction gets a route there too. TV runs vary by about 2x, so judge a
   change by three runs, not one. An OVER BUDGET line means a regression; find it like this:
   1. `VARIANT='{"timing": true}' tools/tour.sh <route>`, then `tools/lab-timeline.py` lines up key
@@ -21,7 +21,9 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
      JavaScript-bound (short render, long GUI stall), draw-call bound (long render, one pass) or
      capture-bound (many passes).
   Timing logs perturb the TV; take counts from runs without them. Raise a budget only with
-  measurements showing why.
+  measurements showing why. A frame counts as late only when it breaks a run of on-time frames: under
+  the video nothing animates, and Qt draws only when a subtitle line or the overlay changes, so the gap
+  before a frame after a pause isn't lateness.
 
 ## Performance rules
 
@@ -67,6 +69,9 @@ Each rule comes from a measured stall on the C5.
   helper calls inside each item's bindings multiply by the item count.
 - A Repeater's count never depends on data in something that refreshes: keep a fixed pool and hide what
   isn't needed (two back cards per day; creating them per month cost ~100 ms).
+- Under the video, nothing behind it may animate: the scene is made invisible (not just transparent)
+  once it has faded out, which stops the backdrop's zoom and the calendar's light. Every frame Qt draws
+  over a playing video risks a late swap on the TV.
 - Hidden things don't follow the selection (`HeroInfo` gets `null` while the calendar hides it), and
   work that runs while something slides away waits until it has (the calendar returns to today 520 ms
   after it leaves).

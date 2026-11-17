@@ -16,6 +16,7 @@
 #include <QNetworkReply>
 #include <QThread>
 #include <functional>
+#include <atomic>
 
 // ---- Matroska, streamed ----------------------------------------------------------------------------
 // pushAt(offset, bytes): contiguous ranges extend the parse; a jump (the player seeked) restarts at the
@@ -250,12 +251,12 @@ private:
         bool ranged = false, head = false, headerSent = false, done = false;
     };
     void serve(QTcpSocket *s) {
-        m_served++; m_sockets.insert(s);
+        m_served++; m_sockets.insert(s); m_open = m_sockets.size();
         auto c = std::make_shared<Conn>();
         c->socket = s;
         auto request = std::make_shared<QByteArray>();
         connect(s, &QTcpSocket::disconnected, this, [this, s, c] {
-            m_sockets.remove(s);
+            m_sockets.remove(s); m_open = m_sockets.size();
             if (c->reply) { c->reply->abort(); c->reply->deleteLater(); c->reply = nullptr; }
             c->done = true; s->deleteLater();
         });
@@ -346,15 +347,12 @@ private:
     std::shared_ptr<MkvSubs::Shared> m_shared = std::make_shared<MkvSubs::Shared>();
     QVariantList m_tracks;
     QString m_url;
-    int m_session = 0, m_served = 0;
+    int m_session = 0;
     QSet<QTcpSocket *> m_sockets;
     bool m_sent = false;
 public:
-    // for the lab: connections served and open, and what they hold unsent
-    Q_INVOKABLE QString stats() const {
-        qint64 held = 0; for (auto s : m_sockets) held += s->bytesToWrite();
-        return QString("served %1 open %2 heldMB %3").arg(m_served).arg(m_sockets.size()).arg(held / 1048576);
-    }
+    // for the lab, read from the GUI thread without waiting on this one
+    std::atomic<int> m_served { 0 }, m_open { 0 };
 };
 
 // The QML side: `open(url)` returns the local URL for the player and starts reading that stream;
@@ -368,23 +366,25 @@ public:
         m_worker->moveToThread(&m_thread);
         connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
         connect(m_worker, &TeeWorker::listening, this, [this](int port) { m_port = port; emit portChanged(); });
-        auto mine = [this](int session) { return session == m_session; };
-        connect(m_worker, &TeeWorker::tracks, this, [this, mine](int s, const QVariantList &t, bool mkv) { if (mine(s)) emit tracksRead(t, mkv); });
-        connect(m_worker, &TeeWorker::chapter, this, [this, mine](int s, qint64 a, qint64 b, const QString &t) { if (mine(s)) emit chapter(a, b, t); });
-        connect(m_worker, &TeeWorker::subtitleHeader, this, [this, mine](int s, int tr, const QString &c, const QByteArray &h) { if (mine(s)) emit subtitleHeader(tr, c, h); });
-        connect(m_worker, &TeeWorker::subtitleBlock, this, [this, mine](int s, int tr, qint64 a, qint64 d, const QByteArray &p) { if (mine(s)) emit subtitleBlock(tr, a, d, p); });
-        connect(m_worker, &TeeWorker::font, this, [this, mine](int s, const QString &n, const QByteArray &d) { if (mine(s)) emit font(n, d); });
+        // re-emitted on the worker's thread (DirectConnection): receivers on other threads get them queued,
+        // so subtitle blocks and fonts go straight to the subtitle thread without passing the GUI thread
+        auto mine = [this](int session) { return session == m_session.load(); };
+        connect(m_worker, &TeeWorker::tracks, this, [this, mine](int s, const QVariantList &t, bool mkv) { if (mine(s)) emit tracksRead(t, mkv); }, Qt::DirectConnection);
+        connect(m_worker, &TeeWorker::chapter, this, [this, mine](int s, qint64 a, qint64 b, const QString &t) { if (mine(s)) emit chapter(a, b, t); }, Qt::DirectConnection);
+        connect(m_worker, &TeeWorker::subtitleHeader, this, [this, mine](int s, int tr, const QString &c, const QByteArray &h) { if (mine(s)) emit subtitleHeader(tr, c, h); }, Qt::DirectConnection);
+        connect(m_worker, &TeeWorker::subtitleBlock, this, [this, mine](int s, int tr, qint64 a, qint64 d, const QByteArray &p) { if (mine(s)) emit subtitleBlock(tr, a, d, p); }, Qt::DirectConnection);
+        connect(m_worker, &TeeWorker::font, this, [this, mine](int s, const QString &n, const QByteArray &d) { if (mine(s)) emit font(n, d); }, Qt::DirectConnection);
         m_thread.start();
         QMetaObject::invokeMethod(m_worker, "start", Qt::QueuedConnection);
     }
     ~Tee() override { m_thread.quit(); m_thread.wait(); }
     int port() const { return m_port; }
-    Q_INVOKABLE QString stats() { QString r; QMetaObject::invokeMethod(m_worker, "stats", Qt::BlockingQueuedConnection, Q_RETURN_ARG(QString, r)); return r; }
+    Q_INVOKABLE QString stats() const { return QString("served %1 open %2").arg(m_worker->m_served).arg(m_worker->m_open); }
     Q_INVOKABLE QString open(const QString &url) {
         if (!m_port) return url;                                                    // not listening: play directly
-        ++m_session;
-        QMetaObject::invokeMethod(m_worker, "open", Qt::QueuedConnection, Q_ARG(int, m_session), Q_ARG(QString, url));
-        return QString("http://127.0.0.1:%1/s/%2").arg(m_port).arg(m_session);
+        const int session = ++m_session;
+        QMetaObject::invokeMethod(m_worker, "open", Qt::QueuedConnection, Q_ARG(int, session), Q_ARG(QString, url));
+        return QString("http://127.0.0.1:%1/s/%2").arg(m_port).arg(session);
     }
 signals:
     void portChanged();
@@ -396,5 +396,6 @@ signals:
 private:
     QThread m_thread;
     TeeWorker *m_worker;
-    int m_port = 0, m_session = 0;
+    int m_port = 0;
+    std::atomic<int> m_session { 0 };
 };

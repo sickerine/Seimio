@@ -38,7 +38,7 @@ its owner, so the rest of the hold can't press anything in the menu.
 2. `third_party/libass/build.sh`, then `native/build.sh` (Docker; the webOS toolchain is cached in `~/Library/Caches/webos-sdk`).
 3. `tools/fetch-art.py` fetches lab art and your watch state into `app/art/`.
 4. `python3 -I tools/lab-server.py &` then `tools/deploy.sh`.
-5. `tools/tour.sh home|calendar|show|menu|play|streams` drives the TV with the network remote and prints frame pacing.
+5. `tools/tour.sh home|calendar|show|menu|play|streams|player` drives the TV with the network remote and prints frame pacing.
 6. `tools/preview/build-data.sh` builds `Seimio.Data` for the Mac, then `tools/preview/shot.sh out.png`
    renders the app on the Mac (Qt 5 from Homebrew) for screenshots;
    `tools/preview/shots.sh` compares fixed states with the approved images.

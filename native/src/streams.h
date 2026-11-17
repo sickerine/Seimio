@@ -276,6 +276,8 @@ public:
         m_auto = false; ++m_ticket; m_chosen = m_all[m_rows[row]].fields; resolve(m_all[m_rows[row]], m_ticket);
     }
     Q_INVOKABLE void cancel() { ++m_ticket; m_auto = false; setStage(""); }
+    // the listed row of the stream with this addon link, or -1
+    Q_INVOKABLE int rowOf(const QString &url) const { for (int r = 0; r < m_rows.size(); r++) if (m_all[m_rows[r]].url == url) return r; return -1; }
     // reads one stream's text, for tests
     Q_INVOKABLE QVariantMap read(const QString &name, const QString &title, bool anime) const { return releases::read(name, title, QString(), anime); }
 
@@ -293,10 +295,11 @@ private:
     static QString rules() {
         return QStringLiteral(
             "Pick one stream to play on an LG C5 OLED TV. Every option plays on it and is cached. Rules, in order:\n"
-            "1. Anime: the most promising Blu-ray (BD, BDRip, BDRemux) release; with no Blu-ray, the best 1080p from a known group (SubsPlease, Erai-raws, ToonsHub, VARYG). Prefer single-episode files to whole-series packs when quality is equal.\n"
+            "1. Anime: 1080p, not 4K. The most promising 1080p Blu-ray (BD, BDRip, BDRemux) release; with no Blu-ray, the best 1080p from a known group (SubsPlease, Erai-raws, ToonsHub, VARYG). Prefer single-episode files to whole-series packs when quality is equal.\n"
             "2. Not anime: the best 4K HDR (Dolby Vision or HDR10), preferably Blu-ray; else the best 1080p.\n"
             "3. The first audio track must be the original language in Dolby Digital, Dolby Digital Plus, AAC or LPCM. Skip foreign-market releases whose names are mainly another language or list dubs (DUB, MVO, AVO, Cyrillic titles): their first track is the dub. Prefer releases that name a supported codec over ones that name none.\n"
-            "4. Among equals, more seeders.");
+            "4. A re-release (v2, v3, REPACK, PROPER) fixes its original: prefer it to the same release without it.\n"
+            "5. Among equals, more seeders.");
     }
 
     QNetworkRequest request(const QUrl &url) const {
@@ -371,8 +374,10 @@ private:
     QVector<int> candidates() const {
         QVector<int> c;
         for (int i = 0; i < m_all.size(); i++) if (m_all[i].fields["support"] != "unsupported" && m_all[i].fields["cached"].toBool()) c << i;
+        // anime: 1080p first, then 4K; anything else: 4K first. A re-release (v2, REPACK) beats its original.
         auto rank = [this](int i) { const QVariantMap &f = m_all[i].fields; const QString r = f["res"].toString();
-                                    return (r == "4K" ? 2000000 : r == "1080p" ? 1000000 : 0) + qMin(f["seeders"].toInt(), 999999); };
+                                    const int res = m_anime ? (r == "1080p" ? 2 : r == "4K" ? 1 : 0) : (r == "4K" ? 2 : r == "1080p" ? 1 : 0);
+                                    return res * 2000000 + (f["version"].toString().isEmpty() ? 0 : 1000000) + qMin(f["seeders"].toInt(), 999999); };
         std::stable_sort(c.begin(), c.end(), [&](int a, int b) { return rank(a) > rank(b); });
         if (c.size() > 255) c.resize(255);
         return c;

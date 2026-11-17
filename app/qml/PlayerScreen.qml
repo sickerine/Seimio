@@ -20,7 +20,8 @@ FocusScope {
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
     property var choice: ({})            // what Tracks chose for this file
     property var chapters: []            // { start, end, title } from the file
-    property bool useTee: true           // the lab turns it off to compare
+    property bool useTee: true           // the lab turns these off to compare
+    property bool subtitlesShown: true
     property var item: null
     property string label: ""
     property var stream: null            // the stream being played, once chosen
@@ -57,7 +58,7 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
-        subs.reset(); trackList = []; choice = ({}); chapters = [];
+        subs.reset(); trackList = []; choice = ({}); chapters = []; pendingChapters = [];
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
@@ -73,13 +74,18 @@ FocusScope {
     }
     // the file's tracks, chapters and subtitles, read from the bytes the player loads (Seimio.Native Tee)
     property bool fileIsOther: false
+    property var pendingChapters: []
+    property bool sheetReady: false
+    Timer { running: media.playing && !page.sheetReady; interval: 3000; onTriggered: page.sheetReady = true }
+    Timer { id: chaptersIn; interval: 300; onTriggered: { page.chapters = page.pendingChapters; page.pendingChapters = [] } }
     Tee {
         id: tee
         onTracksRead: {
             page.fileIsOther = !matroska;
             if (matroska) page.chooseTracks(page.fileTracks(tracks)); else if (media.audioTracks.length) page.chooseTracks(page.lgTracks());
         }
-        onChapter: { var c = page.chapters.slice(); c.push({ start: startMs, end: endMs, title: title }); page.chapters = c }
+        // chapters arrive one by one; they're applied together, so the bar and the skip spans build once
+        onChapter: { page.pendingChapters.push({ start: startMs, end: endMs, title: title }); chaptersIn.restart() }
     }
     // what LG's player decodes: Dolby Digital (Plus), AAC, MP3, FLAC, PCM, Vorbis; not DTS, TrueHD or Opus
     function audioPlays(codec) { return !/dts|truehd|mlp|opus/i.test(codec) }
@@ -102,7 +108,7 @@ FocusScope {
         trackList = list; choice = tracks.choose(list, group);
         if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
         if (media.loaded) media.mute(!!choice.audioOff);
-        subs.track = choice.sub;
+        subs.track = subtitlesShown ? choice.sub : -1;
     }
     SubtitleLayer {
         id: subs
@@ -122,7 +128,11 @@ FocusScope {
     property string episodeId: ""        // the one playing
     signal playEpisode(var episode)
     signal switchStream(int row)
-    onZoneChanged: { hide.restart(); if (zone === "audio" || zone === "subs") buildMenu() }
+    onZoneChanged: {
+        hide.restart();
+        if (zone === "audio" || zone === "subs") buildMenu();
+        if (zone === "streams") { var r = stream ? streams.rowOf(stream.url) : -1; streamList.currentIndex = Math.max(0, r); streamList.positionViewAtIndex(Math.max(0, r), ListView.Center) }
+    }
     onTrackListChanged: if (zone === "audio" || zone === "subs") buildMenu()
     onActiveChanged: if (!active) zone = "none"
 
@@ -297,6 +307,7 @@ FocusScope {
     Rectangle {
         anchors.fill: parent
         opacity: page.zone !== "none" && media.playing ? 1 : 0
+        visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         gradient: Gradient { GradientStop { position: 0.45; color: "#00000000" } GradientStop { position: 1; color: "#d9000000" } }
     }
@@ -310,6 +321,8 @@ FocusScope {
         // the whole transport rises out of the row below when it opens, and steps up when the row is open
         property real lift: page.zone === "episodes" ? -270 : 0
         opacity: media.playing && page.zone !== "none" && page.zone !== "streams" ? 1 : 0
+        // hidden, its clock and bar stop asking for frames over the video
+        visible: opacity > 0
         transform: Translate { y: transport.lift + (transport.opacity < 1 ? 24 * (1 - transport.opacity) : 0) }
         Behavior on opacity { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }
         Behavior on lift { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
@@ -376,6 +389,7 @@ FocusScope {
         width: parent.width; height: 300
         y: page.zone === "episodes" ? 790 : page.zone === "bar" || page.zone === "row" ? 1040 : 1120
         opacity: media.playing && page.episodes.length && page.zone !== "none" && page.zone !== "streams" ? 1 : 0
+        visible: opacity > 0
         Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         Text { x: Theme.margin; y: 0; text: "Episodes"; color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 26; font.weight: Font.DemiBold }
@@ -417,6 +431,7 @@ FocusScope {
         readonly property bool open: page.zone === "streams"
         width: 1020; height: parent.height
         x: open ? parent.width - width : parent.width
+        visible: x < parent.width
         color: "#f2101014"
         Behavior on x { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
         Text { x: 56; y: 64; text: "Streams"; color: Theme.ink; font.family: Theme.face; font.pixelSize: 40; font.weight: Font.Bold }
@@ -425,7 +440,9 @@ FocusScope {
             x: 32; y: 170; width: parent.width - 64; height: parent.height - 200
             clip: true; spacing: 10
             focus: sheet.open
-            model: sheet.open || sheet.x < page.width ? page.streams : null
+            // the rows are built a moment after playback starts, while nothing on screen moves, so neither
+            // the start nor opening the sheet pays for them
+            model: page.sheetReady ? page.streams : null
             highlightMoveDuration: 260
             highlight: Rectangle { radius: 24; color: "#3dffffff" }
             preferredHighlightBegin: 0; preferredHighlightEnd: 400; highlightRangeMode: ListView.ApplyRange
@@ -448,6 +465,7 @@ FocusScope {
                 Row {
                     x: 130; y: 56; spacing: 6
                     Chip { visible: !!(page.stream && page.stream.url === model.url); size: 16; kind: "solid"; icon: "play"; text: "Playing" }
+                    Chip { visible: model.support === "unsupported"; size: 16; kind: "tint"; tint: "#b42318"; text: "No " + (model.why || "audio") }
                     Chip { visible: !!model.hdr; size: 16; kind: "tint"; tint: model.hdr === "DV" ? "#8b5cf6" : "#e8590c"; text: model.hdr || "" }
                     Repeater { model: streamRow.chips.slice(0, 5); Chip { size: 16; text: modelData.text; icon: modelData.icon; kind: modelData.tag ? "tint" : "glass"; tint: modelData.tag === "bd" ? "#0f766e" : "#7c3aed" } }
                 }
@@ -462,6 +480,7 @@ FocusScope {
         size: 28; kind: "solid"; icon: "play"
         text: page.segmentNow ? (page.segmentNow.kind === "intro" ? "Skip Intro" : "Skip Credits") : ""
         opacity: page.segmentNow && media.playing && (page.zone === "none" || page.zone === "bar") ? 1 : 0
+        visible: opacity > 0
         transform: Translate { x: (1 - skipButton.opacity) * 40 }
         Behavior on opacity { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }
     }

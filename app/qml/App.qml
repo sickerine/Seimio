@@ -156,6 +156,7 @@ WebOSWindow {
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
         onOpenStreams: app.openStreams(null)
+        onVariantChanged: if (variant.clearTrackChoices) trackChoice.clearPreferences()
     }
 
     FocusScope {
@@ -168,6 +169,9 @@ WebOSWindow {
             id: scene
             anchors.fill: parent
             opacity: app.watching ? 0 : 1
+            // gone, not just transparent, under the video: its backdrop's slow zoom and the calendar's light
+            // stop, so nothing redraws over the film
+            visible: opacity > 0
             Behavior on opacity { NumberAnimation { duration: 500 } }
 
             Backdrop {
@@ -285,6 +289,7 @@ WebOSWindow {
             streams: streams
             tracks: trackChoice
             useTee: !probe.variant.noTee
+            subtitlesShown: !probe.variant.noSubs
             // the season's episodes, when the show page holds this show
             readonly property bool sameShow: showPage.item === app.displayItem && !!app.playTarget && app.playTarget.type === "series"
             episodes: sameShow ? showPage.episodes : []
