@@ -1,14 +1,17 @@
 #!/bin/bash
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
 # phase (render-thread stamps from LabProbe). Routes: home (Continue Watching, tabs, a movie's title
-# page), calendar (entering it, moving, scrolling into the next month, a day opening and turning,
-# leaving), show (a show page: it opens resting on an episode; the episodes, a season change, the actions), menu (quick actions opening and closing on a timer), play (an SDR episode
-# from a show page: the loading screen, then the video with the controls over it; an HDR or Dolby Vision
-# video would leave the panel at 48 Hz after it, which LG keeps until an SDR video plays), streams (a show's stream
-# list, opened by the lab 12 s after launch: scrolling, filtering, leaving), player (an SDR episode's
-# overlay: the transport, seeking, the Audio and Subtitles lists, the Streams sheet, the episode row;
-# nothing is chosen, so no track choice is saved), anime (the Anime tab: moving along the chart crossfades its fanart).
-# Tours never call the AI pick ("noAi": the app gets no OpenRouter key and plays the best stream by rank).
+# page), calendar (entering it, moving, scrolling into the next month, a day opening, one of its
+# releases opening its show page and closing, the day turning, leaving), show (a show page: it opens
+# resting on an episode; the episodes, a season change, the actions), menu (quick actions opening and
+# closing on a timer), play (an SDR episode from a show page: the loading screen, then the video with
+# the controls over it; an HDR or Dolby Vision video would leave the panel at 48 Hz after it, which LG
+# keeps until an SDR video plays), streams (a show's stream list, opened by the lab 12 s after launch:
+# scrolling, filtering, leaving), player (an SDR episode's overlay: the transport, seeking, the Audio
+# and Subtitles lists, the Streams sheet, the episode row; nothing is chosen, so no track choice is
+# saved), anime (the Anime tab: moving along the chart crossfades its fanart; a show opening and
+# closing; the filters walked, one chosen and undone). Tours never call the AI pick ("noAi": the app
+# gets no OpenRouter key and plays the best stream by rank).
 # usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
@@ -25,7 +28,7 @@ p() { $N tools/tvremote.mjs press $1 ${2:-1} ${3:-350} 2>&1 | grep -q sent || { 
 case $route in
   home) p RIGHT 6 300; p LEFT 4 300; p UP 1 900; p RIGHT 3 400; p LEFT 3 400; p DOWN 1 900
         p RIGHT 2 600; p ENTER 1 1500; p RIGHT 2 400; p BACK 1 1500 ;;
-  calendar) p DOWN 1 1500; p RIGHT 4 300; p LEFT 3 300; p ENTER 1 1800; p RIGHT 4 400; p RIGHT 6 300; p RIGHT 1 1500
+  calendar) p DOWN 1 1500; p RIGHT 4 300; p LEFT 3 300; p ENTER 1 1800; p ENTER 1 2000; p BACK 1 1500; p RIGHT 4 400; p RIGHT 6 300; p RIGHT 1 1500
         p BACK 1 1500; p DOWN 2 500; p DOWN 1 1500; p LEFT 3 300; p UP 6 500; p UP 1 1500 ;;
   show) p RIGHT 1 600; p ENTER 1 1500; p RIGHT 4 350; p LEFT 2 350; p UP 1 600; p LEFT 1 900; p RIGHT 1 900
         p DOWN 1 600; p UP 2 600; p RIGHT 2 400; p DOWN 2 600; p BACK 1 1500 ;;
@@ -36,7 +39,8 @@ case $route in
           p RIGHT 1 400; p ENTER 1 1200; p DOWN 3 300; p BACK 1 900; p RIGHT 1 400; p ENTER 1 1500; p DOWN 4 300; p BACK 1 900
           p DOWN 1 900; p DOWN 1 1200; p RIGHT 2 500; p UP 1 900; p BACK 1 900; p BACK 1 2500 ;;
   streams) p RIGHT 1 5000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
-  anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p UP 1 900; p UP 1 900 ;;
+  anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p ENTER 1 2500; p BACK 1 1500
+         p UP 1 900; p RIGHT 3 300; p ENTER 1 1500; p LEFT 1 300; p ENTER 1 1500; p UP 1 900 ;;
 esac
 sleep 4; echo '{}' > .lab/www/variant.json
 python3 - .lab/reports $S $route <<'PY'
