@@ -61,8 +61,9 @@ in capitals or by name, as VLC reads names, extended to native names ("日本語
    - Choosing tracks: mpv `player/loadfile.c` `select_default_track` + `compare_track`, with mpv's
      defaults (`subs-fallback=default`, `subs-fallback-forced=yes`, `subs-with-matching-audio=yes`).
      Jellyfin's `MediaStreamSelector` agrees on ordering (default > untagged > forced).
-   - Preferences: per genre { audio: lang | "off", subs: lang | "off" }, written only when the user
-     picks in the menus. A fallback pick is never saved. Subtitle delay per file (infohash + file).
+   - Preferences: per genre { audio: lang | "off", subs: lang | "off" }, the default, written only by Set
+     as default in a list's hold menu (marked with a pin there). Picking a track plays it for that file;
+     a fallback pick is never saved. Subtitle delay per file (infohash + file).
 2. Subtitle tee (C++, port of stremio-webos `service/ass-tee.js`, `mkv-subs.js`, `mkv-cut.js`)
    - A local HTTP server the LG player loads from; each Range is fetched once upstream, written to the
      player, and fed to a streaming Matroska parser that copies only subtitle blocks (tracks, flags,

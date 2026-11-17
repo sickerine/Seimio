@@ -85,7 +85,7 @@ FocusScope {
         onWindowIdChanged: page.load()
         // a file that isn't Matroska: LG's own list of audio tracks is all there is
         onAudioTracksChanged: if (!page.trackList.length && audioTracks.length && page.fileIsOther) page.chooseTracks(page.lgTracks())
-        onLoadedChanged: if (loaded && page.choice.audioOff) media.mute(true)
+        onLoadedChanged: if (loaded && page.audioMuted) media.mute(true)
     }
     // the file's tracks, chapters and subtitles, read from the bytes the player loads (Seimio.Native Tee)
     property bool fileIsOther: false
@@ -129,7 +129,8 @@ FocusScope {
     function chooseTracks(list) {
         trackList = list.concat(addonSubs); choice = tracks.choose(trackList, group);
         if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
-        if (media.loaded) media.mute(!!choice.audioOff);
+        audioMuted = !!choice.audioOff;
+        if (media.loaded) media.mute(audioMuted);
         subs.track = subtitlesShown ? choice.sub : -1;
     }
 
@@ -246,7 +247,10 @@ FocusScope {
     // `keep`: stay on the row (the list changing under it), rather than go to the checked one
     function buildMenu(keep) {
         var type = zone === "audio" ? "audio" : "sub";
-        var current = type === "audio" ? (choice.audioOff ? -2 : media.audioTrack) : subs.track;
+        var current = type === "audio" ? (audioMuted ? -2 : media.audioTrack) : subs.track;
+        // the genre's default language (Tracks.prefer), marked with a pin
+        var preferred = tracks.preferences(group)[type] || "";
+        var preferredBase = preferred === "off" ? "off" : preferred ? tracks.baseLanguage(preferred, "") : "";
         var favorites = tracks.favorites(type), groups = ({}), order = [];
         for (var i = 0; i < trackList.length; i++) {
             var t = trackList[i];
@@ -266,7 +270,8 @@ FocusScope {
                 if (t.forced) extra.push("Forced");
                 if (!t.playable) extra.push("won't play");
             }
-            return { label: name || t.title || "Unknown", detail: extra.join("   "), checked: t.id === current, icon: star ? "star" : "" };
+            return { label: name || t.title || "Unknown", detail: extra.join("   "), checked: t.id === current, icon: star ? "star" : "",
+                     badge: preferredBase && preferredBase === tracks.baseLanguage(t.lang, t.title) ? "pin" : "" };
         }
         // the file's own tracks in file order, then the online languages by name
         function listOf(bases, star) {
@@ -283,7 +288,7 @@ FocusScope {
         if (menuLevel === "other" && favs.length) {
             listOf(rest, false).forEach(function (t) { rows.push(rowOf(t, false)); list.push(t) });
         } else {
-            rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) }); list.push(null);
+            rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1), badge: preferredBase === "off" ? "pin" : "" }); list.push(null);
             if (!favs.length) listOf(order, false).forEach(function (t) { rows.push(rowOf(t, false)); list.push(t) });
             else {
                 // favourites in the order added, each with its own tracks or its online match
@@ -302,21 +307,38 @@ FocusScope {
         if (!keep && r === rows.length) menu.currentIndex = 0;
         if (!keep) menu.follow(true);
     }
-    // holding OK on a language offers to make it a favourite, or stop it being one
+    // Holding OK on a language offers to make it a favourite (or stop it being one) and to make it the
+    // default for this genre (or stop it being one); on Off, only the default. The default is what
+    // plays when a file of the genre opens.
     property bool favoriteMenu: false
-    property string favoriteLanguage: ""
+    property string favoriteLanguage: ""                         // the held row's language, or "off"
+    property var heldTrack: null
+    property var holdActions: []
     function holdRow(row) {
         var t = menuTracks[row];
-        if (!t || t === "other") return;
-        favoriteLanguage = tracks.baseLanguage(t.lang, t.title);
+        if (t === "other") return;
+        var type = zone === "audio" ? "audio" : "sub", preferred = tracks.preferences(group)[type] || "";
+        heldTrack = t;
+        favoriteLanguage = t ? tracks.baseLanguage(t.lang, t.title) : "off";
+        var isDefault = preferred === "off" ? favoriteLanguage === "off" : !!preferred && tracks.baseLanguage(preferred, "") === favoriteLanguage;
+        var rows = [], actions = [];
+        if (t) {
+            var fav = tracks.favorites(type).indexOf(favoriteLanguage) >= 0;
+            rows.push({ label: fav ? "Remove from favorites" : "Add to favorites", icon: "star" }); actions.push("favorite");
+        }
+        rows.push({ label: isDefault ? "Remove default" : "Set as default", detail: group === "anime" ? "Anime" : "Movies & series", icon: "pin" }); actions.push(isDefault ? "undefault" : "default");
+        holdActions = actions; favoriteList.model = rows; favoriteList.currentIndex = 0;
         favoriteMenu = true;
     }
-    function toggleFavorite() {
-        var type = zone === "audio" ? "audio" : "sub", on = tracks.favorites(type).indexOf(favoriteLanguage) < 0;
-        tracks.setFavorite(type, favoriteLanguage, on);
+    function holdAction(index) {
+        var type = zone === "audio" ? "audio" : "sub", action = holdActions[index], t = heldTrack;
+        if (action === "favorite") {
+            tracks.setFavorite(type, favoriteLanguage, tracks.favorites(type).indexOf(favoriteLanguage) < 0);
+            if (!tracks.favorites(type).length) menuLevel = "main";
+        } else if (action === "default") tracks.prefer(group, type, t ? t.lang : "off", t ? t.title : "");
+        else tracks.prefer(group, type, "", "");                 // no language: the default is cleared
         favoriteMenu = false;
-        if (!tracks.favorites(type).length) menuLevel = "main";
-        buildMenu();
+        buildMenu(true);
     }
     // between the levels the list slides across, the way it goes
     function openLevel(level) {
@@ -343,22 +365,18 @@ FocusScope {
             NumberAnimation { target: menuShift; property: "x"; to: 0; duration: 300; easing.type: Theme.ease }
         }
     }
+    // a pick plays the track for this file only; a default is set from the hold menu
     function pickFromMenu(row) {
         var t = menuTracks[row];
         if (t === "other") { openLevel("other"); return }
+        if (t && !t.playable) return;
         if (zone === "audio") {
-            if (t && !t.playable) return;
             if (t) { media.selectAudio(t.id); media.mute(false) } else media.mute(true);
-            tracks.prefer(group, "audio", t ? t.lang : "off", t ? t.title : "");
-            choice = tracks.choose(trackList, group);
-        } else {
-            if (t && !t.playable) return;
-            subs.track = t ? t.id : -1; pickedSub = true;
-            tracks.prefer(group, "sub", t ? t.lang : "off", t ? t.title : "");
-            choice = tracks.choose(trackList, group);
-        }
+            audioMuted = !t;
+        } else { subs.track = t ? t.id : -1; pickedSub = true }
         buildMenu();
     }
+    property bool audioMuted: false                              // Off picked, or the default, for this file
     function setDelay(ms) { subs.delay = ms; if (fileKey) tracks.setDelay(fileKey, ms) }
 
     // what's happening, while the video isn't up yet
@@ -592,12 +610,10 @@ FocusScope {
     Rectangle {
         id: favoritePanel
         readonly property bool open: page.favoriteMenu && menuPanel.open
-        // what it offers and where, held while it fades out: the toggle rebuilds the list under it
-        Latch { id: favoriteShown; live: favoritePanel.open
-                value: page.favoriteMenu && tracks.favorites(page.zone === "audio" ? "audio" : "sub").indexOf(page.favoriteLanguage) >= 0 }
+        // where it is, held while it fades out (the list it acted on rebuilds under it); its rows are set
+        // when it opens (holdRow), so they stay as they were while it fades
         Latch { id: favoriteY; live: favoritePanel.open; value: menuPanel.y + 16 + menu.currentY + (70 - favoritePanel.height) / 2 }
-        readonly property bool isFavorite: !!favoriteShown.current
-        width: 470; height: favoriteList.implicitHeight + 32; radius: 32
+        width: 600; height: favoriteList.implicitHeight + 32; radius: 32
         x: menuPanel.x - width - 18
         y: favoriteY.current
         color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
@@ -610,8 +626,7 @@ FocusScope {
             x: 16; y: 16; width: parent.width - 32
             focus: favoritePanel.open
             shown: favoritePanel.open
-            model: [{ label: favoritePanel.isFavorite ? "Remove from favorites" : "Add to favorites", icon: "star" }]
-            onTriggered: page.toggleFavorite()
+            onTriggered: page.holdAction(rowIndex)
         }
     }
 

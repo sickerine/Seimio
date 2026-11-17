@@ -1,4 +1,5 @@
-// A vertical list of { label, icon, detail, value, checked } rows walked with Up/Down; OK triggers the
+// A vertical list of { label, icon, detail, value, badge, checked } rows (`badge`: an icon at the right,
+// before the check) walked with Up/Down; OK triggers the
 // focused row; Left and Right pass on to the parent (a row can be a value the parent steps). The
 // highlight slides between rows. Rows arrive one after another each time the list is `shown`. With
 // `maxRows`, a longer list shows that many and scrolls to keep the focused row and one either side in
@@ -73,7 +74,7 @@ FocusScope {
             Text {
                 visible: !!parent.m.detail
                 x: label.x + label.implicitWidth + 14; anchors.baseline: label.baseline
-                width: parent.width - x - 76; elide: Text.ElideRight
+                width: parent.width - x - (parent.m.badge ? 118 : 76); elide: Text.ElideRight
                 text: parent.m.detail || ""; color: Theme.inkDim; textFormat: Text.PlainText
                 font.family: Theme.face; font.pixelSize: 23
             }
@@ -82,6 +83,11 @@ FocusScope {
                 anchors.right: parent.right; anchors.rightMargin: 24; anchors.baseline: label.baseline
                 text: parent.m.value !== undefined ? parent.m.value : ""; color: Theme.ink
                 font.family: Theme.face; font.pixelSize: 26; font.weight: Font.DemiBold
+            }
+            Icon {
+                name: parent.m.badge || ""; visible: !!parent.m.badge
+                anchors.right: parent.right; anchors.rightMargin: 24 + 28 + 14 - inkLeft; anchors.verticalCenter: parent.verticalCenter
+                color: Theme.inkDim
             }
             Icon {
                 name: "check"; visible: !!parent.m.checked
