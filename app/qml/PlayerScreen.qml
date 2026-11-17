@@ -586,8 +586,8 @@ FocusScope {
             id: buttons
             focus: page.zone === "row"
             anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 852
-            // Audio and Subtitles open their list above them; Streams opens a sheet
-            model: [{ label: "Audio", trailing: "chevronUp" }, { label: "Subtitles", trailing: "chevronUp" }, { label: "Streams", icon: "list" }]
+            // Audio and Subtitles open a list (chevrons); Streams opens a sheet
+            model: [{ label: "Audio", trailing: "chevrons" }, { label: "Subtitles", trailing: "chevrons" }, { label: "Streams", icon: "list" }]
             onTriggered: page.zone = ["audio", "subs", "streams"][buttonIndex]
         }
 

@@ -1,7 +1,7 @@
 // A glass bar of segments (tabs, seasons) walked with Left/Right. The highlight stretches like liquid:
 // its leading edge moves first and the trailing edge follows. It's white while the bar has focus.
 // `model` entries are strings, or { label, icon } for icon-only segments, or { label, trailing } for a
-// label with a small icon after it (a chevron on a segment that opens a menu); a new model of the same
+// label with a small icon after it (chevrons on a segment that opens a menu); a new model of the same
 // length relabels the segments in place. Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 // Moving selects, unless `selectOnOk`: then a cursor walks the segments and OK selects the one under it

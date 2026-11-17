@@ -1,5 +1,5 @@
 // Small vector icons: play, plus, check, search, info, star, up, down, list, pin (a default),
-// chevronDown and chevronUp (a control that opens a menu below or above it). Each is a distance field drawn by one
+// chevrons (up and down: a control that opens a menu, wherever it opens). Each is a distance field drawn by one
 // shader, so an icon costs no painting, no texture and no upload when it's created or recoloured,
 // and stays sharp at any size or scale. `inkLeft`/`inkRight` are where the drawn shape starts and ends
 // in pixels, so a control can pad an icon by what you see rather than by its box.
@@ -9,9 +9,9 @@ ShaderEffect {
     property string name
     property color color: "white"
     width: 28; height: 28
-    property real kind: ["play", "plus", "check", "search", "info", "star", "up", "down", "list", "pin", "chevronDown", "chevronUp"].indexOf(name)
+    property real kind: ["play", "plus", "check", "search", "info", "star", "up", "down", "list", "pin", "chevrons"].indexOf(name)
     property real px: 1 / Math.max(1, width)        // one pixel in icon units, for antialiasing
-    readonly property var ink: [[0.28, 0.84], [0.125, 0.875], [0.145, 0.875], [0.145, 0.895], [0.085, 0.915], [0.063, 0.937], [0.205, 0.795], [0.205, 0.795], [0.125, 0.875], [0.285, 0.715], [0.165, 0.835], [0.165, 0.835]][kind] || [0, 1]
+    readonly property var ink: [[0.28, 0.84], [0.125, 0.875], [0.145, 0.875], [0.145, 0.895], [0.085, 0.915], [0.063, 0.937], [0.205, 0.795], [0.205, 0.795], [0.125, 0.875], [0.285, 0.715], [0.245, 0.755]][kind] || [0, 1]
     readonly property real inkLeft: ink[0] * width
     readonly property real inkRight: ink[1] * width
     fragmentShader: "
@@ -60,9 +60,9 @@ ShaderEffect {
             else if (kind < 4.5) d = min(min(abs(length(p - vec2(0.5)) - 0.36), seg(p, vec2(0.5, 0.46), vec2(0.5, 0.68))) - t,
                                          length(p - vec2(0.5, 0.32)) - 0.06);
             else if (kind < 5.5) d = star(vec2(p.x - 0.5, 0.5 - p.y), 0.46, 0.2 / 0.46);
-            else if (kind > 9.5) {
-                if (kind > 10.5) p.y = 1.0 - p.y;        // up is down upside down
-                d = min(seg(p, vec2(0.22, 0.36), vec2(0.5, 0.64)), seg(p, vec2(0.5, 0.64), vec2(0.78, 0.36))) - t;
+            else if (kind > 9.5) {                     // chevrons: one up over one down, mirrored about the middle
+                p.y = 0.5 - abs(p.y - 0.5);
+                d = min(seg(p, vec2(0.3, 0.42), vec2(0.5, 0.22)), seg(p, vec2(0.5, 0.22), vec2(0.7, 0.42))) - t;
             }
             else if (kind > 8.5) d = min(length(p - vec2(0.5, 0.36)) - 0.215, seg(p, vec2(0.5, 0.5), vec2(0.5, 0.86)) - t);   // pin: a round head on a needle
             else if (kind > 7.5) d = min(min(seg(p, vec2(0.18, 0.28), vec2(0.82, 0.28)), seg(p, vec2(0.18, 0.5), vec2(0.82, 0.5))),

@@ -3,7 +3,7 @@
 // white at rest. `progress` (0 to 100) draws a thin bar under the label, for "Resume" buttons. The
 // padding is measured from the drawn icon and text, equal on both sides, and the label and bar are
 // centred together as one block, with the bar spanning exactly the icon and label above it. `trailing`
-// is a small icon after the label: a chevron on a button that opens a menu, pointing where it opens.
+// is a small icon after the label: chevrons on a button that opens a menu.
 // Given more width than it needs (a row's stretched button), the content stays centred. `fill` (0 to
 // 1, < 0 for none) sweeps a tint across the button from the left, for a countdown, leaving the label
 // where it is.
