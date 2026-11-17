@@ -8,7 +8,8 @@
 // when divided by the number of slots. Moving along the row, or swapping in a new model, never creates
 // or destroys a card, so it costs no item creation and no new scene graph nodes on the TV.
 //
-// `model` is a JS array of card data: { art, title, caption, label, episode, progress, watched, upcoming }.
+// `model` is a JS array of card data: { art, fallback, title, caption, label, episode, progress, watched,
+// upcoming }.
 // With `slides` off the row stays put and the focus moves along it (a row of a grid that fits the screen).
 import QtQuick 2.12
 
@@ -56,6 +57,7 @@ FocusScope {
             x: strip.inset + idx * strip.stride - strip.scroll
             width: strip.cardWidth; height: strip.cardHeight; radius: strip.cardRadius
             art: d && d.art || ""
+            fallback: d && d.fallback || ""
             title: d && d.title || ""
             episode: d && d.episode || ""
             progress: d && d.progress !== undefined ? d.progress : -1

@@ -44,14 +44,14 @@ WebOSWindow {
     onDisplayItemChanged: prepareShow.restart()
     Timer {
         id: prepareShow; interval: 1200
-        onTriggered: { if (app.displayItem && app.onHome && home.row === 0 && catalog.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id)) }
+        onTriggered: { if (app.displayItem && app.onHome && home.row === 0 && app.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id)) }
     }
 
     function open() {
         commit();
         // the title page is for a movie, or a show whose whole run is one season with one episode; any
         // other show gets the show page, even when one of its seasons has a single episode
-        if (displayItem && catalog.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
+        if (displayItem && app.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
     // Playing. Play (and OK on an episode) plays the AI pick: the player opens at once and says what it's
@@ -65,7 +65,7 @@ WebOSWindow {
     function target(episode) {
         if (episode) return { type: "series", id: episode.id, label: episode.label, progress: episode.progress };
         var t = showPage.resumeTarget(showData(displayItem.id));
-        return t ? { type: "series", id: t.id, label: catalog.episodeCount(displayItem.id) > 1 ? t.label : "", progress: t.progress }
+        return t ? { type: "series", id: t.id, label: app.episodeCount(displayItem.id) > 1 ? t.label : "", progress: t.progress }
                  : { type: "movie", id: displayItem.id, label: "", progress: displayItem.progress || 0 };
     }
     function playAi(episode) {
@@ -73,7 +73,7 @@ WebOSWindow {
         playTarget = target(episode);
         if (layer !== "player") playerBack = layer === "menu" ? "home" : layer;     // an episode from the player goes back where it came from
         // the episode row under the player shows the show page's season: load the show if it isn't there
-        if (playTarget.type === "series" && showPage.item !== displayItem && catalog.episodeCount(displayItem.id) > 1) showPage.load(displayItem, showData(displayItem.id));
+        if (playTarget.type === "series" && showPage.item !== displayItem && app.episodeCount(displayItem.id) > 1) showPage.load(displayItem, showData(displayItem.id));
         // switching episodes inside the player keeps the release: Stremio's binge group (see Streams.play)
         var binge = layer === "player" && player.stream ? player.stream.bingeGroup || "" : "";
         player.prepare(displayItem, playTarget.label); layer = "player";
@@ -151,6 +151,24 @@ WebOSWindow {
     Catalog { id: catalog; base: Qt.resolvedUrl("../art/"); onLoaded: app.shows = ({}) }
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
+    // episodes in a show: the library's, or one loaded since (the Anime tab's)
+    function episodeCount(id) {
+        var sh = showData(id), n = 0;
+        for (var s = 0; sh && sh.seasons && s < sh.seasons.length; s++) n += sh.seasons[s].episodes.length;
+        return n;
+    }
+    property string animeOpening: ""
+    Connections {
+        target: catalog
+        onAnimeReady: {
+            if (sourceId !== app.animeOpening) return;
+            app.animeOpening = "";
+            app.shows[item.id] = show;
+            anime.resolve(sourceId, item);
+            app.commit(); app.open();
+        }
+        onAnimeFailed: if (sourceId === app.animeOpening) { app.animeOpening = ""; anime.say(reason) }
+    }
     WindowTools { id: tools }
     // keys out of git: app/qml/Secrets.qml (gitignored)
     Loader { id: secrets; source: "Secrets.qml" }
@@ -283,6 +301,8 @@ WebOSWindow {
                 shownItem: app.displayItem
                 onExitTop: app.layer = "tabs"
                 onRowChanged: probe.act("anime row")
+                // a show from the chart opens once it's made playable (Catalog.loadAnime)
+                onActivated: { if (item.id.indexOf("anilist:") === 0) { app.animeOpening = item.id; catalog.loadAnime(item) } else app.open() }
             }
         }
 

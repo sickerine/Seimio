@@ -8,6 +8,7 @@ import QtQuick 2.12
 Item {
     id: card
     property string art
+    property string fallback: ""        // shown when `art` can't be had (a new episode has no still yet)
     property string title
     property string episode
     property real progress: -1          // percent; < 0 hides the bar
@@ -56,7 +57,12 @@ Item {
         transform: Rotation { origin.x: card.width / 2; origin.y: card.height / 2; axis { x: 0; y: 1; z: 0 } angle: card.tilt }
         Image {
             id: img; anchors.fill: parent; visible: false
-            source: card.art; asynchronous: true; fillMode: Image.PreserveAspectCrop
+            // the art, or the fallback once the art has failed to load
+            property bool failed: false
+            source: (failed || !card.art) && card.fallback ? card.fallback : card.art
+            onStatusChanged: if (status === Image.Error && !failed) failed = true
+            Connections { target: card; onArtChanged: img.failed = false }
+            asynchronous: true; fillMode: Image.PreserveAspectCrop
             sourceSize: Qt.size(card.width * 1.15, card.height * 1.15)
         }
         ShaderEffect {

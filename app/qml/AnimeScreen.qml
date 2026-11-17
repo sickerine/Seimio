@@ -37,7 +37,17 @@ FocusScope {
     // [{ title, date, items }]: the chart cut into rows, or the days that have episodes
     property var rows: []
     property int total: 0
-    readonly property var focusItem: rows.length ? (rows[Math.max(0, row)] || rows[0]).items[Math.min(column, (rows[Math.max(0, row)] || rows[0]).items.length - 1)] || null : null
+    // the focused show; once opened, its Kitsu version (playable), which App's selection then follows
+    readonly property var focusItem: {
+        var r = rows.length ? rows[Math.max(0, row)] || rows[0] : null, raw = r ? r.items[Math.min(column, r.items.length - 1)] || null : null;
+        return raw && resolved[raw.id] ? resolved[raw.id] : raw;
+    }
+    property var resolved: ({})
+    function resolve(sourceId, item) { var r = Object.assign({}, resolved); r[sourceId] = item; resolved = r }
+    // a moment's word when a show can't open (not on Kitsu yet, its episodes didn't load)
+    property string notice: ""
+    function say(text) { notice = text; noticeTimer.restart() }
+    Timer { id: noticeTimer; interval: 2600; onTriggered: anime.notice = "" }
     signal activated(var item)
     signal exitTop()
 
@@ -158,6 +168,7 @@ FocusScope {
     // in the flow under the info, or in the tab bar's place once the rows are up
     FocusScope {
         id: controls
+        z: 2                                     // the rows pass under it once it's at the top
         x: Theme.margin
         y: anime.scrolled ? 44 : 560
         width: bars.width; height: 64
@@ -289,6 +300,7 @@ FocusScope {
     // the genres, by their bar and over the rows
     Rectangle {
         id: genrePanel
+        z: 3
         readonly property bool open: anime.genreMenu
         // above the bar while it sits under the info (the rows fill the space under it), below once it's
         // at the top
@@ -310,6 +322,15 @@ FocusScope {
             onTriggered: { anime.genre = rowIndex === 0 ? "" : anime.catalog.seasonGenres[rowIndex - 1]; anime.genreMenu = false }
         }
         onOpenChanged: if (open) { genres.currentIndex = anime.genre ? anime.catalog.seasonGenres.indexOf(anime.genre) + 1 : 0; genres.follow(true); genres.forceActiveFocus() } else if (anime.row < 0) genreBar.forceActiveFocus()
+    }
+
+    Latch { id: noticeShown; value: anime.notice; live: anime.notice !== "" }
+    Chip {
+        z: 4
+        anchors.horizontalCenter: parent.horizontalCenter; y: Theme.screenHeight - 120
+        kind: "solid"; size: 24; text: noticeShown.current || ""
+        opacity: anime.notice ? 1 : 0; visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: Theme.base } }
     }
 
     Keys.onUpPressed: if (row > 0) row--; else if (row === 0) row = -1

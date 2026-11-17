@@ -39,7 +39,7 @@ FocusScope {
         episodes = seasons.length ? seasons[s].episodes : [];
         episodeData = episodes.map(function (ep) {
             return {
-                art: ep.thumb, episode: "E" + ep.episode,
+                art: ep.thumb, fallback: item ? item.backdrop : "", episode: "E" + ep.episode,
                 progress: ep.progress > 0 ? ep.progress : -1,
                 watched: ep.watched && !(ep.progress > 0),
                 upcoming: ep.released > today ? new Date(ep.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM") : ""

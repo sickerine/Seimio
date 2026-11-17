@@ -13,6 +13,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -177,6 +179,25 @@ public:
         QVariantList list; for (const QVariantMap &m : out) list << m;
         return list;
     }
+    // An anime from the season chart, made openable and playable: its AniList id becomes a Kitsu id
+    // (ARM: Fribb's anime-lists) and its episodes come from Stremio's Kitsu addon, the source Torrentio
+    // plays anime from. Ends in `animeReady(sourceId, item, show)`: `item` the title as the pages show it
+    // (id "kitsu:N"), `show` its seasons and episodes in series.json's shape; or `animeFailed`.
+    Q_INVOKABLE void loadAnime(const QVariantMap &source) {
+        const QString sourceId = source["id"].toString(), anilist = sourceId.section(':', 1);
+        get(QUrl("https://arm.haglund.dev/api/v2/ids?source=anilist&id=" + anilist + "&include=kitsu"), [this, source, sourceId](const QByteArray &body, bool ok) {
+            const int kitsu = QJsonDocument::fromJson(body).object().value("kitsu").toInt();
+            if (!ok || !kitsu) { emit animeFailed(sourceId, "Not on Kitsu yet"); return; }
+            get(QUrl("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(kitsu) + ".json"), [this, source, sourceId, kitsu](const QByteArray &body, bool ok) {
+                if (!ok) { emit animeFailed(sourceId, "Couldn't load its episodes"); return; }
+                auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
+                QThread *worker = QThread::create([out, body, source, kitsu] { *out = animeShow(body, source, kitsu); });
+                connect(worker, &QThread::finished, this, [this, out, sourceId] { emit animeReady(sourceId, out->first, out->second); });
+                connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+                worker->start();
+            });
+        });
+    }
     // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
     // items }], each item's `label` its local air time
     Q_INVOKABLE QVariantList seasonSchedule(const QString &format, const QString &genre, qint64 now) const {
@@ -230,6 +251,8 @@ public:
 signals:
     void baseChanged();
     void loaded();
+    void animeReady(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
+    void animeFailed(const QString &sourceId, const QString &reason);
 
 private:
     struct Data {
@@ -362,6 +385,36 @@ private:
             return d;
         }
     };
+    template <typename F> void get(const QUrl &url, F done) {
+        QNetworkRequest r(url);
+        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
+        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = m_net.get(r);
+        QTimer::singleShot(15000, reply, &QNetworkReply::abort);
+        connect(reply, &QNetworkReply::finished, this, [reply, done] { reply->deleteLater(); done(reply->readAll(), reply->error() == QNetworkReply::NoError); });
+    }
+    // the Kitsu addon's meta as a title and a show: the chart's own art and facts stay (the backdrop the
+    // tab showed), its logo and episodes come from the addon
+    static QPair<QVariantMap, QVariantMap> animeShow(const QByteArray &body, const QVariantMap &source, int kitsu) {
+        const QJsonObject meta = QJsonDocument::fromJson(body).object().value("meta").toObject();
+        QVariantMap item = source;
+        item["id"] = "kitsu:" + QString::number(kitsu);
+        item["logo"] = meta.value("logo").toString();
+        if (item["description"].toString().isEmpty()) item["description"] = meta.value("description").toString();
+        QMap<int, QVariantList> bySeason;
+        for (const QJsonValue &v : meta.value("videos").toArray()) {
+            const QJsonObject e = v.toObject();
+            bySeason[e.value("season").toInt(1)] << QVariantMap {
+                { "id", e.value("id").toString() }, { "episode", e.value("episode").toInt() }, { "title", e.value("title").toString() },
+                { "overview", e.value("overview").toString() }, { "released", e.value("released").toString().left(10) },
+                { "runtime", e.value("runtime").toString() }, { "thumb", e.value("thumbnail").toString() } };
+        }
+        QVariantList seasons;
+        for (auto it = bySeason.begin(); it != bySeason.end(); ++it) seasons << QVariantMap { { "season", it.key() }, { "episodes", it.value() } };
+        const QVariantMap show { { "name", item["name"] }, { "description", item["description"] }, { "genres", source["genres"] },
+                                 { "year", meta.value("year").toString().left(4) }, { "rating", item["rating"] }, { "seasons", seasons } };
+        return qMakePair(item, show);
+    }
     static bool fits(const QVariantMap &m, const QString &format, const QString &genre) {
         const QString f = m["format"].toString();
         if (format == "tv" && f != "TV" && f != "TV_SHORT") return false;
@@ -391,5 +444,6 @@ private:
     QString m_base;
     bool m_ready = false;
     std::shared_ptr<Data> m_data;
+    QNetworkAccessManager m_net { this };
     CalendarModel *m_model;
 };
