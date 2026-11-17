@@ -51,8 +51,9 @@ def pages(query, variables, min_pop):
         page += 1
 
 
-def backgrounds(anilist_ids):
-    """anilist id -> the Kitsu addon's background url, for those that have one"""
+def kitsu_art(anilist_ids):
+    """anilist id -> the Kitsu addon's {background, logo} urls: the art an opened show keeps, so the tab
+    and the show page show the same pictures"""
     ids = list(anilist_ids)
     out = {}
     for i in range(0, len(ids), 100):
@@ -64,7 +65,7 @@ def backgrounds(anilist_ids):
                 meta = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://anime-kitsu.strem.fun/meta/series/kitsu:{row['kitsu']}.json", headers={"User-Agent": UA["User-Agent"]}), timeout=30).read())["meta"]
             except Exception:
                 continue
-            if meta.get("background"): out[row["anilist"]] = meta["background"]
+            out[row["anilist"]] = {k: meta[k] for k in ("background", "logo") if meta.get(k)}
     return out
 
 
@@ -90,12 +91,14 @@ def main():
             "banner": save(md["bannerImage"], f"al_{md['id']}") if md["bannerImage"] else "",
             "description": re.sub(r"\s+", " ", re.sub(r"<[^>]+>|\(Source:[^)]*\)", " ", md["description"] or "")).strip()[:320],
         })
-    art = backgrounds(int(s["id"].split(":")[1]) for s in out)
+    art = kitsu_art(int(s["id"].split(":")[1]) for s in out)
     for s in out:
-        url = art.get(int(s["id"].split(":")[1]))
-        if url:
-            try: s["background"] = save(url, f"ab_{s['id'].split(':')[1]}")
-            except Exception: pass
+        n = s["id"].split(":")[1]
+        for key, stem in (("background", f"ab_{n}"), ("logo", f"alogo_{n}")):
+            url = art.get(int(n), {}).get(key)
+            if url:
+                try: s[key] = save(url, stem)
+                except Exception: pass
     json.dump({"season": season, "year": year, "fetched": int(time.time()), "shows": out},
               open(os.path.join(ART, "season.json"), "w"), ensure_ascii=False, indent=0)
     print(f"{len(out)} shows ({sum(s['leftover'] for s in out)} leftovers)")

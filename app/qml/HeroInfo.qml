@@ -3,7 +3,8 @@
 //   pending  the title to show next, waiting for the old one to fade out and its logo to load
 // - A new item fades the current one out, preloads the new logo, then swaps and rises back in, so the
 //   name never flashes in before the logo.
-// - An item equal to `m` cancels the pending swap and fades straight back in.
+// - An item equal to `m` cancels the pending swap and fades straight back in. One that shows the same
+//   (the Anime tab's show once it's made playable) takes its place without a fade.
 // - Another change mid-swap replaces `pending`.
 // `busy` is true until the panel shows `item` fully.
 import QtQuick 2.12
@@ -24,13 +25,17 @@ Item {
     transform: Translate { y: info.rise }
 
     onItemChanged: {
-        if (item === m) { pending = null; fadeOut.stop(); if (fadeIn < 1) fadeInAnim.restart(); return }
+        if (item === m || (!pending && same(item, m))) { m = item; pending = null; fadeOut.stop(); if (fadeIn < 1) fadeInAnim.restart(); return }
         pending = item;
         // start the fade-out before touching the preload: a cached logo reports Ready synchronously and
         // calls apply() from inside this handler
         if (m && !fadeOut.running) { fadeInAnim.stop(); if (fadeIn > 0) fadeOut.restart() }
         preload.source = item && item.logo ? item.logo : "";
         apply();
+    }
+    function same(a, b) {
+        return !!(a && b) && a.name === b.name && (a.logo || "") === (b.logo || "") && a.description === b.description
+            && a.rating === b.rating && a.episode === b.episode && String(a.chips) === String(b.chips);
     }
     Image { id: preload; visible: false; asynchronous: true; sourceSize.width: 780; onStatusChanged: info.apply() }
     NumberAnimation { id: fadeOut; target: info; property: "fadeIn"; to: 0; duration: 140; easing.type: Easing.InQuad; onFinished: info.apply() }

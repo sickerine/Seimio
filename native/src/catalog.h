@@ -359,7 +359,7 @@ private:
                     const QJsonObject next = a["next"].toObject();
                     d.season.append(QVariantMap{
                         { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
-                        { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", QString() },
+                        { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", art(a["logo"].toString()) },
                         { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
                         { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },
                         { "format", a["format"].toString() }, { "studio", a["studio"].toString() }, { "color", a["color"].toString() },
@@ -394,15 +394,13 @@ private:
         QTimer::singleShot(15000, reply, &QNetworkReply::abort);
         connect(reply, &QNetworkReply::finished, this, [reply, done] { reply->deleteLater(); done(reply->readAll(), reply->error() == QNetworkReply::NoError); });
     }
-    // the Kitsu addon's meta as a title and a show: the chart's own art and facts stay (the backdrop the
-    // tab showed), its logo and episodes come from the addon
+    // the Kitsu addon's meta as a title and a show: the item is the chart's own, unchanged but for its id,
+    // so nothing the tab showed (backdrop, logo, name) loads again as a second version; only the episodes
+    // come from the addon
     static QPair<QVariantMap, QVariantMap> animeShow(const QByteArray &body, const QVariantMap &source, int kitsu) {
         const QJsonObject meta = QJsonDocument::fromJson(body).object().value("meta").toObject();
         QVariantMap item = source;
         item["id"] = "kitsu:" + QString::number(kitsu);
-        item["logo"] = meta.value("logo").toString();
-        if (!meta.value("background").toString().isEmpty()) item["backdrop"] = meta.value("background").toString();   // full-screen fanart
-        if (item["description"].toString().isEmpty()) item["description"] = meta.value("description").toString();
         QMap<int, QVariantList> bySeason;
         for (const QJsonValue &v : meta.value("videos").toArray()) {
             const QJsonObject e = v.toObject();

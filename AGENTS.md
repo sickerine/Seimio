@@ -92,6 +92,12 @@ Each rule comes from a measured stall on the C5.
   `Icon.inkLeft`/`inkRight`, and centre a label and anything under it (a progress bar) as one block.
   Measure the gaps on a 2x render (see the gallery) rather than trusting box maths.
 - Nothing shifts once shown: give placeholders the final size, and fade art in when it's decoded.
+- One version of everything. A title's backdrop, logo, name and facts show once, in their final form:
+  never a name that a logo then replaces, a small backdrop that a larger one replaces, or the same
+  picture again from another URL. Load first (preload, then commit; `TitleArt`, `HeroInfo`, `Backdrop`
+  wait for the image), and when better data arrives for something already on screen, keep what's shown
+  (`Catalog.animeShow` keeps the chart's item). Fetch tools save every piece of art a screen needs up
+  front. The name stands in only when there's no logo at all.
 - What fades out keeps showing what it showed until its fade ends. Content that reads the state that
   hides it (which list a panel is, the selected show) reads it through `Latch` (`live` while open), never
   live: the subtitle panel's delay row vanished the moment its fade began.
