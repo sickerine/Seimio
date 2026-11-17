@@ -21,5 +21,5 @@ ares-package "$tmp/app" -o .lab/ipk >/dev/null || exit 1
 ares-launch -d tv --close "$id" >/dev/null 2>&1
 ares-install -d tv ".lab/ipk/${id}_${next}_all.ipk" >/dev/null || exit 1
 rm -rf "$tmp"
-start=$(date +%H%M%S); ares-launch -d tv "$id" >/dev/null; sleep "${1:-6}"
-for f in $(ls .lab/reports | awk -v s=$start '$0 >= s' | grep loadreport); do echo "$f: $(cat .lab/reports/$f)"; done
+mark=$(mktemp); ares-launch -d tv "$id" >/dev/null; sleep "${1:-6}"
+for f in $(find .lab/reports -name '*loadreport*' -newer "$mark"); do echo "$(basename $f): $(cat $f)"; done; rm -f "$mark"

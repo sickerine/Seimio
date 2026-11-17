@@ -25,7 +25,7 @@ FocusScope {
     Behavior on opacity { NumberAnimation { duration: 220 } }
 
     function start(s, title) {
-        item = title; stream = s; playing = false; paused = false; failure = ""; position = 0; duration = 0;
+        item = title; stream = s; playing = false; paused = false; failure = ""; position = 0; duration = 0; seen = ({});
         pendingUrl = s.url;
         if (player.windowId) load(); else { player.setEventSlot(48); var e = player.exportWindow(window); if (e) failure = e }
     }

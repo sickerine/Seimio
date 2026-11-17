@@ -62,6 +62,26 @@ WebOSWindow {
         streamPage.open(displayItem, episode ? "series" : "movie", episode ? episode.id : displayItem.id, episode ? episode.label : "");
     }
     readonly property bool watching: layer === "player" && player.playing
+    // lab: { "playList": [{ "title", "url" }], "playSeconds": 20 } plays each in turn from 8 s after launch
+    // and logs how each went (playLog, in the lab reports)
+    property var playLog: []
+    property int playIndex: -1
+    Timer {
+        running: !!probe.variant.playList; repeat: true
+        interval: app.playIndex < 0 ? 8000 : (probe.variant.playSeconds || 20) * 1000
+        onTriggered: {
+            var list = probe.variant.playList;
+            if (app.playIndex >= 0) {
+                var s = player.seen, log = app.playLog;
+                log.push({ title: list[app.playIndex].title, playing: player.playing, position: player.position, duration: player.duration,
+                           failure: player.failure, video: (s.videoInfo || "").slice(0, 220), audio: (s.audioInfo || "").slice(0, 160),
+                           error: (s.error || "").slice(0, 200) });
+                app.playLog = log; player.stop();
+            }
+            if (++app.playIndex >= list.length) { stop(); app.layer = "home"; return }
+            player.start({ url: list[app.playIndex].url }, { name: list[app.playIndex].title }); app.layer = "player";
+        }
+    }
     function openMenu() { commit(); layer = "menu"; probe.captures() }
     onLayerChanged: { probe.act(layer); probe.captures() }
 
@@ -85,6 +105,7 @@ WebOSWindow {
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
                              visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
+                     playLog: app.playLog,
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
