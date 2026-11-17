@@ -71,7 +71,7 @@ FocusScope {
         loadedAt = Date.now(); startMs = -1;
         subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
-        if (/^tt\d+/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
+        if (/^(tt\d+|kitsu:\d+)/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";

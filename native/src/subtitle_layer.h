@@ -16,7 +16,8 @@
 //
 // Subtitles for files without them come from Stremio's OpenSubtitles addon: fetchAddon() lists them
 // (up to three per language) as external tracks numbered from 1000, and one is downloaded and read
-// (SRT) only when it's chosen.
+// (SRT) only when it's chosen. The addon knows IMDb ids only; an anime's Kitsu episode is mapped to its
+// IMDb season and episode by Stremio's Kitsu addon (as Torrentio maps them), once per show.
 #include <QtQml>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -53,8 +54,42 @@ public slots:
         m_tick = new QTimer(this); m_tick->setInterval(16); connect(m_tick, &QTimer::timeout, this, [this] { render(); });
         m_net = new QNetworkAccessManager(this);
     }
-    // lists the addon's subtitles for a video: ("movie", "tt…") or ("series", "tt…:1:2"); it knows only IMDb ids
+    // lists the addon's subtitles for a video: ("movie", "tt…"), ("series", "tt…:1:2"), or a Kitsu id
+    // ("kitsu:N:episode", "kitsu:N" for a film), mapped to IMDb first
     void fetchAddon(const QString &type, const QString &videoId) {
+        if (!videoId.startsWith("kitsu:")) { listAddon(type, videoId); return; }
+        const QString show = videoId.section(':', 0, 1);
+        if (m_kitsu.contains(show)) { mapped(show, videoId); return; }
+        const int session = m_session;
+        QNetworkRequest r(QUrl("https://anime-kitsu.strem.fun/meta/series/" + show + ".json"));
+        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
+        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = m_net->get(r);
+        QTimer::singleShot(15000, reply, &QNetworkReply::abort);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, session, show, videoId] {
+            reply->deleteLater();
+            const QJsonObject meta = QJsonDocument::fromJson(reply->readAll()).object().value("meta").toObject();
+            // kitsu id -> IMDb ("" for a film, "tt…:season:episode" per episode); only the ids are kept
+            QHash<QString, QString> map;
+            const QString imdb = meta.value("imdb_id").toString();
+            if (!imdb.isEmpty()) map.insert(show, imdb);
+            for (const QJsonValue &v : meta.value("videos").toArray()) {
+                const QJsonObject e = v.toObject();
+                const QString id = e.value("imdb_id").toString(imdb);
+                if (!id.isEmpty() && e.value("imdbSeason").toInt() > 0)
+                    map.insert(e.value("id").toString(), id + ":" + QString::number(e.value("imdbSeason").toInt()) + ":" + QString::number(e.value("imdbEpisode").toInt()));
+            }
+            if (reply->error() == QNetworkReply::NoError) m_kitsu.insert(show, map);
+            if (session == m_session) mapped(show, videoId);
+        });
+    }
+    void mapped(const QString &show, const QString &videoId) {
+        const QHash<QString, QString> map = m_kitsu.value(show);
+        const QString to = map.value(videoId, videoId == show ? map.value(show) : QString());
+        if (to.isEmpty()) { emit addonListed({}); return; }
+        listAddon(to.contains(':') ? "series" : "movie", to);
+    }
+    void listAddon(const QString &type, const QString &videoId) {
         const int session = m_session;
         QNetworkRequest r(QUrl("https://opensubtitles-v3.strem.io/subtitles/" + type + "/" + videoId + ".json"));
         r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
@@ -249,6 +284,7 @@ private:
     QTimer *m_tick = nullptr;
     QNetworkAccessManager *m_net = nullptr;
     QHash<int, QString> m_external;
+    QHash<QString, QHash<QString, QString>> m_kitsu;    // a show's Kitsu episode ids -> IMDb, for the session's shows
     int m_session = 0;
     qint64 m_shownSet = -2;                 // the image subtitle on screen, by start (-1 none, -2 not drawn yet)
     QElapsedTimer m_since;

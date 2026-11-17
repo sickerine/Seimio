@@ -59,8 +59,9 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 - [x] External subtitles: Stremio's OpenSubtitles addon (`opensubtitles-v3.strem.io`), up to three per
   language, listed after the file's own and downloaded only when chosen. No default flag, so one plays
   only when its language is the chosen one, and the file's own wins a tie. OpenSubtitles' four codes
-  outside ISO 639 (its `export_languages.php`) map to BCP 47. The addon knows only IMDb ids: Kitsu ids
-  (anime) get nothing, even with the file name.
+  outside ISO 639 (its `export_languages.php`) map to BCP 47. The addon knows only IMDb ids: an anime's
+  Kitsu episode is mapped to its IMDb season and episode by Stremio's Kitsu addon (its meta lists
+  `imdbSeason`/`imdbEpisode` per episode, as Torrentio uses them).
 - [x] 3 UI (overlay, menus, sheet, episode row, skip from chapters and from AniSkip, IntroDB,
   TheIntroDB). Verified on the TV: a stream switch resumes where it was, an episode from the row plays,
   an addon subtitle downloads and draws, delay steps 0.1 s and comes back with the file, audio Off sticks.
