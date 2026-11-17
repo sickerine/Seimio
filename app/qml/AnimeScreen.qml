@@ -53,8 +53,8 @@ FocusScope {
 
     // asked only while the tab is up (a hidden screen builds nothing: its covers decoding at launch
     // slowed Home)
-    function refresh() {
-        if (!catalog || !catalog.ready || !shown) return;
+    // the rows for the current view and filters, from Catalog
+    function build() {
         var out = [];
         if (view === "chart") {
             var items = catalog.seasonChart(format, genre, sort, now);
@@ -65,6 +65,11 @@ FocusScope {
             total = 0;
             for (var d = 0; d < days.length; d++) if (days[d].items.length) { days[d].schedule = true; out.push(days[d]); total += days[d].items.length }
         }
+        return out;
+    }
+    function refresh() {
+        if (!catalog || !catalog.ready || !shown) return;
+        var out = build();
         // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
         // the view they're laid out for (cards keep the old shape until then)
         pending = out; pendingView = view;
@@ -94,7 +99,18 @@ FocusScope {
     onFormatChanged: Qt.callLater(anime.refresh)
     onSortChanged: Qt.callLater(anime.refresh)
     onGenreChanged: Qt.callLater(anime.refresh)
-    Timer { interval: 60000; running: anime.live && anime.shown; repeat: true; onTriggered: { anime.now = Date.now() / 1000; anime.refresh() } }
+    // The minute tick: countdowns move on. Unlike a choice it doesn't fade the rows or move anyone's place:
+    // only rows whose shows or countdowns changed are replaced, in place, and the others keep their very
+    // object, so their cards aren't touched (a full refresh a minute flashed the page and reloaded rows).
+    Timer { interval: 60000; running: anime.live && anime.shown; repeat: true; onTriggered: anime.tick() }
+    function tick() {
+        now = Date.now() / 1000;
+        if (!catalog || !catalog.ready || !rows.length || rowsView !== view || swap.running) return;
+        var out = build();
+        rows = out.map(function (n, i) { var o = rows[i]; return o && rowKey(o) === rowKey(n) ? o : n });
+        if (row >= rows.length) row = rows.length - 1;
+    }
+    function rowKey(r) { return r.title + "|" + r.date + "|" + r.items.map(function (x) { return x.id + "/" + x.label + "/" + x.episode }).join(",") }
 
     opacity: shown ? 1 : 0
     visible: opacity > 0
