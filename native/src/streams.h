@@ -303,6 +303,18 @@ public:
             m_ahead.body = reply->readAll(); m_ahead.ready = true;
         });
     }
+    // Up next: makes the next episode playable ahead, from its prefetched streams. The stream play()
+    // would pick by rule (the binge match, then the anime rule) gets its link now, kept for resolve(),
+    // so Next goes straight to loading the video. When only the AI could pick, nothing is prepared.
+    Q_INVOKABLE void prepare(const QString &videoId, const QString &bingeGroup) {
+        if (m_ahead.videoId != videoId || !m_ahead.ready || m_prepared == videoId) return;
+        m_prepared = videoId;
+        const QVector<Item> all = items(m_ahead.body, m_anime);
+        const int i = ruled(all, candidates(all, m_anime), bingeGroup, m_anime);
+        if (i < 0) return;
+        const QString url = all[i].url;
+        link(url, [this, url](const QString &l) { if (!l.isEmpty()) m_links = { url, l, QDateTime::currentSecsSinceEpoch() }; });
+    }
     // Resolves the listed stream at `row` (the picker's choice).
     Q_INVOKABLE void playRow(int row) {
         if (row < 0 || row >= m_rows.size()) return;
@@ -313,15 +325,9 @@ public:
     Q_INVOKABLE int rowOf(const QString &url) const { for (int r = 0; r < m_rows.size(); r++) if (m_all[m_rows[r]].url == url) return r; return -1; }
     // tests: the anime rule's pick from an addon response (Torrentio's JSON), as play() would make it
     Q_INVOKABLE QVariantMap ruledPick(const QString &json) const {
-        QVector<QVariantMap> all; QVector<int> c;
-        for (const QJsonValue &v : QJsonDocument::fromJson(json.toUtf8()).object().value("streams").toArray()) {
-            const QJsonObject o = v.toObject();
-            QVariantMap f = releases::read(o.value("name").toString(), o.value("title").toString(), o.value("url").toString(), true);
-            if (f["support"] != "unsupported" && f["cached"].toBool()) c << all.size();
-            all << f;
-        }
-        const int i = animeRule(all, c);
-        return i >= 0 ? all[i] : QVariantMap();
+        const QVector<Item> all = items(json.toUtf8(), true);
+        const int i = ruled(all, candidates(all, true), QString(), true);
+        return i >= 0 ? all[i].fields : QVariantMap();
     }
     // reads one stream's text, for tests
     Q_INVOKABLE QVariantMap read(const QString &name, const QString &title, bool anime) const { return releases::read(name, title, QString(), anime); }
@@ -337,6 +343,9 @@ private:
     struct Item { QVariantMap fields; QString option, url, file; };
     struct Ahead { QString videoId; QByteArray body; bool ready = false; };
     Ahead m_ahead;
+    QString m_prepared;                                 // the video prepare() last ran for
+    struct Link { QString url, link; qint64 at = 0; };
+    Link m_links;                                       // a stream's link got ahead (TorBox links last hours)
     QString m_binge;
 
     // The decision model's instructions; the state names the video and whether it's anime.
@@ -356,14 +365,17 @@ private:
         r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         return r;
     }
-    // runs `done` with the reply's JSON (or an error) if the request is still the current one
-    template <typename F> void call(QNetworkReply *reply, int ticket, F done) {
-        connect(reply, &QNetworkReply::finished, this, [this, reply, ticket, done] {
+    // runs `done` with the reply's JSON (or an error)
+    template <typename F> void json(QNetworkReply *reply, F done) {
+        connect(reply, &QNetworkReply::finished, this, [reply, done] {
             reply->deleteLater();
-            if (ticket != m_ticket) return;
             const QByteArray body = reply->readAll();
             done(QJsonDocument::fromJson(body).object(), reply->error() == QNetworkReply::NoError ? QString() : reply->errorString() + " " + QString::fromUtf8(body.left(200)));
         });
+    }
+    // the same, if the request is still the current one
+    template <typename F> void call(QNetworkReply *reply, int ticket, F done) {
+        json(reply, [this, ticket, done](const QJsonObject &o, const QString &err) { if (ticket == m_ticket) done(o, err); });
     }
 
     // Anime or not (the ranking, the AI's rules, and whose track choices the player uses): a Kitsu id is
@@ -408,24 +420,27 @@ private:
         if (!join->failure.isEmpty()) { listed({}, join->failure); return; }
         {
             auto out = std::make_shared<QVector<Item>>();
-            QThread *worker = QThread::create([out, body = join->body, anime = m_anime] {
-                for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("streams").toArray()) {
-                    const QJsonObject s = v.toObject();
-                    const QString name = s.value("name").toString(), title = s.value("title").toString(), url = s.value("url").toString();
-                    const QString file = s.value("behaviorHints").toObject().value("filename").toString();
-                    QVariantMap fields = releases::read(name, title, url, anime);
-                    fields["bingeGroup"] = s.value("behaviorHints").toObject().value("bingeGroup").toString();
-                    out->append({ fields,
-                                  QString(name).replace('\n', ' ') + " | " + QString(title).replace('\n', " | ") + " | file: " + file, url, file });
-                }
-            });
+            QThread *worker = QThread::create([out, body = join->body, anime = m_anime] { *out = items(body, anime); });
             connect(worker, &QThread::finished, this, [this, out, ticket] { if (ticket == m_ticket) listed(*out, QString()); });
             connect(worker, &QThread::finished, worker, &QObject::deleteLater);
             worker->start();
         }
     }
-    void listed(const QVector<Item> &items, const QString &failure) {
-        m_all = items; m_loading = false; m_failure = failure;
+    // an addon's response as stream items
+    static QVector<Item> items(const QByteArray &body, bool anime) {
+        QVector<Item> out;
+        for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("streams").toArray()) {
+            const QJsonObject s = v.toObject();
+            const QString name = s.value("name").toString(), title = s.value("title").toString(), url = s.value("url").toString();
+            const QString file = s.value("behaviorHints").toObject().value("filename").toString();
+            QVariantMap fields = releases::read(name, title, url, anime);
+            fields["bingeGroup"] = s.value("behaviorHints").toObject().value("bingeGroup").toString();
+            out.append({ fields, QString(name).replace('\n', ' ') + " | " + QString(title).replace('\n', " | ") + " | file: " + file, url, file });
+        }
+        return out;
+    }
+    void listed(const QVector<Item> &all, const QString &failure) {
+        m_all = all; m_loading = false; m_failure = failure;
         const QString picked = aiPicks().value(m_videoId).toString();
         for (Item &it : m_all) it.fields["aiPick"] = !picked.isEmpty() && it.url == picked;
         m_kind = m_anime ? 0 : 1;
@@ -451,31 +466,20 @@ private:
 
     // The candidates: what plays here and is cached, best first. The decision model is asked about the
     // first 255 (what a choice question takes); the rules before it see them all.
-    QVector<int> candidates() const {
+    static QVector<int> candidates(const QVector<Item> &all, bool anime) {
         QVector<int> c;
-        for (int i = 0; i < m_all.size(); i++) if (m_all[i].fields["support"] != "unsupported" && m_all[i].fields["cached"].toBool()) c << i;
+        for (int i = 0; i < all.size(); i++) if (all[i].fields["support"] != "unsupported" && all[i].fields["cached"].toBool()) c << i;
         // anime: 1080p first, then 4K; anything else: 4K first. A re-release (v2, REPACK) beats its original.
-        auto rank = [this](int i) { const QVariantMap &f = m_all[i].fields; const QString r = f["res"].toString();
-                                    const int res = m_anime ? (r == "1080p" ? 2 : r == "4K" ? 1 : 0) : (r == "4K" ? 2 : r == "1080p" ? 1 : 0);
+        auto rank = [&all, anime](int i) { const QVariantMap &f = all[i].fields; const QString r = f["res"].toString();
+                                    const int res = anime ? (r == "1080p" ? 2 : r == "4K" ? 1 : 0) : (r == "4K" ? 2 : r == "1080p" ? 1 : 0);
                                     return res * 2000000 + (f["version"].toString().isEmpty() ? 0 : 1000000) + qMin(f["seeders"].toInt(), 999999); };
         std::stable_sort(c.begin(), c.end(), [&](int a, int b) { return rank(a) > rank(b); });
         return c;
     }
     void choose(int ticket, int attempt = 1) {
-        const QVector<int> c = candidates();
+        const QVector<int> c = candidates(m_all, m_anime);
         if (c.isEmpty()) { fail(m_all.isEmpty() ? (m_failure.isEmpty() ? "No streams yet" : m_failure) : "Nothing cached plays on this TV"); return; }
-        if (attempt == 1) {
-            // the same release as the episode before: the first in the addon's order with its binge group
-            if (!m_binge.isEmpty())
-                for (int i = 0; i < m_all.size(); i++)
-                    if (m_all[i].fields["bingeGroup"].toString() == m_binge && c.contains(i)) { pick(i, ticket); return; }
-            // anime with no Blu-ray here leaves nothing to judge: picked directly, without the AI (animeRule)
-            if (m_anime) {
-                QVector<QVariantMap> fields; for (const Item &it : m_all) fields << it.fields;
-                const int i = animeRule(fields, c);
-                if (i >= 0) { pick(i, ticket); return; }
-            }
-        }
+        if (attempt == 1) { const int i = ruled(m_all, c, m_binge, m_anime); if (i >= 0) { pick(i, ticket); return; } }
         // one candidate needs no decision; without a key (the lab's tours) the best by rank plays
         if (c.size() == 1 || m_openrouter.isEmpty() || m_decider.isEmpty()) { pick(c[0], ticket); return; }
         setStage("choosing");
@@ -536,21 +540,35 @@ private:
         if (!m_rows.isEmpty()) emit dataChanged(index(0), index(m_rows.size() - 1));
     }
 
+    // The pick without the AI, or -1: the same release as the episode before (the first in the addon's
+    // order with its binge group), then, for anime with no Blu-ray, the anime rule
+    static int ruled(const QVector<Item> &all, const QVector<int> &c, const QString &binge, bool anime) {
+        if (!binge.isEmpty()) for (int i = 0; i < all.size(); i++) if (all[i].fields["bingeGroup"].toString() == binge && c.contains(i)) return i;
+        if (!anime) return -1;
+        QVector<QVariantMap> fields; for (const Item &it : all) fields << it.fields;
+        return animeRule(fields, c);
+    }
     void resolve(const Item &item, int ticket) {
         setStage("resolving");
-        static const QRegularExpression hashRe("/([0-9a-f]{40})/");
-        const QString hash = hashRe.match(item.url).captured(1);
         const QString fallback = item.url;
-        auto done = [this, fallback](const QString &url) { setStage(""); emit playable(m_chosen, url.isEmpty() ? fallback : url); };
+        auto done = [this, ticket, fallback](const QString &url) { if (ticket != m_ticket) return; setStage(""); emit playable(m_chosen, url.isEmpty() ? fallback : url); };
+        // got ahead (Up next), within the hour
+        if (m_links.url == item.url && QDateTime::currentSecsSinceEpoch() - m_links.at < 3600) { done(m_links.link); return; }
+        link(item.url, done);
+    }
+    // TorBox's direct link for a Torrentio stream, or "" (`done` plays the stream's own URL then)
+    template <typename F> void link(const QString &streamUrl, F done) {
+        static const QRegularExpression hashRe("/([0-9a-f]{40})/");
+        const QString hash = hashRe.match(streamUrl).captured(1);
         if (hash.isEmpty() || m_torbox.isEmpty()) { done(QString()); return; }
-        const QString want = QUrl::fromPercentEncoding(item.url.section('/', -1).toUtf8());
+        const QString want = QUrl::fromPercentEncoding(streamUrl.section('/', -1).toUtf8());
         QNetworkRequest add = torbox("torrents/createtorrent");
         add.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
         QUrlQuery form; form.addQueryItem("magnet", "magnet:?xt=urn:btih:" + hash); form.addQueryItem("allow_zip", "false");
-        call(m_net.post(add, form.toString(QUrl::FullyEncoded).toUtf8()), ticket, [this, ticket, want, done](const QJsonObject &o, const QString &err) {
+        json(m_net.post(add, form.toString(QUrl::FullyEncoded).toUtf8()), [this, want, done](const QJsonObject &o, const QString &err) {
             const int id = o.value("data").toObject().value("torrent_id").toInt();
             if (!err.isEmpty() || !id) { qWarning("torbox add failed: %s", qPrintable(err)); done(QString()); return; }
-            call(m_net.get(torbox(QString("torrents/mylist?bypass_cache=true&id=%1").arg(id))), ticket, [this, ticket, id, want, done](const QJsonObject &o, const QString &err) {
+            json(m_net.get(torbox(QString("torrents/mylist?bypass_cache=true&id=%1").arg(id))), [this, id, want, done](const QJsonObject &o, const QString &err) {
                 QJsonObject best; double size = -1;
                 for (const QJsonValue &v : o.value("data").toObject().value("files").toArray()) {
                     const QJsonObject f = v.toObject();
@@ -558,8 +576,8 @@ private:
                     if (f.value("size").toDouble() > size) { size = f.value("size").toDouble(); best = f; }
                 }
                 if (!err.isEmpty() || best.isEmpty()) { done(QString()); return; }
-                call(m_net.get(torbox(QString("torrents/requestdl?token=%1&torrent_id=%2&file_id=%3&redirect=false").arg(m_torbox).arg(id).arg(best.value("id").toInt()))),
-                     ticket, [done](const QJsonObject &o, const QString &err) { done(err.isEmpty() ? o.value("data").toString() : QString()); });
+                json(m_net.get(torbox(QString("torrents/requestdl?token=%1&torrent_id=%2&file_id=%3&redirect=false").arg(m_torbox).arg(id).arg(best.value("id").toInt()))),
+                     [done](const QJsonObject &o, const QString &err) { done(err.isEmpty() ? o.value("data").toString() : QString()); });
             });
         });
     }

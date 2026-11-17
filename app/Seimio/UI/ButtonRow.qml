@@ -1,5 +1,5 @@
 // A row of Buttons walked with Left/Right; OK triggers the focused one, a long OK holds it. Other keys (Up, Down, Back)
-// pass on to the parent. `model` entries are { label, icon, trailing, round, primary, progress }; a new model of
+// pass on to the parent. `model` entries are { label, icon, trailing, round, primary, progress, fill }; a new model of
 // the same length updates the buttons in place.
 import QtQuick 2.12
 
@@ -8,6 +8,14 @@ FocusScope {
     property var model: []
     property int currentIndex: 0
     property int spacing: 22
+    // the button that takes the row's width beyond what the others need (-1: none, the row is as wide
+    // as its buttons); give the row a width to use it
+    property int stretch: -1
+    readonly property real othersWidth: {
+        var w = 0;
+        for (var i = 0; i < buttonItems.count; i++) if (i !== stretch && buttonItems.itemAt(i)) w += buttonItems.itemAt(i).implicitWidth + spacing;
+        return w;
+    }
     signal triggered(int buttonIndex)
     signal held(int buttonIndex)
     // where button i is in the window, for placing a menu beside it
@@ -29,7 +37,9 @@ FocusScope {
                 round: !!b.round
                 primary: !!b.primary
                 progress: b.progress === undefined ? -1 : b.progress
+                fill: b.fill === undefined ? -1 : b.fill
                 focused: row.activeFocus && row.currentIndex === index
+                width: index === row.stretch ? Math.max(implicitWidth, row.width - row.othersWidth) : implicitWidth
             }
         }
     }

@@ -39,6 +39,13 @@ TestCase {
         var sh = show("", [{ season: 1, episodes: [ep("a1", true), ep("a2", true), ep("a3", false)] }]);
         compare(Episodes.resting(sh, today), { s: 0, e: 2 });
     }
+    function test_nextEpisodeCrossesSeasonsAndWaitsForAiring() {
+        var sh = show("", [{ season: 1, episodes: [ep("a1", true), ep("a2", false)] }, { season: 2, episodes: [ep("b1", false), ep("b2", false, 0, "2026-11-22")] }]);
+        compare(Episodes.after(sh, "a1", today).id, "a2");
+        compare(Episodes.after(sh, "a2", today).id, "b1", "the last of a season goes on to the next season");
+        compare(Episodes.after(sh, "b1", today), null, "the next one hasn't aired");
+        compare(Episodes.after(sh, "b2", today), null, "the last one has nothing after it");
+    }
     function test_findsAnEpisode() {
         var sh = show("", [{ season: 1, episodes: [ep("a1", false)] }, { season: 2, episodes: [ep("b1", false), ep("b2", false)] }]);
         compare(Episodes.find(sh, "b2"), { s: 1, e: 1 });

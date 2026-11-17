@@ -108,6 +108,7 @@ FocusScope {
         if (!pendingUrl) return;
         if (unloadLater.running) { unloadLater.stop(); media.unload() }
         loadedAt = Date.now(); startMs = -1;
+        upNextMode = ""; creditsOffered = false; endOffered = false;
         if (handoff) { resetHandoffCount(); handoffArmed = true }
         subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
@@ -784,13 +785,54 @@ FocusScope {
         }
     }
 
+    // ---- up next -----------------------------------------------------------------------------------
+    // The next episode (App: Episodes.after, aired, into the next season) is offered twice:
+    //   "credits"  when the outro (SkipTimes) starts: Next episode counting down 10 s, and Skip credits
+    //              when something plays after them
+    //   "end"      10 s before the file ends: Next episode counting down the time that's left, so it
+    //              plays as this one ends
+    // Each is offered once per video, and again after a seek back before it. Back closes the card: after
+    // the credits one, the end one still comes; after the end one, the episode ends where it is. Offering
+    // it gets the next episode's link ahead (Streams.prepare), so Next goes straight to loading.
+    property var nextEpisode: null
+    property string upNextMode: ""
+    property bool creditsOffered: false
+    property bool endOffered: false
+    readonly property var outro: { for (var i = 0; i < segments.length; i++) if (segments[i].kind === "outro") return segments[i]; return null }
+    function offerUpNext() {
+        if (!nextEpisode || !media.playing || handoff) return;
+        var p = media.position, d = media.duration;
+        if (outro && p < outro.start - 5000) creditsOffered = false;
+        if (d > 0 && p < d - 15000) endOffered = false;
+        if (upNextMode !== "") return;
+        if (outro && !creditsOffered && p >= outro.start && p < outro.end - 3000) { creditsOffered = true; upNextMode = "credits" }
+        else if (d > 0 && !endOffered && p >= d - 10000) { endOffered = true; upNextMode = "end" }
+    }
+    Connections { target: media; onPositionChanged: page.offerUpNext() }
+    onUpNextModeChanged: if (upNextMode && nextEpisode) streams.prepare(nextEpisode.id, stream ? stream.bingeGroup || "" : "")
+    UpNext {
+        id: upNext
+        anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 1010 - height
+        open: page.upNextMode !== "" && !!page.nextEpisode && page.zone === "none"
+        focus: open
+        mode: page.upNextMode || "credits"
+        canSkip: !!page.outro && page.outro.end < media.duration - 3000
+        seconds: page.upNextMode === "end" ? Math.max(1, (media.duration - media.position) / 1000) : 10
+        paused: media.paused
+        episode: page.nextEpisode
+        fallback: page.item && page.item.backdrop ? page.item.backdrop : ""
+        onNext: { var e = page.nextEpisode; page.upNextMode = ""; page.playEpisode(e) }
+        onSkipCredits: { page.upNextMode = ""; if (page.outro) media.seek(page.outro.end) }
+        onDismissed: page.upNextMode = ""
+    }
+
     // Skip Intro / Skip Credits, while one plays; OK presses it
     Chip {
         id: skipButton
         anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 780
         size: 28; kind: "solid"; icon: "play"
         text: page.segmentNow ? (page.segmentNow.kind === "intro" ? "Skip Intro" : "Skip Credits") : ""
-        opacity: page.segmentNow && media.playing && (page.zone === "none" || page.zone === "bar") ? 1 : 0
+        opacity: page.segmentNow && media.playing && (page.zone === "none" || page.zone === "bar") && !upNext.open ? 1 : 0
         visible: opacity > 0
         transform: Translate { x: (1 - skipButton.opacity) * 40 }
         Behavior on opacity { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }

@@ -12,6 +12,7 @@ import Eos.Window 0.1
 import Seimio.UI 1.0
 import Seimio.Native 1.0
 import Seimio.Data 1.0
+import "Episodes.js" as Episodes
 
 WebOSWindow {
     id: app
@@ -376,15 +377,21 @@ WebOSWindow {
             stillArt: app.playTarget ? app.episodeArt(app.playTarget.id) : ""
             videoId: app.playTarget ? app.playTarget.id : ""
             // inside the player, an episode change hands off: the picture fades into the episode's still
-            onPlayEpisode: { player.beginHandoff(episode.thumb, "E" + episode.episode, episode.title || ""); app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode)) }
-            // once an episode plays, the next one's streams are fetched ahead (as stremio-core does)
-            onPlayingChanged: if (playing && app.playTarget && app.playTarget.type === "series") {
-                var eps = player.episodes;
-                for (var i = 0; i + 1 < eps.length; i++) if (eps[i].id === app.playTarget.id) { streams.prefetch("series", eps[i + 1].id); break }
+            // the episode after this one (Up next, and fetched ahead), into the next season
+            nextEpisode: sameShow ? Episodes.after(showPage.show, app.playTarget.id, app.today) : null
+            onPlayEpisode: {
+                player.beginHandoff(episode.thumb, "E" + episode.episode, episode.title || "");
+                // the row below the player follows into another season
+                var at = Episodes.find(showPage.show, episode.id);
+                if (at) showPage.place(at);
+                app.playAi(showPage.target(showPage.show, at ? at.s : showPage.shownSeason, episode));
             }
+            // once an episode plays, the next one's streams are fetched ahead (as stremio-core does)
+            onPlayingChanged: if (playing && nextEpisode) streams.prefetch("series", nextEpisode.id)
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
             onMenuLevelChanged: probe.captures()
             onFavoriteMenuChanged: probe.captures()
+            onUpNextModeChanged: probe.captures()
             // another stream of the same video, from where it is now
             onSwitchStream: { app.playTarget.resumeMs = player.position; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices

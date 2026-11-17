@@ -19,6 +19,13 @@ function flat(show) {
     return out;
 }
 
+// the episode after `id` in the show, into the next season, once it has aired; null on the last aired one
+function after(show, id, today) {
+    var all = flat(show);
+    for (var i = 0; i + 1 < all.length; i++) if (all[i].ep.id === id) return aired(all[i + 1].ep, today) ? all[i + 1].ep : null;
+    return null;
+}
+
 // the position of the episode `id`, or null
 function find(show, id) {
     var all = flat(show);

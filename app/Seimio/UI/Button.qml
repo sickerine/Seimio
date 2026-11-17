@@ -4,6 +4,9 @@
 // padding is measured from the drawn icon and text, equal on both sides, and the label and bar are
 // centred together as one block, with the bar spanning exactly the icon and label above it. `trailing`
 // is a small icon after the label: a chevron on a button that opens a menu, pointing where it opens.
+// Given more width than it needs (a row's stretched button), the content stays centred. `fill` (0 to
+// 1, < 0 for none) sweeps a tint across the button from the left, for a countdown, leaving the label
+// where it is.
 import QtQuick 2.12
 
 Item {
@@ -15,13 +18,16 @@ Item {
     property bool focused: false
     property bool primary: false
     property real progress: -1
+    property real fill: -1
     readonly property bool light: focused || primary
     readonly property color inkColor: light ? Theme.inkOnLight : Theme.ink
 
     readonly property int padX: 34
     readonly property int gap: 16                  // between the drawn icon and the label
     readonly property bool hasBar: !round && progress > 0
-    implicitWidth: round ? 76 : (trailing ? tail.x + tail.inkRight : text.x + text.implicitWidth) + padX
+    // what's drawn, from the icon's ink to the label's end or the trailing icon's ink
+    readonly property real contentWidth: (icon ? glyph.inkRight - glyph.inkLeft + gap : 0) + text.implicitWidth + (trailing ? 10 + tail.inkRight - tail.inkLeft : 0)
+    implicitWidth: round ? 76 : contentWidth + 2 * padX
     implicitHeight: 76
     width: implicitWidth; height: implicitHeight
 
@@ -32,7 +38,8 @@ Item {
         color: btn.focused ? Theme.focusFill : btn.primary ? "#e6ffffff" : Theme.fillStrong
         border.width: btn.light ? 0 : 1
         border.color: "#26ffffff"
-        scale: btn.focused ? (btn.round ? 1.08 : 1.06) : 1
+        // the lift is 6%, at most 8 px a side, so a stretched button stays inside what it's lined up with
+        scale: btn.focused ? (btn.round ? 1.08 : Math.min(1.06, 1 + 16 / Math.max(1, width))) : 1
         Behavior on scale { NumberAnimation { duration: 240; easing.type: Theme.spring; easing.overshoot: 1.6 } }
         Behavior on color { ColorAnimation { duration: Theme.fast } }
 
@@ -40,17 +47,23 @@ Item {
         // is centred (measured on the render: the line box has room above the capitals, so centring
         // the box would sit the block low)
         readonly property real labelY: parent.height / 2 - (btn.hasBar ? 9.5 : 0)
+        // the sweep: the button's own shape, cut off at `fill`
+        Item {
+            visible: btn.fill > 0
+            width: parent.width * Math.min(1, btn.fill); height: parent.height; clip: true
+            Rectangle { width: body.width; height: body.height; radius: body.radius; color: btn.light ? "#24000000" : "#33ffffff" }
+        }
         Icon {
             id: glyph
             visible: btn.icon !== ""
             name: btn.icon; color: btn.inkColor
-            x: btn.round ? (parent.width - width) / 2 : btn.padX - inkLeft
+            x: btn.round ? (parent.width - width) / 2 : (parent.width - btn.contentWidth) / 2 - inkLeft
             y: (btn.round ? parent.height / 2 : body.labelY) - height / 2
         }
         Text {
             id: text
             visible: !btn.round
-            x: btn.icon !== "" ? glyph.x + glyph.inkRight + btn.gap : btn.padX
+            x: btn.icon !== "" ? glyph.x + glyph.inkRight + btn.gap : (parent.width - btn.contentWidth) / 2
             y: body.labelY - height / 2
             text: btn.label; color: btn.inkColor
             font.family: Theme.face; font.pixelSize: 28; font.weight: Font.DemiBold
@@ -64,7 +77,7 @@ Item {
         }
         Rectangle {
             visible: btn.hasBar
-            x: btn.padX; width: parent.width - 2 * btn.padX
+            x: (parent.width - btn.contentWidth) / 2; width: btn.contentWidth
             y: body.labelY + 17 + 9; height: 4; radius: 2
             color: btn.light ? "#26000000" : "#33ffffff"
             Rectangle { width: parent.width * Math.min(100, btn.progress) / 100; height: parent.height; radius: 2; color: btn.inkColor }
