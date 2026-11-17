@@ -10,6 +10,7 @@ third_party/libass/out/
 tools/.tv-client-key
 .DS_Store
 app/art/
+app/stremio/
 app/native/
 .lab/
 tools/preview/imports/Seimio/Data/libseimiodata.dylib

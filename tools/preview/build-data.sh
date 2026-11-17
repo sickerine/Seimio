@@ -6,11 +6,12 @@ P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); QT=/opt/homebrew
 OUT="$P/imports/Seimio/Data"; TMP=$(mktemp -d); mkdir -p "$OUT"
 INC="-I$QT/include -I$QT/include/QtCore -I$QT/include/QtQml -I$QT/include/QtGui -I$QT/include/QtNetwork -I$REPO/native/src -I$TMP"
 "$QT/bin/moc" $INC "$REPO/native/src/catalog.h" -o "$TMP/moc_catalog.cpp"
+"$QT/bin/moc" $INC "$REPO/native/src/live.h" -o "$TMP/moc_live.cpp"
 "$QT/bin/moc" $INC "$REPO/native/src/streams.h" -o "$TMP/moc_streams.cpp"
 "$QT/bin/moc" $INC "$REPO/native/src/tracks.h" -o "$TMP/moc_tracks.cpp"
 "$QT/bin/moc" $INC "$REPO/native/src/skip.h" -o "$TMP/moc_skip.cpp"
 "$QT/bin/moc" $INC "$REPO/native/src/data_plugin.cpp" -o "$TMP/data_plugin.moc"
-clang++ -std=c++17 -O2 -fPIC -shared -o "$OUT/libseimiodata.dylib" "$REPO/native/src/data_plugin.cpp" "$TMP/moc_catalog.cpp" "$TMP/moc_streams.cpp" "$TMP/moc_tracks.cpp" "$TMP/moc_skip.cpp" $INC \
+clang++ -std=c++17 -O2 -fPIC -shared -o "$OUT/libseimiodata.dylib" "$REPO/native/src/data_plugin.cpp" "$TMP/moc_catalog.cpp" "$TMP/moc_live.cpp" "$TMP/moc_streams.cpp" "$TMP/moc_tracks.cpp" "$TMP/moc_skip.cpp" $INC \
   -DQT_NO_DEBUG -DQT_PLUGIN -F"$QT/lib" -framework QtCore -framework QtQml -framework QtGui -framework QtNetwork
 printf 'module Seimio.Data\nplugin seimiodata\n' > "$OUT/qmldir"
 rm -rf "$TMP"; echo "built $OUT/libseimiodata.dylib"

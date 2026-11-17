@@ -9,7 +9,7 @@ WebOSWindow {
     id: win
     visible: true
     Rectangle { width: 1920; height: 1080; color: "#202024" }   // the grab has no window colour behind it
-    Catalog { id: catalog; base: Qt.resolvedUrl("../../app/art/") }
+    Catalog { id: catalog; base: Qt.resolvedUrl("../../app/stremio/") }
     readonly property var cw: catalog.continueWatching
     readonly property var pop: catalog.popular.length ? catalog.popular[0].items : []
     function art(list, i) { return list.length > i ? list[i].art : "" }

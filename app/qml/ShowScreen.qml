@@ -41,6 +41,7 @@ FocusScope {
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
     // one season: no season bar, and the episodes move up into its place
     readonly property bool oneSeason: seasons.length < 2
+    readonly property int seasonCount: seasons.filter(function (s) { return s.season > 0 }).length
     // the season the episode row shows and its card data, set together by showSeason(), so the row is
     // built once per change instead of once per binding that moves
     property int shownSeason: 0
@@ -128,7 +129,8 @@ FocusScope {
             y: 172; spacing: 10
             ChipRow { model: page.show ? [page.show.year].concat(page.show.genres).filter(function (x) { return x }) : []; size: 21 }
             Chip { visible: !!(page.show && page.show.rating); kind: "rating"; icon: "star"; text: page.show ? page.show.rating : ""; size: 21 }
-            Chip { visible: page.seasons.length > 0; text: page.seasons.length + (page.seasons.length === 1 ? " season" : " seasons"); size: 21 }
+            // seasons only: Specials (season 0) aren't counted
+            Chip { visible: page.seasonCount > 0; text: page.seasonCount + (page.seasonCount === 1 ? " season" : " seasons"); size: 21 }
         }
         Text {
             y: 230; width: 860; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight

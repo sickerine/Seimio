@@ -2,10 +2,15 @@
 # Visual check: renders fixed app states and the component gallery on the Mac and compares each with its
 # approved image in tools/preview/baseline/ (SSIM at 960x540, through ffmpeg). Exits 1 when any differs.
 # A changed state leaves .lab/shots/<name>.png and <name>-diff.png (differences brightened) to look at.
-# The baselines use your lab art (app/art); after tools/fetch-art.py, look at the renders and approve.
-# usage: tools/preview/shots.sh [--approve] [state...]
+# The app fetches everything live (native/src/live.h), so the renders replay recorded answers from
+# tools/preview/api/ (SEIMIO_REPLAY) and stay the same from day to day; --record fetches and records what's
+# missing (delete the folder to record afresh, then look at the renders and approve). Your Stremio stand-in
+# (app/stremio/, tools/fetch-library.sh) decides what Continue Watching holds.
+# usage: tools/preview/shots.sh [--approve | --record] [state...]
 P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); OUT="$REPO/.lab/shots"; mkdir -p "$OUT"
 approve=0; [ "$1" = --approve ] && { approve=1; shift; }
+[ "$1" = --record ] && { export SEIMIO_RECORD=1; shift; }
+export SEIMIO_REPLAY="$P/api"
 # finds an item in the window's tree by a test (screen ids aren't reachable from the preview)
 FIND_JS='function f(o, t) { if (o && t(o)) return o; for (var i = 0; o && i < o.children.length; i++) { var r = f(o.children[i], t); if (r) return r } return null }
 var home = f(win.canvas, function (o) { return o.continueWatching !== undefined && o.catalog !== undefined });'

@@ -3,6 +3,12 @@
 #include <QQmlExtensionPlugin>
 #include <QQmlEngine>
 #include <QDir>
+#include <QNetworkAccessManager>
+#include <QNetworkDiskCache>
+#include <QQmlNetworkAccessManagerFactory>
+#include <QStandardPaths>
+#include <QThread>
+#include <QCoreApplication>
 #include "luna_client.h"
 #include "player.h"
 #include "subtitle_layer.h"
@@ -21,6 +27,23 @@ static const int g_env = [] {
     if (qEnvironmentVariableIsEmpty("QSG_ATLAS_SIZE_LIMIT")) qputenv("QSG_ATLAS_SIZE_LIMIT", "1");
     return 0;
 }();
+
+// Everything the app shows comes from the network (nothing is baked into it), so images and anything QML
+// fetches go through a disk cache that outlives a launch: a cover seen yesterday shows without downloading
+// again, as HTTP's cache headers allow. A QNetworkDiskCache can't be shared between threads, and QML makes
+// a manager per thread (the GUI's, the image reader's), so each gets its own directory.
+class CachedNetwork : public QQmlNetworkAccessManagerFactory {
+public:
+    QNetworkAccessManager *create(QObject *parent) override {
+        auto *nam = new QNetworkAccessManager(parent);
+        auto *cache = new QNetworkDiskCache(nam);
+        const bool gui = QThread::currentThread() == QCoreApplication::instance()->thread();
+        cache->setCacheDirectory(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/net/" + (gui ? "gui" : "images"));
+        cache->setMaximumCacheSize(qint64(400) << 20);
+        nam->setCache(cache);
+        return nam;
+    }
+};
 
 class SeimioNativePlugin : public QQmlExtensionPlugin {
     Q_OBJECT
@@ -42,6 +65,7 @@ public:
     }
     void initializeEngine(QQmlEngine *engine, const char *) override {
         engine->addImportPath(QDir::cleanPath(baseUrl().toLocalFile() + "/.."));
+        if (!engine->networkAccessManagerFactory()) engine->setNetworkAccessManagerFactory(new CachedNetwork);
     }
 };
 

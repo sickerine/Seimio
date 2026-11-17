@@ -99,6 +99,14 @@ Each rule comes from a measured stall on the C5.
 - Batch data arrival: the calendar is built once when all its sources have arrived, and a refresh goes
   through the same staging as a month turn.
 
+## Data
+
+Nothing is baked into the app: everything comes live from the services when it starts (`native/src/live.h`:
+Cinemeta, the Kitsu addon, AniList, ARM, metahub), and images go through a disk cache. The one stand-in is
+the Stremio account (`app/stremio/`, `tools/fetch-library.sh`) until the app signs in. Never add a fetched
+snapshot of data or art to make something look finished; the Mac's visual check alone replays recorded
+answers (`tools/preview/api/`) so its renders stay fixed.
+
 ## Visual rules
 
 - Balance by what is drawn. Centre a control's content from the tops of the capitals, pad icons by
@@ -109,8 +117,9 @@ Each rule comes from a measured stall on the C5.
   never a name that a logo then replaces, a small backdrop that a larger one replaces, or the same
   picture again from another URL. Load first (preload, then commit; `TitleArt`, `HeroInfo`, `Backdrop`
   wait for the image), and when better data arrives for something already on screen, keep what's shown
-  (`Catalog.animeShow` keeps the chart's item). Fetch tools save every piece of art a screen needs up
-  front. The name stands in only when there's no logo at all.
+  (`Catalog.animeShow` keeps the chart's item). A screen gets its data whole: `Live`
+  fetches every piece of art and fact it needs before the screen's data is ready. The name stands in only
+  when there's no logo at all.
 - What fades out keeps showing what it showed until its fade ends. Content that reads the state that
   hides it (which list a panel is, the selected show) reads it through `Latch` (`live` while open), never
   live: the subtitle panel's delay row vanished the moment its fade began.

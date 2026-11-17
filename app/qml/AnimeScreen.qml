@@ -68,7 +68,7 @@ FocusScope {
         return out;
     }
     function refresh() {
-        if (!catalog || !catalog.ready || !shown) return;
+        if (!catalog || !catalog.seasonReady || !shown) return;
         var out = build();
         // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
         // the view they're laid out for (cards keep the old shape until then)
@@ -92,7 +92,7 @@ FocusScope {
     property var rowColumns: ({})
     function restingColumn(rowIdx) { return rowsView === "schedule" ? (rowColumns[rowIdx] || 0) : column }
     function rememberColumn(rowIdx, i) { var c = Object.assign({}, rowColumns); c[rowIdx] = i; rowColumns = c }
-    Connections { target: anime.catalog; onLoaded: anime.refresh() }
+    Connections { target: anime.catalog; onSeasonLoaded: anime.refresh() }
     onShownChanged: if (shown && !rows.length) refresh()
     // a choice (OK on a bar) asks again, once for changes made together
     onViewChanged: Qt.callLater(anime.refresh)
@@ -105,7 +105,7 @@ FocusScope {
     Timer { interval: 60000; running: anime.live && anime.shown; repeat: true; onTriggered: anime.tick() }
     function tick() {
         now = Date.now() / 1000;
-        if (!catalog || !catalog.ready || !rows.length || rowsView !== view || swap.running) return;
+        if (!catalog || !catalog.seasonReady || !rows.length || rowsView !== view || swap.running) return;
         var out = build();
         rows = out.map(function (n, i) { var o = rows[i]; return o && rowKey(o) === rowKey(n) ? o : n });
         if (row >= rows.length) row = rows.length - 1;

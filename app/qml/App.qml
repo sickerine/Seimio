@@ -155,7 +155,8 @@ WebOSWindow {
 
     // the data, held natively (Seimio.Data); a show's seasons come over to QML once and are kept, so the
     // show page sees the same object again and needn't rebuild
-    Catalog { id: catalog; base: Qt.resolvedUrl("../art/"); onLoaded: app.shows = ({}) }
+    // everything comes live from the services; `base` is the Stremio account's stand-in (Live, app/stremio/)
+    Catalog { id: catalog; base: Qt.resolvedUrl("../stremio/"); onLoaded: app.shows = ({}) }
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     // episodes in a show: the library's, or one loaded since (the Anime tab's)

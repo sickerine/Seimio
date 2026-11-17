@@ -3,8 +3,8 @@
 // needs when it needs it (one show's seasons, one day's releases), so the JS heap stays small (the
 // engine's stop-the-world GC takes longer the more is alive) and nothing is parsed on the GUI thread.
 //
-// Catalog loads the lab data (app/art/*.json, from tools/fetch-art.py and tools/fetch-airing.py) on a
-// worker thread; stremio-core will feed the same shapes later. CalendarModel is the month grid's model.
+// Catalog's data comes live from the services when the app starts (Live, live.h), parsed on a worker thread;
+// only the Stremio account is a stand-in for now. CalendarModel is the month grid's model.
 #include <QAbstractListModel>
 #include <QDate>
 #include <QFile>
@@ -20,6 +20,7 @@
 #include <QUrl>
 #include <QVariant>
 #include <QVector>
+#include "live.h"
 #include <algorithm>
 #include <climits>
 #include <memory>
@@ -155,8 +156,9 @@ class Catalog : public QObject {
     Q_PROPERTY(QVariantList continueWatching READ continueWatching NOTIFY loaded)
     Q_PROPERTY(QVariantList popular READ popular NOTIFY loaded)
     Q_PROPERTY(CalendarModel *calendar READ calendar CONSTANT)
-    Q_PROPERTY(QString seasonName READ seasonName NOTIFY loaded)            // "Fall 2026"
-    Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY loaded)    // most common first
+    Q_PROPERTY(bool seasonReady READ seasonReady NOTIFY seasonLoaded)      // the Anime tab's season, with its art
+    Q_PROPERTY(QString seasonName READ seasonName NOTIFY seasonLoaded)      // "Fall 2026"
+    Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY seasonLoaded)    // most common first
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {}
     QString base() const { return m_base; }
@@ -243,19 +245,35 @@ public:
         return days;
     }
 
+    // `base`: the Stremio account's stand-in (its core's files, see Live); everything else is fetched live.
+    // Home's data arrives first (`loaded`), the Anime tab's season with its art after (`seasonLoaded`).
     void setBase(const QString &b) {
         if (b == m_base) return;
         m_base = b;
         emit baseChanged();
-        QString dir = QUrl(b).isLocalFile() ? QUrl(b).toLocalFile() : b;
-        // the result comes back through a queued connection with this object as its context, so Qt
-        // drops it if the catalog is gone by then (no pointer to it crosses threads)
-        auto data = std::make_shared<Data>();
-        QThread *worker = QThread::create([data, dir, b] { *data = Data::load(dir, b); });
-        connect(worker, &QThread::finished, this, [this, data] { take(data); });
-        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-        worker->start();
+        const QString dir = QUrl(b).isLocalFile() ? QUrl(b).toLocalFile() : b;
+        // results come back through queued connections with this object as their context, so Qt drops them
+        // if the catalog is gone by then (no pointer to it crosses threads)
+        m_live.fetch(dir, [this](Live::Docs docs) {
+            auto data = std::make_shared<Data>();
+            QThread *worker = QThread::create([data, docs] { *data = Data::load(docs); });
+            connect(worker, &QThread::finished, this, [this, data] { take(data); });
+            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+            worker->start();
+        }, [this](Live::Docs docs) {
+            auto season = std::make_shared<Data>();
+            QThread *worker = QThread::create([season, docs] { Data::loadSeason(*season, docs.season); });
+            connect(worker, &QThread::finished, this, [this, season] {
+                if (!m_data) m_data = std::make_shared<Data>();
+                m_data->season = season->season; m_data->seasonName = season->seasonName; m_data->seasonGenres = season->seasonGenres;
+                m_seasonReady = true;
+                emit seasonLoaded();
+            });
+            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+            worker->start();
+        });
     }
+    bool seasonReady() const { return m_seasonReady; }
 
     // a show's seasons and episodes, for the show page (empty if it isn't a library show)
     Q_INVOKABLE QVariantMap show(const QString &id) const { return m_data ? m_data->shows.value(id).toMap() : QVariantMap(); }
@@ -271,6 +289,7 @@ public:
 signals:
     void baseChanged();
     void loaded();
+    void seasonLoaded();
     void animeReady(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
     void animeFailed(const QString &sourceId, const QString &reason);
 
@@ -293,12 +312,12 @@ private:
             for (const QJsonValue &x : v.toArray()) if (!x.toString().isEmpty()) out << x.toString();
             return out;
         }
-        static Data load(const QString &dir, QString base) {
-            if (!base.endsWith('/')) base += '/';
-            auto art = [&base](const QString &f) { return f.isEmpty() ? QString() : base + f; };
+        // the live documents (Live) as the catalog's data; images are their URLs
+        static Data load(const Live::Docs &docs) {
+            auto art = [](const QString &url) { return url; };
             Data d;
             QHash<QString, QVariantMap> byId;
-            for (const QJsonValue &v : read(dir, "cw.json").array()) {
+            for (const QJsonValue &v : docs.cw) {
                 QJsonObject i = v.toObject();
                 if (i["backdrop"].toString().isEmpty()) continue;
                 QString year = i["year"].toString();
@@ -312,7 +331,7 @@ private:
                 d.continueWatching.append(item);
                 byId[item["id"].toString()] = item;
             }
-            for (const QJsonValue &row : read(dir, "rows.json").array()) {
+            for (const QJsonValue &row : docs.rows) {
                 QVariantList items;
                 for (const QJsonValue &v : row.toObject()["items"].toArray()) {
                     QJsonObject m = v.toObject();
@@ -325,7 +344,7 @@ private:
                 }
                 d.popular.append(QVariantMap{ {"title", row.toObject()["title"].toString()}, {"kind", "portrait"}, {"items", items} });
             }
-            QJsonObject series = read(dir, "series.json").object();
+            const QJsonObject series = docs.series;
             for (auto it = series.begin(); it != series.end(); ++it) {
                 QJsonObject show = it.value().toObject();
                 QVariantList seasons;
@@ -356,43 +375,7 @@ private:
                 d.shows[it.key()] = m;
                 d.episodeCounts[it.key()] = count;
             }
-            const QJsonObject season = read(dir, "season.json").object();
-            if (!season.isEmpty()) {
-                QString name = season["season"].toString().toLower();
-                if (!name.isEmpty()) name[0] = name[0].toUpper();
-                d.seasonName = name + " " + QString::number(season["year"].toInt());
-                QHash<QString, int> genreCount;
-                static const QHash<QString, QString> formats { { "TV", "TV" }, { "TV_SHORT", "TV short" }, { "MOVIE", "Movie" }, { "ONA", "ONA" }, { "OVA", "OVA" }, { "SPECIAL", "Special" } };
-                for (const QJsonValue &v : season["shows"].toArray()) {
-                    const QJsonObject a = v.toObject();
-                    // the backdrop: the full-screen fanart, or AniList's banner strip, or the cover
-                    const QString cover = art(a["cover"].toString()), banner = art(a["banner"].toString()), background = art(a["background"].toString());
-                    const QString format = formats.value(a["format"].toString(), a["format"].toString());
-                    const int episodes = a["episodes"].toInt();
-                    QStringList chips { format };
-                    if (episodes > 1) chips << QString::number(episodes) + " episodes";
-                    else if (a["duration"].toInt() > 0 && a["format"].toString() == "MOVIE") chips << QString::number(a["duration"].toInt()) + " min";
-                    if (!a["studio"].toString().isEmpty()) chips << a["studio"].toString();
-                    const QStringList genres = strings(a["genres"]);
-                    chips += genres.mid(0, 2);
-                    for (const QString &g : genres) genreCount[g]++;
-                    const QJsonObject next = a["next"].toObject();
-                    d.season.append(QVariantMap{
-                        { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
-                        { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", art(a["logo"].toString()) },
-                        { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
-                        { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },
-                        { "format", a["format"].toString() }, { "studio", a["studio"].toString() }, { "color", a["color"].toString() },
-                        { "leftover", a["leftover"].toBool() }, { "start", a["start"].toString() },
-                        { "nextEpisode", next["episode"].toInt() }, { "nextAt", qint64(next["at"].toDouble()) },
-                        { "episodes", episodes }, { "episode", QString() }, { "progress", -1 } });
-                }
-                QList<QPair<int, QString>> ranked;
-                for (auto it = genreCount.begin(); it != genreCount.end(); ++it) ranked << qMakePair(-it.value(), it.key());
-                std::sort(ranked.begin(), ranked.end());
-                for (const auto &g : ranked) d.seasonGenres << g.second;
-            }
-            for (const QJsonValue &v : read(dir, "airing.json").array()) {
+            for (const QJsonValue &v : docs.airing) {
                 QJsonObject a = v.toObject();
                 QString artUrl = art(a["art"].toString());
                 Release r;
@@ -404,6 +387,44 @@ private:
                 d.calendar[r.released].append(r);
             }
             return d;
+        }
+        // the Anime tab's season (Live's season document) as the catalog's chart
+        static void loadSeason(Data &d, const QJsonObject &season) {
+            auto art = [](const QString &url) { return url; };
+            if (season.isEmpty()) return;
+                QString name = season["season"].toString().toLower();
+            if (!name.isEmpty()) name[0] = name[0].toUpper();
+            d.seasonName = name + " " + QString::number(season["year"].toInt());
+            QHash<QString, int> genreCount;
+            static const QHash<QString, QString> formats { { "TV", "TV" }, { "TV_SHORT", "TV short" }, { "MOVIE", "Movie" }, { "ONA", "ONA" }, { "OVA", "OVA" }, { "SPECIAL", "Special" } };
+            for (const QJsonValue &v : season["shows"].toArray()) {
+                const QJsonObject a = v.toObject();
+                // the backdrop: the full-screen fanart, or AniList's banner strip, or the cover
+                const QString cover = art(a["cover"].toString()), banner = art(a["banner"].toString()), background = art(a["background"].toString());
+                const QString format = formats.value(a["format"].toString(), a["format"].toString());
+                const int episodes = a["episodes"].toInt();
+                QStringList chips { format };
+                if (episodes > 1) chips << QString::number(episodes) + " episodes";
+                else if (a["duration"].toInt() > 0 && a["format"].toString() == "MOVIE") chips << QString::number(a["duration"].toInt()) + " min";
+                if (!a["studio"].toString().isEmpty()) chips << a["studio"].toString();
+                const QStringList genres = strings(a["genres"]);
+                chips += genres.mid(0, 2);
+                for (const QString &g : genres) genreCount[g]++;
+                const QJsonObject next = a["next"].toObject();
+                d.season.append(QVariantMap{
+                    { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
+                    { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", art(a["logo"].toString()) },
+                    { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
+                    { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },
+                    { "format", a["format"].toString() }, { "studio", a["studio"].toString() }, { "color", a["color"].toString() },
+                    { "leftover", a["leftover"].toBool() }, { "start", a["start"].toString() },
+                    { "nextEpisode", next["episode"].toInt() }, { "nextAt", qint64(next["at"].toDouble()) },
+                    { "episodes", episodes }, { "episode", QString() }, { "progress", -1 } });
+            }
+            QList<QPair<int, QString>> ranked;
+            for (auto it = genreCount.begin(); it != genreCount.end(); ++it) ranked << qMakePair(-it.value(), it.key());
+            std::sort(ranked.begin(), ranked.end());
+            for (const auto &g : ranked) d.seasonGenres << g.second;
         }
     };
     template <typename F> void get(const QUrl &url, F done) {
@@ -561,7 +582,8 @@ private:
     }
 
     QString m_base;
-    bool m_ready = false;
+    bool m_ready = false, m_seasonReady = false;
+    Live m_live { this };
     std::shared_ptr<Data> m_data;
     QNetworkAccessManager m_net { this };
     CalendarModel *m_model;
