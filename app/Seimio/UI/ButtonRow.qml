@@ -1,5 +1,5 @@
 // A row of Buttons walked with Left/Right; OK triggers the focused one, a long OK holds it. Other keys (Up, Down, Back)
-// pass on to the parent. `model` entries are { label, icon, round, primary, progress }; a new model of
+// pass on to the parent. `model` entries are { label, icon, trailing, round, primary, progress }; a new model of
 // the same length updates the buttons in place.
 import QtQuick 2.12
 
@@ -25,6 +25,7 @@ FocusScope {
                 readonly property var b: row.model[index] || {}
                 label: b.label || ""
                 icon: b.icon || ""
+                trailing: b.trailing || ""
                 round: !!b.round
                 primary: !!b.primary
                 progress: b.progress === undefined ? -1 : b.progress

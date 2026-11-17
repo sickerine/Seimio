@@ -1,6 +1,7 @@
 // A glass bar of segments (tabs, seasons) walked with Left/Right. The highlight stretches like liquid:
 // its leading edge moves first and the trailing edge follows. It's white while the bar has focus.
-// `model` entries are strings, or { label, icon } for icon-only segments; a new model of the same
+// `model` entries are strings, or { label, icon } for icon-only segments, or { label, trailing } for a
+// label with a small icon after it (a chevron on a segment that opens a menu); a new model of the same
 // length relabels the segments in place. Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 // Moving selects, unless `selectOnOk`: then a cursor walks the segments and OK selects the one under it
@@ -69,19 +70,29 @@ FocusScope {
                     readonly property var m: bar.model[index]
                     readonly property string label: typeof m === "string" ? m : (m && m.label || "")
                     readonly property string icon: typeof m === "string" ? "" : (m && m.icon || "")
+                    readonly property string trailing: typeof m === "string" ? "" : (m && m.trailing || "")
                     readonly property bool current: bar.currentIndex === index
                     readonly property color ink: bar.showFocus && bar.cursor === index ? Theme.inkOnLight : Theme.ink
-                    width: icon !== "" ? bar.barHeight : text.implicitWidth + bar.segmentPad
+                    // the label and its trailing icon, centred as one block by what's drawn
+                    readonly property real block: text.implicitWidth + (trailing ? 8 + tail.inkRight - tail.inkLeft : 0)
+                    width: icon !== "" ? bar.barHeight : block + bar.segmentPad
                     height: segments.height
                     Text {
                         id: text
                         visible: parent.icon === ""
-                        anchors.centerIn: parent
+                        x: (parent.width - parent.block) / 2; anchors.verticalCenter: parent.verticalCenter
                         text: parent.label; color: parent.ink
                         font.family: Theme.face; font.pixelSize: bar.fontSize; font.weight: parent.current ? Font.DemiBold : Font.Medium
                         Behavior on color { ColorAnimation { duration: 200 } }
                     }
                     Icon { visible: parent.icon !== ""; name: parent.icon; anchors.centerIn: parent; color: parent.ink }
+                    Icon {
+                        id: tail
+                        visible: parent.trailing !== ""
+                        name: parent.trailing; color: parent.ink
+                        width: Math.round(bar.fontSize * 0.85); height: width
+                        x: text.x + text.implicitWidth + 8 - inkLeft; anchors.verticalCenter: parent.verticalCenter
+                    }
                 }
             }
         }

@@ -2,13 +2,15 @@
 // focused. Focus turns it white with dark ink and lifts it with a small overshoot. `primary` keeps it
 // white at rest. `progress` (0 to 100) draws a thin bar under the label, for "Resume" buttons. The
 // padding is measured from the drawn icon and text, equal on both sides, and the label and bar are
-// centred together as one block, with the bar spanning exactly the icon and label above it.
+// centred together as one block, with the bar spanning exactly the icon and label above it. `trailing`
+// is a small icon after the label: a chevron on a button that opens a menu, pointing where it opens.
 import QtQuick 2.12
 
 Item {
     id: btn
     property string label
     property string icon
+    property string trailing
     property bool round: false
     property bool focused: false
     property bool primary: false
@@ -19,7 +21,7 @@ Item {
     readonly property int padX: 34
     readonly property int gap: 16                  // between the drawn icon and the label
     readonly property bool hasBar: !round && progress > 0
-    implicitWidth: round ? 76 : text.x + text.implicitWidth + padX
+    implicitWidth: round ? 76 : (trailing ? tail.x + tail.inkRight : text.x + text.implicitWidth) + padX
     implicitHeight: 76
     width: implicitWidth; height: implicitHeight
 
@@ -52,6 +54,13 @@ Item {
             y: body.labelY - height / 2
             text: btn.label; color: btn.inkColor
             font.family: Theme.face; font.pixelSize: 28; font.weight: Font.DemiBold
+        }
+        Icon {
+            id: tail
+            visible: btn.trailing !== "" && !btn.round
+            name: btn.trailing; color: btn.inkColor; width: 22; height: 22
+            x: text.x + text.implicitWidth + 10 - inkLeft
+            y: body.labelY - height / 2
         }
         Rectangle {
             visible: btn.hasBar

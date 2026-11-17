@@ -220,7 +220,7 @@ FocusScope {
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: [{ label: anime.genre || "All genres", icon: "" }]
+                model: [{ label: anime.genre || "All genres", trailing: "chevronDown" }]   // it opens the genre list below
                 onTriggered: anime.genreMenu = true
             }
         }

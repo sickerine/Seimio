@@ -31,6 +31,8 @@ WebOSWindow {
             Button { label: "Mark watched"; icon: "check"; focused: true }
             Button { label: "Add"; icon: "plus"; round: true }
             Button { label: "Watched"; icon: "check"; round: true; focused: true }
+            Button { label: "Subtitles"; trailing: "chevronUp" }
+            Button { label: "Audio"; trailing: "chevronUp"; focused: true }
         }
         Row {
             spacing: 10
@@ -41,7 +43,7 @@ WebOSWindow {
         }
         Row {
             spacing: 32
-            Repeater { model: ["play", "plus", "check", "search", "info", "star", "pin"]; Icon { name: modelData; width: 40; height: 40 } }
+            Repeater { model: ["play", "plus", "check", "search", "info", "star", "pin", "chevronDown", "chevronUp"]; Icon { name: modelData; width: 40; height: 40 } }
         }
         Row {
             spacing: 32
@@ -49,6 +51,7 @@ WebOSWindow {
             SegmentedBar { source: win.contentItem; barHeight: 64; fontSize: 24; segmentPad: 44; model: ["Season 1", "Season 2"] }
             // selectOnOk: the cursor (white) on Movies, the selection (soft) still on All
             SegmentedBar { source: win.contentItem; barHeight: 64; fontSize: 22; segmentPad: 38; model: ["All", "TV", "Movies"]; selectOnOk: true; showFocus: true; currentIndex: 0; cursor: 2 }
+            SegmentedBar { source: win.contentItem; barHeight: 64; fontSize: 22; segmentPad: 38; model: [{ label: "All genres", trailing: "chevronDown" }]; showFocus: true }
         }
         MenuList { width: 408; model: [{ label: "Play", icon: "play" }, { label: "Add to library", icon: "plus" }, { label: "Mark watched", icon: "check" }] }
     }
