@@ -10,6 +10,7 @@
 #include <atomic>
 
 inline double monoMs() { timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+inline double threadCpuMs() { timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
 // The lab log: Qt's log output (once LogTap starts) and the probes' own events, each stamped with
 // monoMs(), so a slow frame can be lined up with the key press or GUI stall behind it.
@@ -88,13 +89,15 @@ public:
     FrameStats() {
         m_beat.setTimerType(Qt::PreciseTimer); m_beat.setInterval(16);
         connect(&m_beat, &QTimer::timeout, this, [this] {
-            const double now = monoMs(), gap = now - m_lastBeat;
-            m_lastBeat = now;
+            const double now = monoMs(), gap = now - m_lastBeat, cpu = threadCpuMs(), worked = cpu - m_lastCpu;
+            m_lastBeat = now; m_lastCpu = cpu;
             if (gap <= 50) return;
             QMutexLocker l(&m_mutex);
             if (now - m_slowSwap < 15) { labLog(QString("gui waited on a slow swap %1 ms").arg(gap, 0, 'f', 1)); return; }
             m_stalls[m_phase].append(gap);
-            labLog(QString("gui stall %1 ms").arg(gap, 0, 'f', 1));
+            // `busy`: the GUI thread's own CPU time in the gap; far less than the gap means it was blocked
+            // or starved by other threads and processes, not running our code
+            labLog(QString("gui stall %1 ms busy %2").arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0));
         });
     }
     bool heartbeat() const { return m_beat.isActive(); }
@@ -105,7 +108,7 @@ public:
         const QList<QByteArray> v = f.readAll().split(' ');
         return v.size() > 1 ? int(v[1].toLongLong() * 4096 / (1 << 20)) : 0;
     }
-    void setHeartbeat(bool on) { if (on == m_beat.isActive()) return; m_lastBeat = monoMs(); if (on) m_beat.start(); else m_beat.stop(); }
+    void setHeartbeat(bool on) { if (on == m_beat.isActive()) return; m_lastBeat = monoMs(); m_lastCpu = threadCpuMs(); if (on) m_beat.start(); else m_beat.stop(); }
     QString phase() const { QMutexLocker l(&m_mutex); return m_phase; }
     void setPhase(const QString &p) { QMutexLocker l(&m_mutex); m_phase = p; }
     Q_INVOKABLE void attach(QObject *window) {
@@ -130,12 +133,13 @@ public:
         // GUI thread: a long wait between two animation ticks means key handling, JS or item creation
         // held the GUI thread up
         connect(w, &QQuickWindow::afterAnimating, this, [this] {
-            double now = monoMs();
+            double now = monoMs(), cpu = threadCpuMs();
             // the same for the GUI thread: a stall breaks a run of on-time ticks; a tick after a pause doesn't
             const double tick = now - m_lastTick;
-            if (m_lastTick > 0 && m_lastTickGap > 0 && m_lastTickGap <= 20 && tick > 20 && tick < 150) labLog(QString("gui stall %1 ms").arg(tick, 0, 'f', 1));
+            if (m_lastTick > 0 && m_lastTickGap > 0 && m_lastTickGap <= 20 && tick > 20 && tick < 150)
+                labLog(QString("gui stall %1 ms busy %2").arg(tick, 0, 'f', 1).arg(cpu - m_lastTickCpu, 0, 'f', 0));
             m_lastTickGap = m_lastTick > 0 ? tick : 0;
-            m_lastTick = now;
+            m_lastTick = now; m_lastTickCpu = cpu;
         }, Qt::DirectConnection);
     }
     // { phase: { frames, median, max, late20, late30, short12, stalls, stallMax } } since the last call
@@ -159,10 +163,10 @@ private:
     mutable QMutex m_mutex;
     QString m_phase = "idle";
     double m_last = 0, m_lastGap = 0;
-    double m_lastTick = 0, m_lastTickGap = 0;
+    double m_lastTick = 0, m_lastTickGap = 0; double m_lastTickCpu = 0;
     QMap<QString, QVector<double>> m_gaps, m_stalls;
     QTimer m_beat;
-    double m_lastBeat = 0;
+    double m_lastBeat = 0; double m_lastCpu = 0;
     std::atomic<double> m_rendered { 0 };
     double m_slowSwap = 0;                  // when the last slow swap ended (under m_mutex)
 };

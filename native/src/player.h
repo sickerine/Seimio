@@ -86,7 +86,7 @@ public:
     // queued with the other calls, so an unload or seek for the last stream can't land after it
     Q_INVOKABLE void load(const QString &uri, const QString &payload) {
         ensure();
-        m_loaded = m_playing = m_paused = m_buffering = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
+        m_loaded = m_playing = m_paused = m_buffering = m_seeking = m_seekLanded = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
         m_tracks = QJsonArray(); m_seen.clear(); m_audioTracks.clear(); m_preferredAudio = -1;
         emit stateChanged(); emit positionChanged();
         command([u = uri.toStdString(), p = payload.toStdString()](Client *c) { c->loadAsync(u, "media", p); });
@@ -103,7 +103,7 @@ public:
     }
     Q_INVOKABLE void selectAudio(int index) { command([index](Client *c) { std::string a("audio"); c->selectTrack(a, index); }); m_audioTrack = index; emit stateChanged(); }
     Q_INVOKABLE void mute(bool on) { command([on](Client *c) { c->setAudioMute(on); }); }
-    Q_INVOKABLE void unload() { m_playing = m_loaded = false; emit stateChanged(); command([](Client *c) { c->unload(); }); }
+    Q_INVOKABLE void unload() { m_playing = m_loaded = m_seeking = m_seekLanded = false; emit stateChanged(); command([](Client *c) { c->unload(); }); }
     // "slot:count" for every slot that has fired, to find which one carries raw events.
     Q_INVOKABLE QString slotCounts() const {
         QStringList out;

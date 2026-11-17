@@ -449,8 +449,8 @@ private:
         emit listChanged();
     }
 
-    // The candidates the decision model chooses from: what plays here and is cached, best first, at most
-    // the 255 options a choice question takes.
+    // The candidates: what plays here and is cached, best first. The decision model is asked about the
+    // first 255 (what a choice question takes); the rules before it see them all.
     QVector<int> candidates() const {
         QVector<int> c;
         for (int i = 0; i < m_all.size(); i++) if (m_all[i].fields["support"] != "unsupported" && m_all[i].fields["cached"].toBool()) c << i;
@@ -459,27 +459,29 @@ private:
                                     const int res = m_anime ? (r == "1080p" ? 2 : r == "4K" ? 1 : 0) : (r == "4K" ? 2 : r == "1080p" ? 1 : 0);
                                     return res * 2000000 + (f["version"].toString().isEmpty() ? 0 : 1000000) + qMin(f["seeders"].toInt(), 999999); };
         std::stable_sort(c.begin(), c.end(), [&](int a, int b) { return rank(a) > rank(b); });
-        if (c.size() > 255) c.resize(255);
         return c;
     }
     void choose(int ticket, int attempt = 1) {
         const QVector<int> c = candidates();
         if (c.isEmpty()) { fail(m_all.isEmpty() ? (m_failure.isEmpty() ? "No streams yet" : m_failure) : "Nothing cached plays on this TV"); return; }
-        // Anime with no Blu-ray here leaves nothing to judge: picked directly, without the AI (animeRule)
-        if (m_anime && m_binge.isEmpty() && attempt == 1) {
-            QVector<QVariantMap> fields; for (const Item &it : m_all) fields << it.fields;
-            const int i = animeRule(fields, c);
-            if (i >= 0) { pick(i, ticket); return; }
+        if (attempt == 1) {
+            // the same release as the episode before: the first in the addon's order with its binge group
+            if (!m_binge.isEmpty())
+                for (int i = 0; i < m_all.size(); i++)
+                    if (m_all[i].fields["bingeGroup"].toString() == m_binge && c.contains(i)) { pick(i, ticket); return; }
+            // anime with no Blu-ray here leaves nothing to judge: picked directly, without the AI (animeRule)
+            if (m_anime) {
+                QVector<QVariantMap> fields; for (const Item &it : m_all) fields << it.fields;
+                const int i = animeRule(fields, c);
+                if (i >= 0) { pick(i, ticket); return; }
+            }
         }
-        // the same release as the episode before: the first in the addon's order with its binge group
-        if (!m_binge.isEmpty() && attempt == 1)
-            for (int i = 0; i < m_all.size(); i++)
-                if (m_all[i].fields["bingeGroup"].toString() == m_binge && c.contains(i)) { pick(i, ticket); return; }
         // one candidate needs no decision; without a key (the lab's tours) the best by rank plays
         if (c.size() == 1 || m_openrouter.isEmpty() || m_decider.isEmpty()) { pick(c[0], ticket); return; }
         setStage("choosing");
+        const QVector<int> asked = c.mid(0, 255);
         QJsonObject criteria;
-        for (int i : c) criteria["s" + QString::number(i)] = m_all[i].option;
+        for (int i : asked) criteria["s" + QString::number(i)] = m_all[i].option;
         const QJsonObject body {
             { "model", m_decider },
             { "state", QJsonObject { { "video", m_title + (m_anime ? " (anime)" : "") }, { "rules", rules() } } },
@@ -488,11 +490,11 @@ private:
         r.setRawHeader("Authorization", "Bearer " + m_openrouter.toUtf8());
         r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
         r.setRawHeader("X-Title", "Seimio");
-        call(m_net.post(r, QJsonDocument(body).toJson(QJsonDocument::Compact)), ticket, [this, c, ticket, attempt](const QJsonObject &o, const QString &err) {
+        call(m_net.post(r, QJsonDocument(body).toJson(QJsonDocument::Compact)), ticket, [this, asked, ticket, attempt](const QJsonObject &o, const QString &err) {
             const QJsonObject a = o.value("answers").toObject().value("pick").toObject();
             const QString choice = a.value("choice").toString();
             const int i = choice.mid(1).toInt();
-            if (!err.isEmpty() || !choice.startsWith('s') || !c.contains(i)) {
+            if (!err.isEmpty() || !choice.startsWith('s') || !asked.contains(i)) {
                 qWarning("decision attempt %d failed: %s", attempt, qPrintable(err.isEmpty() ? QString("no usable choice") : err));
                 if (attempt >= 3) { fail("The AI pick didn't answer"); return; }
                 QTimer::singleShot(400 * attempt, this, [this, ticket, attempt] { if (ticket == m_ticket) choose(ticket, attempt + 1); });

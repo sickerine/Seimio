@@ -71,18 +71,21 @@ FocusScope {
     // the still dissolves into the new video at its first frame. The old video unloads only once the still
     // covers it. `handoff` is { art, chip, title } while a switch loads.
     property var handoff: null
-    function beginHandoff(art, chip, title) { handoffLast = -1; handoffSteady = 0; handoffCap.stop(); handoff = { art: art || (item && item.backdrop) || "", chip: chip || "", title: title || "" } }
+    function beginHandoff(art, chip, title) { resetHandoffCount(); handoffArmed = false; handoff = { art: art || (item && item.backdrop) || "", chip: chip || "", title: title || "" } }
     Timer { id: unloadLater; interval: 400; onTriggered: media.unload() }
-    // The still goes once frames are on screen. LG says "playing" before the first one shows, and a
-    // resume jumps the reported time ahead, so neither means a picture yet: the time has to move in small,
-    // even steps (each under 0.6 s) for 0.8 s in all, or 6 s pass.
+    // The still goes once frames of the new video are on screen. LG says "playing" before the first one
+    // shows, and a resume jumps the reported time ahead, so neither means a picture yet: the time has to
+    // move in small, even steps (each under 0.6 s) for 0.8 s in all, or 6 s pass. Counting starts when the
+    // new video loads (`handoffArmed`): until then the old one may still be playing (a stream switch
+    // resolves its link first).
     property real handoffLast: -1
     property real handoffSteady: 0
+    property bool handoffArmed: false
     Connections {
         target: media
         onStateChanged: if (page.handoff && media.failure) page.endHandoff()
         onPositionChanged: {
-            if (!page.handoff || !media.playing) return;
+            if (!page.handoff || !page.handoffArmed || !media.loaded || !media.playing) return;
             if (!handoffCap.running) handoffCap.restart();
             const step = media.position - page.handoffLast;
             if (page.handoffLast >= 0 && step > 0 && step < 600) page.handoffSteady += step;
@@ -91,7 +94,8 @@ FocusScope {
         }
     }
     Timer { id: handoffCap; interval: 6000; onTriggered: page.endHandoff() }
-    function endHandoff() { handoffCap.stop(); handoffLast = -1; handoffSteady = 0; handoff = null }
+    function resetHandoffCount() { handoffCap.stop(); handoffLast = -1; handoffSteady = 0 }
+    function endHandoff() { resetHandoffCount(); handoffArmed = false; handoff = null }
     // the file, as subtitle delays are kept: the stream's own link, which names the torrent and the file
     readonly property string fileKey: stream && stream.url ? stream.url : ""
     // `at`: where to start, a fraction of the way (a resume) or { ms } (a stream switch keeps the time)
@@ -104,6 +108,7 @@ FocusScope {
         if (!pendingUrl) return;
         if (unloadLater.running) { unloadLater.stop(); media.unload() }
         loadedAt = Date.now(); startMs = -1;
+        if (handoff) { resetHandoffCount(); handoffArmed = true }
         subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
         if (/^(tt\d+|kitsu:\d+)/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
@@ -357,10 +362,14 @@ FocusScope {
             return { label: name || t.title || "Unknown", detail: extra.join("   "), checked: t.id === current, icon: star ? "star" : "",
                      badge: preferredBase && preferredBase === tracks.baseLanguage(t.lang, t.title) ? "pin" : "" };
         }
-        // the file's own tracks in file order, then the online languages by name
+        // the file's own tracks in file order, then the online languages by name (a language's online match
+        // shows when none of the file's tracks in it will play)
         function listOf(bases, star) {
             var own = [], online = [];
-            bases.forEach(function (b) { groups[b].own.forEach(function (t) { own.push(t) }); if (!groups[b].own.length && groups[b].online) online.push(b) });
+            bases.forEach(function (b) {
+                groups[b].own.forEach(function (t) { own.push(t) });
+                if (groups[b].online && !groups[b].own.some(function (t) { return t.playable })) online.push(b);
+            });
             online.sort(function (x, y) { return groups[x].name.localeCompare(groups[y].name) });
             var out = [];
             own.forEach(function (t) { out.push(t) });
@@ -386,10 +395,13 @@ FocusScope {
                 }
             }
         }
+        // `keep`: the same track stays selected (a favourite moves it), else the row closest to where it was
+        var was = keep ? menuTracks[menu.currentIndex] : undefined;
         menuTracks = list; menu.model = rows;
-        for (var r = 0; !keep && r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
-        if (!keep && r === rows.length) menu.currentIndex = 0;
-        if (!keep) menu.follow(true);
+        if (keep) { var at = list.indexOf(was); menu.currentIndex = at >= 0 ? at : Math.min(menu.currentIndex, rows.length - 1); return }
+        for (var r = 0; r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
+        if (r === rows.length) menu.currentIndex = 0;
+        menu.follow(true);
     }
     // Holding OK on a language offers to make it a favourite (or stop it being one) and to make it the
     // default for this genre (or stop it being one); on Off, only the default. The default is what

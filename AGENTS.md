@@ -20,6 +20,10 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   2. With Qt's renderer timing in the variant, `tools/lab-frames.py` says whether slow frames are
      JavaScript-bound (short render, long GUI stall), draw-call bound (long render, one pass) or
      capture-bound (many passes).
+  A GUI stall line ends with `busy`, the GUI thread's own CPU time in the gap: close to the gap means
+  our code (JavaScript, bindings, item creation) ran; a few ms means the thread was blocked or starved,
+  which under the video is the TV holding the swap (the threaded loop's sync waits for it), not
+  something to fix in QML. A forced JS collection measured 19 ms, so a 100 ms stall isn't the GC.
   Timing logs perturb the TV; take counts from runs without them. Raise a budget only with
   measurements showing why. A frame counts as late only when it breaks a run of on-time frames: under
   the video nothing animates, and Qt draws only when a subtitle line or the overlay changes, so the gap

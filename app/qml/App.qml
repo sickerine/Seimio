@@ -84,7 +84,6 @@ WebOSWindow {
         // switching episodes inside the player keeps the release: Stremio's binge group (see Streams.play)
         var binge = layer === "player" && player.stream ? player.stream.bingeGroup || "" : "";
         player.prepare(displayItem, playTarget.label); layer = "player";
-        player.stillArt = episodeArt(playTarget.id);
         streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""), binge);
     }
     // an episode's thumbnail from the show page's season, or the title's backdrop
@@ -182,7 +181,10 @@ WebOSWindow {
         onAnimeReady: {
             delete app.animeLoading[sourceId];
             if (!anime.resolved[sourceId]) { app.shows[item.id] = show; anime.resolve(sourceId, item) }
-            if (sourceId === app.animeOpening) { app.animeOpening = ""; app.open() }
+            // it opens only if OK's show is still the one selected on the Anime tab
+            if (sourceId !== app.animeOpening) return;
+            app.animeOpening = "";
+            if (app.layer === "home" && app.animeTab && anime.focusItem === anime.resolved[sourceId]) app.open();
         }
         onAnimeFailed: {
             delete app.animeLoading[sourceId];
@@ -371,6 +373,7 @@ WebOSWindow {
             episodes: sameShow ? showPage.episodes : []
             episodeCards: sameShow ? showPage.episodeData : []
             episodeId: app.playTarget ? app.playTarget.id : ""
+            stillArt: app.playTarget ? app.episodeArt(app.playTarget.id) : ""
             videoId: app.playTarget ? app.playTarget.id : ""
             // inside the player, an episode change hands off: the picture fades into the episode's still
             onPlayEpisode: { player.beginHandoff(episode.thumb, "E" + episode.episode, episode.title || ""); app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode)) }

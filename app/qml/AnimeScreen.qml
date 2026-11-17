@@ -65,21 +65,23 @@ FocusScope {
             total = 0;
             for (var d = 0; d < days.length; d++) if (days[d].items.length) { out.push(days[d]); total += days[d].items.length }
         }
-        // on screen, the old rows fade out, the new ones take their place and rise in, as one piece
-        pending = out;
+        // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
+        // the view they're laid out for (cards keep the old shape until then)
+        pending = out; pendingView = view;
         if (shown && rows.length) { swap.restart(); return }
         apply();
     }
     property var pending: null
-    function apply() { rows = pending; pending = null; if (row >= rows.length) row = rows.length - 1 }
+    property string pendingView: "chart"
+    property string rowsView: "chart"                // the view the rows on screen are laid out for
+    function apply() { rows = pending; rowsView = pendingView; pending = null; if (row >= rows.length) row = rows.length - 1 }
     Connections { target: anime.catalog; onLoaded: anime.refresh() }
     onShownChanged: if (shown && !rows.length) refresh()
-    // a control's choice is asked for once the selection rests (moving along a bar selects)
-    Timer { id: requery; interval: 260; onTriggered: anime.refresh() }
-    onViewChanged: requery.restart()
-    onFormatChanged: requery.restart()
-    onSortChanged: requery.restart()
-    onGenreChanged: requery.restart()
+    // a choice (OK on a bar) asks again, once for changes made together
+    onViewChanged: Qt.callLater(anime.refresh)
+    onFormatChanged: Qt.callLater(anime.refresh)
+    onSortChanged: Qt.callLater(anime.refresh)
+    onGenreChanged: Qt.callLater(anime.refresh)
     Timer { interval: 60000; running: anime.live && anime.shown; repeat: true; onTriggered: { anime.now = Date.now() / 1000; anime.refresh() } }
 
     opacity: shown ? 1 : 0
@@ -255,7 +257,7 @@ FocusScope {
                 id: slot
                 readonly property int idx: list.first + ((index - list.first) % list.slots + list.slots) % list.slots
                 readonly property var r: idx < anime.rows.length ? anime.rows[idx] : null
-                readonly property bool schedule: anime.view === "schedule"
+                readonly property bool schedule: anime.rowsView === "schedule"
                 visible: r !== null
                 y: list.rowTop + idx * list.stride - list.scrollY
                 width: anime.width; height: list.stride
