@@ -23,7 +23,8 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   Timing logs perturb the TV; take counts from runs without them. Raise a budget only with
   measurements showing why. A frame counts as late only when it breaks a run of on-time frames: under
   the video nothing animates, and Qt draws only when a subtitle line or the overlay changes, so the gap
-  before a frame after a pause isn't lateness.
+  before a frame after a pause isn't lateness. GUI stalls are counted apart, by a 16 ms heartbeat on
+  the GUI thread during tours, so a long one counts whether or not anything was drawing.
 
 ## Performance rules
 
@@ -31,6 +32,9 @@ Each rule comes from a measured stall on the C5.
 
 - Keep Qt's texture atlas off (the plugin sets `QSG_ATLAS_SIZE_LIMIT`). Uploading into the shared atlas
   while the GPU reads it stalled the driver 10 to 15 ms per image.
+- Rows a list builds when its data arrives are made asynchronously (`Loader { asynchronous: true }`
+  around the row's content, which deals in when ready): a screenful of stream rows made at once was a
+  50-65 ms stall. A list on a hidden screen takes its model only while the screen is up.
 - Create items once. `CardStrip` recycles a fixed pool of cards; a Repeater takes `model: array.length`
   and reads `array[index]`, so a new array of the same length rebinds instead of rebuilding. A
   MediaCard costs about 1.3 ms to create on the TV.

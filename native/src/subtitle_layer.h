@@ -3,7 +3,8 @@
 // which hands over every text subtitle track's header and blocks as the player's bytes pass through, and
 // the file's fonts; every track's blocks are kept, so switching tracks is instant and needs no download.
 // Matroska ASS blocks go to libass as they are (ass_process_chunk, as mpv feeds it); SRT text becomes the
-// same with a plain style (as stremio-webos service/srt-ass.js did).
+// same with a plain style (as stremio-webos service/srt-ass.js did). Blu-ray image subtitles (PGS) are
+// decoded by Pgs (pgs.h) and shown when the set on screen changes.
 //
 // All the subtitle work happens on its own thread (SubtitleWorker): the blocks and fonts come straight
 // from the Tee's thread, libass parses, lays out and draws there, and the GUI thread only receives the
@@ -29,6 +30,7 @@
 #include <QNetworkReply>
 #include <ass/ass.h>
 #include "tee.h"
+#include "pgs.h"
 
 class SubtitleWorker : public QObject {
     Q_OBJECT
@@ -82,13 +84,21 @@ public slots:
     }
     void addHeader(int number, const QString &codec, const QByteArray &header) {
         Track &t = m_tracks[number]; statTracks = m_tracks.size();
-        t.srt = codec.startsWith("S_TEXT/UTF8");
+        t.srt = codec.startsWith("S_TEXT/UTF8") || codec == "tx3g";
+        t.image = codec == "S_HDMV/PGS";
         t.header = t.srt ? srtHeader() : header;
         if (number == m_number) rebuild();
     }
     void addBlock(int number, qint64 start, qint64 duration, const QByteArray &payload) {
         auto it = m_tracks.find(number);
-        if (it == m_tracks.end() || it->header.isEmpty()) return;                // image tracks have no header
+        if (it != m_tracks.end() && it->image) {
+            // a window around where the player reads (see pgs.h); the set showing is picked up on the next tick
+            if (it->pgs.add(start, duration, payload)) statBlocks++;
+            it->pgs.keepNear(start);
+            if (number == m_number && !m_playing) render();
+            return;
+        }
+        if (it == m_tracks.end() || it->header.isEmpty()) return;                // VobSub has no header
         // the same block comes again after a seek: keep one
         const QByteArray key = QByteArray::number(start) + ':' + payload.left(48);
         if (it->seen.contains(key)) return;
@@ -122,7 +132,7 @@ signals:
     void addonListed(const QVariantList &subtitles);
 private:
     struct Block { qint64 start, duration; QByteArray data; };
-    struct Track { QByteArray header; bool srt = false; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; };
+    struct Track { QByteArray header; bool srt = false, image = false; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; Pgs pgs; };
 
     // an addon subtitle: SRT, read whole into a track like an embedded SRT one
     void download(int number) {
@@ -153,6 +163,7 @@ private:
     }
     void rebuild() {
         if (m_track) { ass_free_track(m_track); m_track = nullptr; }
+        m_shownSet = -2;
         auto it = m_tracks.find(m_number);
         if (it != m_tracks.end() && !it->header.isEmpty()) {
             m_track = ass_new_track(m_lib);
@@ -161,13 +172,24 @@ private:
         }
         emit frame(QImage(), QRect()); updateTick(); render();
     }
-    void updateTick() { if (!m_tick) return; if (m_playing && m_track) { if (!m_tick->isActive()) m_tick->start(); } else m_tick->stop(); }
+    bool imageTrack() const { auto it = m_tracks.constFind(m_number); return it != m_tracks.constEnd() && it->image; }
+    void updateTick() { if (!m_tick) return; if (m_playing && (m_track || imageTrack())) { if (!m_tick->isActive()) m_tick->start(); } else m_tick->stop(); }
+    qint64 now() const { return qint64(m_position) + (m_playing ? m_since.elapsed() : 0) - m_delay; }
     void render() {
+        if (imageTrack()) {                                                    // only when the set on screen changes
+            const Pgs &pgs = m_tracks[m_number].pgs;
+            const qint64 set = pgs.at(now());
+            if (set == m_shownSet) return;
+            m_shownSet = set;
+            QRect box; QImage out = set < 0 ? QImage() : pgs.render(set, box);
+            statFrames++;
+            emit frame(out, box);
+            return;
+        }
         if (!m_track) return;
         if (m_fontsChanged) { ass_set_fonts(m_renderer, "/usr/share/fonts/DroidSans.ttf", "sans-serif", ASS_FONTPROVIDER_NONE, nullptr, 0); m_fontsChanged = false; }
-        const qint64 now = qint64(m_position) + (m_playing ? m_since.elapsed() : 0) - m_delay;
         int changed = 0;
-        ASS_Image *img = ass_render_frame(m_renderer, m_track, now, &changed);
+        ASS_Image *img = ass_render_frame(m_renderer, m_track, now(), &changed);
         if (!changed) return;
         QRect box;
         for (ASS_Image *p = img; p; p = p->next) box |= QRect(p->dst_x, p->dst_y, p->w, p->h);
@@ -222,6 +244,7 @@ private:
     QNetworkAccessManager *m_net = nullptr;
     QHash<int, QString> m_external;
     int m_session = 0;
+    qint64 m_shownSet = -2;                 // the PGS set on screen (-1 none, -2 not drawn yet)
     QElapsedTimer m_since;
     double m_position = 0;
     int m_number = -1, m_delay = 0;
@@ -235,6 +258,9 @@ class SubtitleLayer : public QQuickItem {
     Q_PROPERTY(double position READ position WRITE setPosition)                 // the player's position, ms
     Q_PROPERTY(bool playing READ playing WRITE setPlaying)
     Q_PROPERTY(int delay READ delay WRITE setDelay NOTIFY delayChanged)
+    // px (of 1080) to raise lines in the lower part of the picture, clear of the player's controls; a
+    // line placed high (a sign, a PGS line moved for the credits) stays where it is
+    Q_PROPERTY(qreal lift READ lift WRITE setLift NOTIFY liftChanged)
 public:
     SubtitleLayer() {
         setFlag(ItemHasContents);
@@ -266,6 +292,8 @@ public:
     bool playing() const { return m_playing; }
     void setPlaying(bool on) { if (on == m_playing) return; m_playing = on; clock(); }
     int delay() const { return m_delay; }
+    qreal lift() const { return m_lift; }
+    void setLift(qreal px) { if (px == m_lift) return; m_lift = px; m_moved = true; update(); emit liftChanged(); }
     void setDelay(int ms) { if (ms == m_delay) return; m_delay = ms; clock(); emit delayChanged(); }
     Q_INVOKABLE void fetchAddon(const QString &type, const QString &videoId) { QMetaObject::invokeMethod(m_worker, "fetchAddon", Qt::QueuedConnection, Q_ARG(QString, type), Q_ARG(QString, videoId)); }
     // a new stream: forget its tracks and fonts
@@ -279,15 +307,20 @@ signals:
     void sourceChanged();
     void trackChanged();
     void delayChanged();
+    void liftChanged();
 protected:
     QSGNode *updatePaintNode(QSGNode *old, UpdatePaintNodeData *) override {
         auto node = static_cast<QSGSimpleTextureNode *>(old);
-        if (!m_dirty) return node;
-        m_dirty = false;
-        if (m_image.isNull()) { delete node; return nullptr; }
-        if (!node) { node = new QSGSimpleTextureNode; node->setOwnsTexture(true); }
-        node->setTexture(window()->createTextureFromImage(m_image));
-        node->setRect(QRectF(m_box.x() * width() / 1920, m_box.y() * height() / 1080, m_box.width() * width() / 1920, m_box.height() * height() / 1080));
+        if (!m_dirty && !(m_moved && node)) return node;
+        if (m_dirty) {
+            m_dirty = false;
+            if (m_image.isNull()) { delete node; return nullptr; }
+            if (!node) { node = new QSGSimpleTextureNode; node->setOwnsTexture(true); }
+            node->setTexture(window()->createTextureFromImage(m_image));
+        }
+        m_moved = false;
+        const qreal up = m_box.bottom() > 760 ? m_lift : 0;
+        node->setRect(QRectF(m_box.x() * width() / 1920, (m_box.y() - up) * height() / 1080, m_box.width() * width() / 1920, m_box.height() * height() / 1080));
         return node;
     }
 private:
@@ -297,7 +330,8 @@ private:
     QPointer<QObject> m_source;
     int m_track = -1, m_delay = 0;
     double m_position = 0;
-    bool m_playing = false, m_dirty = false;
+    bool m_playing = false, m_dirty = false, m_moved = false;
+    qreal m_lift = 0;
     QImage m_image;
     QRect m_box;
 };

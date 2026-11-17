@@ -35,7 +35,8 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
-    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) }
+    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
+        + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
@@ -61,7 +62,7 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
-        subs.reset(); trackList = []; addonSubs = []; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
+        subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
         if (/^tt\d+/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
@@ -79,14 +80,17 @@ FocusScope {
     }
     // the file's tracks, chapters and subtitles, read from the bytes the player loads (Seimio.Native Tee)
     property bool fileIsOther: false
+    property var otherSubs: []           // an MP4's text subtitles; its audio comes from LG's player
     property var pendingChapters: []
     property bool sheetReady: false
     Timer { running: media.playing && !page.sheetReady; interval: 3000; onTriggered: page.sheetReady = true }
-    Timer { id: chaptersIn; interval: 300; onTriggered: { page.chapters = page.pendingChapters; page.pendingChapters = [] } }
+    // chapters after the skip lookup (a file that keeps them at its end) count too: it runs again
+    Timer { id: chaptersIn; interval: 300; onTriggered: { page.chapters = page.chapters.concat(page.pendingChapters); page.pendingChapters = []; if (media.loaded) askSkip.restart() } }
     Tee {
         id: tee
         onTracksRead: {
             page.fileIsOther = !matroska;
+            if (!matroska) page.otherSubs = page.fileTracks(tracks);
             if (matroska) page.chooseTracks(page.fileTracks(tracks)); else if (media.audioTracks.length) page.chooseTracks(page.lgTracks());
         }
         // chapters arrive one by one; they're applied together, so the bar and the skip spans build once
@@ -100,12 +104,12 @@ FocusScope {
             var t = list[i];
             if (t.type === 2) out.push({ id: audio++, type: "audio", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced, playable: audioPlays(t.codec) });
             else if (t.type === 17) out.push({ id: t.number, type: "sub", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced,
-                                                 playable: /^S_TEXT\/(ASS|SSA|UTF8)/.test(t.codec) });
+                                                 playable: /^(S_TEXT\/(ASS|SSA|UTF8)|S_HDMV\/PGS|tx3g)/.test(t.codec) });
         }
         return out;
     }
     function lgTracks() {
-        var out = [];
+        var out = otherSubs.slice();
         for (var i = 0; i < media.audioTracks.length; i++) out.push({ id: i, type: "audio", lang: media.audioTracks[i].lang, title: "", codec: media.audioTracks[i].codec, playable: audioPlays(media.audioTracks[i].codec) });
         return out;
     }
@@ -114,23 +118,6 @@ FocusScope {
         if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
         if (media.loaded) media.mute(!!choice.audioOff);
         subs.track = subtitlesShown ? choice.sub : -1;
-    }
-    SubtitleLayer {
-        id: subs
-        anchors.fill: parent
-        source: tee
-        position: media.position
-        playing: media.playing && !media.paused && !media.buffering            // the clock stops while the video waits
-        // no default flag: one plays only when its language is the one chosen, and the file's own wins a tie
-        onAddonListed: {
-            var out = [];
-            for (var i = 0; i < subtitles.length; i++)
-                out.push({ id: subtitles[i].number, type: "sub", lang: subtitles[i].lang, title: subtitles[i].title, codec: "OpenSubtitles", playable: true });
-            page.addonSubs = out;
-            if (!page.trackList.length) return;                  // the file's tracks aren't in yet; chooseTracks adds these
-            page.trackList = page.trackList.concat(out); page.choice = tracks.choose(page.trackList, page.group);
-            if (!page.pickedSub) subs.track = page.subtitlesShown ? page.choice.sub : -1;   // a pick in the menu stays
-        }
     }
 
     // ---- the overlay -------------------------------------------------------------------------------------
@@ -225,7 +212,7 @@ FocusScope {
     // A choice here is the default for the group (anime, other) from now on; Off too.
     function codecName(c) {
         var n = { "A_FLAC": "FLAC", "A_AC3": "Dolby Digital", "A_EAC3": "Dolby Digital Plus", "A_DTS": "DTS", "A_TRUEHD": "TrueHD", "A_OPUS": "Opus", "A_VORBIS": "Vorbis",
-                  "S_TEXT/ASS": "ASS", "S_TEXT/SSA": "SSA", "S_TEXT/UTF8": "SRT", "S_HDMV/PGS": "PGS", "S_VOBSUB": "VobSub",
+                  "S_TEXT/ASS": "ASS", "S_TEXT/SSA": "SSA", "S_TEXT/UTF8": "SRT", "S_HDMV/PGS": "PGS", "S_VOBSUB": "VobSub", "tx3g": "Text",
                   "ac3": "Dolby Digital", "eac3": "Dolby Digital Plus", "aac": "AAC", "flac": "FLAC", "mp3": "MP3", "dts": "DTS", "truehd": "TrueHD", "opus": "Opus" }[c];
         return n || (/^A_AAC/.test(c) ? "AAC" : /^A_PCM/.test(c) ? "PCM" : c || "");
     }
@@ -332,6 +319,26 @@ FocusScope {
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         gradient: Gradient { GradientStop { position: 0.45; color: "#00000000" } GradientStop { position: 1; color: "#d9000000" } }
+    }
+    SubtitleLayer {
+        id: subs
+        anchors.fill: parent
+        source: tee
+        // above the shade, rising clear of the transport while it's open, and of the row below
+        lift: page.zone === "episodes" ? 470 : page.zone === "bar" || page.zone === "row" || page.zone === "audio" || page.zone === "subs" ? 200 : 0
+        Behavior on lift { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
+        position: media.position
+        playing: media.playing && !media.paused && !media.buffering            // the clock stops while the video waits
+        // no default flag: one plays only when its language is the one chosen, and the file's own wins a tie
+        onAddonListed: {
+            var out = [];
+            for (var i = 0; i < subtitles.length; i++)
+                out.push({ id: subtitles[i].number, type: "sub", lang: subtitles[i].lang, title: subtitles[i].title, codec: "OpenSubtitles", playable: true, external: true });
+            page.addonSubs = out;
+            if (!page.trackList.length) return;                  // the file's tracks aren't in yet; chooseTracks adds these
+            page.trackList = page.trackList.concat(out); page.choice = tracks.choose(page.trackList, page.group);
+            if (!page.pickedSub) subs.track = page.subtitlesShown ? page.choice.sub : -1;   // a pick in the menu stays
+        }
     }
     function clock(ms) {
         var s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;

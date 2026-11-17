@@ -50,14 +50,16 @@ python3 - .lab/reports $S $route <<'PY'
 import json, os, sys, collections
 d, s, route = sys.argv[1], sys.argv[2], sys.argv[3]
 budget20, budgetMax = (40, 150) if route in ("player", "play") else (8, 60)
-agg = collections.defaultdict(lambda: [0, 0, 0, 0])
+agg = collections.defaultdict(lambda: [0, 0, 0, 0, 0, 0])
 for f in sorted(os.listdir(d)):
     if 'design' not in f or os.path.getmtime(os.path.join(d, f)) < float(s): continue   # this run's reports only
     for k, v in json.load(open(os.path.join(d, f))).items():
-        if k.startswith('rt '): a = agg[k]; a[0] += v['frames']; a[1] += v['late20']; a[2] += v['late30']; a[3] = max(a[3], v['max'])
+        if k.startswith('rt '):
+            a = agg[k]; a[0] += v['frames']; a[1] += v['late20']; a[2] += v['late30']; a[3] = max(a[3], v['max'])
+            a[4] += v.get('stalls', 0); a[5] = max(a[5], v.get('stallMax', 0))
 tot = [0, 0, 0]
 for k, a in sorted(agg.items()):
-    print(f"  {k[3:]:18s} frames {a[0]:4d}  late>20ms {a[1]:3d}  late>30ms {a[2]:3d}  worst {a[3]:4.0f} ms")
+    print(f"  {k[3:]:18s} frames {a[0]:4d}  late>20ms {a[1]:3d}  late>30ms {a[2]:3d}  worst {a[3]:4.0f} ms  gui stalls {a[4]:2d} (worst {a[5]:3.0f} ms)")
     tot[0] += a[0]; tot[1] += a[1]; tot[2] += a[2]
 print(f"  {'total':18s} frames {tot[0]:4d}  late>20ms {tot[1]:3d}  late>30ms {tot[2]:3d}")
 busy = [(k[3:], a) for k, a in agg.items() if k != 'rt idle']
@@ -67,6 +69,11 @@ if tot[1] > budget20: over.append(f"{tot[1]} frames over 20 ms (budget {budget20
 late30 = sum(a[2] for _, a in busy)
 if late30 > 2: over.append(f"{late30} frames over 30 ms outside idle (budget 2)")
 over += [f"{k}: a {a[3]:.0f} ms frame (budget {budgetMax})" for k, a in busy if a[3] > budgetMax]
+# GUI stalls (FrameStats' heartbeat: the GUI thread busy over 50 ms, drawing or not), the whole tour:
+# measured 0 on every route on 2026-11-17 after the stream rows went asynchronous
+stalls = sum(a[4] for a in agg.values()); worst = max([a[5] for a in agg.values()] or [0])
+if stalls > 2: over.append(f"{stalls} GUI stalls over 50 ms (budget 2)")
+if worst > 100: over.append(f"a {worst:.0f} ms GUI stall (budget 100)")
 for o in over: print("  OVER BUDGET:", o)
 sys.exit(1 if over else 0)
 PY

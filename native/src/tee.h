@@ -4,7 +4,7 @@
 // the file's tracks (names, languages, default/forced/hearing-impaired/commentary flags), attached
 // fonts, chapters and the subtitle blocks. Ported from stremio-webos service/ass-tee.js and
 // mkv-subs.js, which proved the design on this TV: one download, subtitles from the bytes the player
-// pulls anyway. Matroska only; anything else passes through untouched.
+// pulls anyway. Matroska, and MP4's text subtitles; anything else passes through untouched.
 //
 // It runs on its own thread (network, parsing and socket writes never touch the GUI thread) and talks
 // to the rest through queued signals. Each connection holds at most kReadAhead + kChunk, so memory
@@ -214,6 +214,166 @@ private:
     qint64 m_chapStart = -1, m_chapEnd = -1;
 };
 
+// ---- MP4, streamed -------------------------------------------------------------------------------------
+// Text subtitle tracks (tx3g, ffmpeg's mov_text) of an MP4/MOV file. The player reads the top-level boxes
+// from the start: ftyp, then moov (the index) or mdat (the media) and, when moov comes last, it jumps
+// there. Each connection walks top-level boxes from wherever one starts; the one that reads moov finds the
+// text tracks and their sample tables (stts, stsc, stsz, stco/co64, as ISO 14496-12 lays them out), and
+// from then on every connection picks out the samples whose bytes it passes. A sample is a 16-bit text
+// length and the text (style boxes after it are ignored).
+class Mp4Subs {
+public:
+    struct Sample { qint64 offset; int size, track; qint64 start, duration; };      // ms
+    struct Shared {
+        int mp4 = -1;                                     // -1 unknown, 0 no, 1 yes
+        bool indexed = false;                             // moov read
+        QSet<qint64> boxes;                               // top-level box starts seen
+        QVector<Sample> samples;                          // by offset
+    };
+    struct Track { int number; QString lang, name; };
+    explicit Mp4Subs(std::shared_ptr<Shared> shared) : m_shared(shared) {}
+    std::function<void(const QVector<Track> &)> onTracks;
+    std::function<void(int, qint64, qint64, const QByteArray &)> onBlock;         // track, start, duration, UTF-8 text
+    void pushAt(qint64 offset, const QByteArray &bytes) {
+        Shared &sh = *m_shared;
+        if (sh.mp4 == 0) return;
+        if (sh.mp4 == -1) {
+            if (offset != 0) return;
+            if (bytes.size() < 8) { sh.mp4 = 0; return; }
+            sh.mp4 = bytes.mid(4, 4) == "ftyp" ? 1 : 0;
+            if (!sh.mp4) return;
+            sh.boxes.insert(0);
+        }
+        if (offset != m_end) { m_buf.clear(); m_next = sh.boxes.contains(offset) ? offset : -1; m_bufAt = offset; }
+        m_end = offset + bytes.size();
+        samples(offset, bytes);
+        if (m_next < 0) return;
+        // the top-level walk. m_buf holds the bytes from m_bufAt (the next box) on; a box's body is
+        // skipped, except moov, which is read whole
+        if (m_buf.isEmpty()) { if (m_bufAt >= m_end) return; m_buf = bytes.mid(int(m_bufAt - offset)); }
+        else m_buf += bytes;
+        while (m_next >= 0) {
+            const qint64 local = m_next - m_bufAt;
+            if (local + 8 > m_buf.size()) break;
+            qint64 size = be32(local); int head = 8;
+            if (size == 1) { if (local + 16 > m_buf.size()) break; size = qint64(be64(local + 8)); head = 16; }
+            if (size < head) { m_next = -1; break; }                                // 0: to the end of the file
+            if (m_buf.mid(int(local) + 4, 4) == "moov" && !sh.indexed) {
+                if (size > kMaxMoov) { sh.indexed = true; if (onTracks) onTracks({}); m_next = -1; break; }
+                if (local + size > m_buf.size()) break;                             // wait for all of it
+                moov(m_buf.mid(int(local + head), int(size - head)));
+            }
+            m_next += size; sh.boxes.insert(m_next);
+        }
+        if (m_next < 0) { m_buf.clear(); return; }
+        const qint64 drop = m_next - m_bufAt;
+        if (drop >= m_buf.size()) m_buf.clear(); else if (drop > 0) m_buf.remove(0, int(drop));
+        m_bufAt = m_next;
+    }
+private:
+    static constexpr qint64 kMaxMoov = 32 << 20;
+    quint32 be32(qint64 at) const { return be32(m_buf, at); }
+    quint64 be64(qint64 at) const { return (quint64(be32(at)) << 32) | be32(at + 4); }
+    static quint32 be32(const QByteArray &b, qint64 at) {
+        auto p = reinterpret_cast<const uchar *>(b.constData()) + at; return (quint32(p[0]) << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+    }
+    // the boxes inside `b` from `from`: type -> payload, for each
+    template <typename F> static void boxes(const QByteArray &b, int from, F each) {
+        for (qint64 at = from; at + 8 <= b.size();) {
+            qint64 size = be32(b, at); int head = 8;
+            if (size == 1 && at + 16 <= b.size()) { size = qint64((quint64(be32(b, at + 8)) << 32) | be32(b, at + 12)); head = 16; }
+            if (size == 0) size = b.size() - at;
+            if (size < head || at + size > b.size()) return;
+            each(b.mid(int(at) + 4, 4), b.mid(int(at + head), int(size - head)));
+            at += size;
+        }
+    }
+    void moov(const QByteArray &moov) {
+        Shared &sh = *m_shared;
+        QVector<Track> tracks;
+        boxes(moov, 0, [&](const QByteArray &type, const QByteArray &trak) {
+            if (type != "trak") return;
+            int id = 0, scale = 0; QString lang, name, handler, format;
+            QByteArray stts, stsc, stsz, stco; bool wide = false;
+            std::function<void(const QByteArray &)> walk = [&](const QByteArray &box) {
+                boxes(box, 0, [&](const QByteArray &t, const QByteArray &d) {
+                    if (t == "mdia" || t == "minf" || t == "stbl") walk(d);
+                    else if (t == "tkhd" && d.size() >= 24) id = int(be32(d, d[0] == 1 ? 20 : 12));
+                    else if (t == "mdhd" && d.size() >= 24) {
+                        const int v1 = d[0] == 1; scale = int(be32(d, v1 ? 20 : 12));
+                        const int packed = (uchar(d[v1 ? 32 : 20]) << 8) | uchar(d[v1 ? 33 : 21]);
+                        for (int k = 2; k >= 0; k--) lang += QChar(((packed >> (5 * k)) & 31) + 0x60);
+                    } else if (t == "hdlr" && d.size() >= 24) {
+                        handler = QString::fromLatin1(d.mid(8, 4)); name = QString::fromUtf8(d.mid(24)).remove(QChar(0)).trimmed();
+                    } else if (t == "stsd" && d.size() >= 16) format = QString::fromLatin1(d.mid(12, 4));
+                    else if (t == "stts") stts = d; else if (t == "stsc") stsc = d; else if (t == "stsz") stsz = d;
+                    else if (t == "stco") stco = d; else if (t == "co64") { stco = d; wide = true; }
+                });
+            };
+            walk(trak);
+            if (format != "tx3g" || !scale || stts.size() < 8 || stsc.size() < 8 || stsz.size() < 12 || stco.size() < 8) return;
+            // a handler's name is often just the muxer's ("SubtitleHandler", "Core Media Text")
+            if (name.contains(QRegularExpression("handler|core media|^text$", QRegularExpression::CaseInsensitiveOption))) name.clear();
+            tracks.append({ id, lang == "und" ? QString() : lang, name });
+            // sizes, then chunks (stsc runs of samples per chunk), then times (stts runs of durations)
+            const int count = int(be32(stsz, 8)), fixed = int(be32(stsz, 4));
+            const int chunks = int(be32(stco, 4)), runs = int(be32(stsc, 4));
+            if (count <= 0 || count > 200000 || (!fixed && stsz.size() < 12 + 4 * count)) return;
+            QVector<Sample> out; out.reserve(count);
+            int sample = 0;
+            for (int r = 0; r < runs && 8 + 12 * r + 12 <= stsc.size(); r++) {
+                const int first = int(be32(stsc, 8 + 12 * r)), per = int(be32(stsc, 12 + 12 * r));
+                const int last = r + 1 < runs ? int(be32(stsc, 8 + 12 * (r + 1))) - 1 : chunks;
+                for (int c = first; c <= last && c <= chunks; c++) {
+                    const int at = 8 + (wide ? 8 : 4) * (c - 1);
+                    if (at + (wide ? 8 : 4) > stco.size()) break;
+                    qint64 offset = wide ? qint64((quint64(be32(stco, at)) << 32) | be32(stco, at + 4)) : be32(stco, at);
+                    for (int k = 0; k < per && sample < count; k++, sample++) {
+                        const int size = fixed ? fixed : int(be32(stsz, 12 + 4 * sample));
+                        out.append({ offset, size, id, 0, 0 });
+                        offset += size;
+                    }
+                }
+            }
+            qint64 t = 0; int i = 0;
+            for (int r = 0; r < int(be32(stts, 4)) && 8 + 8 * r + 8 <= stts.size(); r++) {
+                const int n = int(be32(stts, 8 + 8 * r)); const qint64 d = be32(stts, 12 + 8 * r);
+                for (int k = 0; k < n && i < out.size(); k++, i++) { out[i].start = t * 1000 / scale; out[i].duration = d * 1000 / scale; t += d; }
+            }
+            sh.samples += out;
+        });
+        std::sort(sh.samples.begin(), sh.samples.end(), [](const Sample &a, const Sample &b) { return a.offset < b.offset; });
+        sh.indexed = true;
+        if (onTracks) onTracks(tracks);
+    }
+    // the samples inside [offset, offset + bytes), and one cut by the end, finished by the next piece
+    void samples(qint64 offset, const QByteArray &bytes) {
+        const QVector<Sample> &all = m_shared->samples;
+        if (all.isEmpty()) return;
+        if (m_partial.size() && offset == m_partialEnd) {
+            m_partial += bytes.left(int(m_partialWant - m_partial.size()));
+            if (m_partial.size() == m_partialWant) emitSample(m_partialSample, m_partial);
+            if (m_partial.size() >= m_partialWant) m_partial.clear();
+        }
+        auto it = std::lower_bound(all.begin(), all.end(), offset, [](const Sample &s, qint64 o) { return s.offset < o; });
+        const qint64 end = offset + bytes.size();
+        for (; it != all.end() && it->offset < end; ++it) {
+            const int local = int(it->offset - offset);
+            if (it->offset + it->size <= end) emitSample(*it, bytes.mid(local, it->size));
+            else { m_partialSample = *it; m_partial = bytes.mid(local); m_partialWant = it->size; m_partialEnd = end; }
+        }
+    }
+    void emitSample(const Sample &s, const QByteArray &data) {
+        if (data.size() < 2 || !onBlock) return;
+        const int len = (uchar(data[0]) << 8) | uchar(data[1]);
+        if (len > 0 && len <= data.size() - 2) onBlock(s.track, s.start, s.duration, data.mid(2, len));
+    }
+    std::shared_ptr<Shared> m_shared;
+    QByteArray m_buf, m_partial;
+    qint64 m_bufAt = 0, m_next = -1, m_end = -1, m_partialWant = 0, m_partialEnd = 0;
+    Sample m_partialSample {};
+};
+
 // ---- the server ----------------------------------------------------------------------------------------
 // One stream at a time (`open` replaces the last). Each player connection fetches its range upstream
 // piece by piece (see serve()).
@@ -227,7 +387,8 @@ public:
 public slots:
     void start() { m_server.listen(QHostAddress::LocalHost, 0); emit listening(m_server.serverPort()); }
     void open(int session, const QString &url) {
-        m_session = session; m_url = url; m_shared = std::make_shared<MkvSubs::Shared>(); m_tracks.clear(); m_sent = false; m_once.clear();
+        m_session = session; m_url = url; m_shared = std::make_shared<MkvSubs::Shared>(); m_mp4 = std::make_shared<Mp4Subs::Shared>();
+        m_tracks.clear(); m_sent = false; m_once.clear();
     }
 signals:
     void listening(int port);
@@ -246,6 +407,7 @@ private:
         QTcpSocket *socket = nullptr;
         QNetworkReply *reply = nullptr;
         std::shared_ptr<MkvSubs> parser;
+        std::shared_ptr<Mp4Subs> mp4;
         qint64 from = 0, last = -1, next = 0, total = -1;   // last: the last byte to send (-1: to the end)
         int session = 0;
         QString url;                                        // the stream as it was when the player asked
@@ -280,7 +442,8 @@ private:
             c->head = request->startsWith("HEAD");
             c->session = m_session; c->url = m_url;
             c->parser = std::make_shared<MkvSubs>(m_shared);
-            wire(*c->parser, c->session);
+            c->mp4 = std::make_shared<Mp4Subs>(m_mp4);
+            wire(*c->parser, *c->mp4, c->session);
             fetch(c);
         });
     }
@@ -330,9 +493,10 @@ private:
             if (!c->headerSent || c->head) return;
             const QByteArray chunk = r->readAll();
             c->socket->write(chunk);
-            if (c->session == m_session) c->parser->pushAt(c->next, chunk);
+            if (c->session == m_session) { c->parser->pushAt(c->next, chunk); c->mp4->pushAt(c->next, chunk); }
             c->next += chunk.size();
-            if (c->session == m_session && !m_sent && m_shared->matroska == 0) { m_sent = true; emit tracks(c->session, {}, false); }
+            // neither Matroska nor MP4: no tracks of ours (an MP4 sends its own once moov is read)
+            if (c->session == m_session && !m_sent && m_shared->matroska == 0 && m_mp4->mp4 == 0) { m_sent = true; emit tracks(c->session, {}, false); }
         });
         connect(r, &QNetworkReply::finished, this, [this, c, r] {
             if (c->reply == r) c->reply = nullptr;
@@ -345,7 +509,16 @@ private:
     // every connection that reads the file's start parses its header again: each track, font and
     // chapter goes out once per stream
     bool first(const QString &key) { if (m_once.contains(key)) return false; m_once.insert(key); return true; }
-    void wire(MkvSubs &p, int session) {
+    void wire(MkvSubs &p, Mp4Subs &m, int session) {
+        m.onTracks = [this, session](const QVector<Mp4Subs::Track> &list) {
+            QVariantList out;
+            for (const Mp4Subs::Track &t : list) {
+                out << QVariantMap { { "number", t.number }, { "type", 0x11 }, { "codec", "tx3g" }, { "lang", t.lang }, { "title", t.name }, { "default", false } };
+                emit subtitleHeader(session, t.number, "tx3g", QByteArray());
+            }
+            if (!m_sent) { m_sent = true; emit tracks(session, out, false); }
+        };
+        m.onBlock = [this, session](int tn, qint64 s, qint64 d, const QByteArray &text) { emit subtitleBlock(session, tn, s, d, text); };
         p.onTrack = [this, session](const MkvSubs::Track &t) {
             if (!first("t" + QString::number(t.number))) return;
             m_tracks << QVariantMap { { "number", t.number }, { "type", t.type }, { "codec", t.codec }, { "lang", t.lang }, { "title", t.name },
@@ -361,6 +534,7 @@ private:
     QTcpServer m_server { this };
     QNetworkAccessManager m_net { this };
     std::shared_ptr<MkvSubs::Shared> m_shared = std::make_shared<MkvSubs::Shared>();
+    std::shared_ptr<Mp4Subs::Shared> m_mp4 = std::make_shared<Mp4Subs::Shared>();
     QVariantList m_tracks;
     QString m_url;
     int m_session = 0;

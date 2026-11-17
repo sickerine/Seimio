@@ -169,7 +169,9 @@ FocusScope {
         x: page.listX; y: 180; width: page.listWidth; height: Theme.screenHeight - y
         clip: true
         spacing: 14
-        model: page.streams
+        // rows exist only while the page is up, built once its streams are in: the player's AI pick fills
+        // the same model, and building rows behind the video cost a 50-60 ms stall as it started
+        model: page.active && !page.loading ? page.streams : null
         opacity: page.loading ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         // the focus rests in the upper rows and the list moves under it
@@ -192,6 +194,9 @@ FocusScope {
             // the static chips, made in C++ (inside a Repeater, `model` is its own, so read it here)
             readonly property var chips: model.chips || []
             width: page.listWidth; height: page.rowHeight
+            // the row's content is made a few rows a frame (Qt's incubator, inside its frame budget) and
+            // deals in as it's ready: made at once, a screenful cost 50-65 ms on the TV as the list came in
+            Loader { asynchronous: true; width: row.width; height: row.height; sourceComponent: Component {
             Reveal {
                 shown: true
                 delay: page.fresh ? Math.min(index, 7) * 45 : 0
@@ -238,6 +243,7 @@ FocusScope {
                     }
                 }
             }
+            } }
         }
     }
 

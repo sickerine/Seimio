@@ -4,6 +4,7 @@
 #include <QQuickWindow>
 #include <QKeyEvent>
 #include <QMutex>
+#include <QTimer>
 #include <QLoggingCategory>
 #include <time.h>
 #include <atomic>
@@ -74,10 +75,34 @@ private:
 
 // FrameStats: time between swapped frames, stamped on the render thread (a QML handler would stamp
 // them on the GUI thread, where its own work shows up as fake late frames), grouped by `phase`.
+// Frame gaps can't tell a long stall from a pause in drawing, so GUI stalls are measured apart: with
+// `heartbeat` on (the lab sets it during tours), a 16 ms timer on the GUI thread ticks whether or not
+// anything draws, and a tick more than 50 ms late is a stall of that length, however long.
 class FrameStats : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString phase READ phase WRITE setPhase)
+    Q_PROPERTY(bool heartbeat READ heartbeat WRITE setHeartbeat)
 public:
+    FrameStats() {
+        m_beat.setTimerType(Qt::PreciseTimer); m_beat.setInterval(16);
+        connect(&m_beat, &QTimer::timeout, this, [this] {
+            const double now = monoMs(), gap = now - m_lastBeat;
+            m_lastBeat = now;
+            if (gap <= 50) return;
+            QMutexLocker l(&m_mutex);
+            m_stalls[m_phase].append(gap);
+            labLog(QString("gui stall %1 ms").arg(gap, 0, 'f', 1));
+        });
+    }
+    bool heartbeat() const { return m_beat.isActive(); }
+    // the app's resident memory in MB (Linux /proc; 0 elsewhere)
+    Q_INVOKABLE int rssMb() const {
+        QFile f("/proc/self/statm");
+        if (!f.open(QIODevice::ReadOnly)) return 0;
+        const QList<QByteArray> v = f.readAll().split(' ');
+        return v.size() > 1 ? int(v[1].toLongLong() * 4096 / (1 << 20)) : 0;
+    }
+    void setHeartbeat(bool on) { if (on == m_beat.isActive()) return; m_lastBeat = monoMs(); if (on) m_beat.start(); else m_beat.stop(); }
     QString phase() const { QMutexLocker l(&m_mutex); return m_phase; }
     void setPhase(const QString &p) { QMutexLocker l(&m_mutex); m_phase = p; }
     Q_INVOKABLE void attach(QObject *window) {
@@ -108,18 +133,21 @@ public:
             m_lastTick = now;
         }, Qt::DirectConnection);
     }
-    // { phase: { frames, median, max, late20, late30, short12 } } since the last call
+    // { phase: { frames, median, max, late20, late30, short12, stalls, stallMax } } since the last call
     Q_INVOKABLE QVariantMap take() {
         QMutexLocker l(&m_mutex);
         QVariantMap out;
+        for (auto it = m_stalls.begin(); it != m_stalls.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
         for (auto it = m_gaps.begin(); it != m_gaps.end(); ++it) {
             QVector<double> g = it.value(); std::sort(g.begin(), g.end());
             int l20 = 0, l30 = 0, s12 = 0;
             for (double x : g) { l20 += x > 20; l30 += x > 30; s12 += x < 12; }
-            out[it.key()] = QVariantMap{ {"frames", g.size()}, {"median", g[g.size() / 2]}, {"max", g.last()},
-                                         {"late20", l20}, {"late30", l30}, {"short12", s12} };
+            const QVector<double> st = m_stalls.value(it.key());
+            out[it.key()] = QVariantMap{ {"frames", g.size()}, {"median", g.isEmpty() ? 0 : g[g.size() / 2]}, {"max", g.isEmpty() ? 0 : g.last()},
+                                         {"late20", l20}, {"late30", l30}, {"short12", s12},
+                                         {"stalls", st.size()}, {"stallMax", st.isEmpty() ? 0 : *std::max_element(st.begin(), st.end())} };
         }
-        m_gaps.clear();
+        m_gaps.clear(); m_stalls.clear();
         return out;
     }
 private:
@@ -127,7 +155,9 @@ private:
     QString m_phase = "idle";
     double m_last = 0, m_lastGap = 0;
     double m_lastTick = 0, m_lastTickGap = 0;
-    QMap<QString, QVector<double>> m_gaps;
+    QMap<QString, QVector<double>> m_gaps, m_stalls;
+    QTimer m_beat;
+    double m_lastBeat = 0;
 };
 
 

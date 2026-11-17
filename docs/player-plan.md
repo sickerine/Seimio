@@ -46,8 +46,13 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 
 - [x] 1 track engine (tracks.h, tools/tests/tst_tracks.qml)
 - [x] 2 tee (tee.h: server and Matroska parser; subtitle_layer.h: libass fed by the tee). Verified on
-  the TV with [Salieri] Demon Slayer S3E9: 7 subtitle tracks, 35 fonts, chapters, ASS drawn. Not yet:
-  hiding Attachments from the player (mkv-cut), PGS, MP4 subtitle tracks.
+  the TV with [Salieri] Demon Slayer S3E9: 7 subtitle tracks, 35 fonts, chapters, ASS drawn.
+- [x] PGS (pgs.h, ffmpeg's pgssubdec): checked against a UHD remux's English track on the Mac and on
+  the TV (YTS 2160p BluRay, 18 tracks). Only a window around the reading position is kept: about
+  130 MB for the whole app with 18 tracks, steady over minutes and seeks.
+- [x] MP4 text subtitles (tx3g, `Mp4Subs` in tee.h): moov anywhere (an Apple WEB-DL keeps it at the
+  end, behind a 3.8 MB free box). Verified on the TV with Dexter S2E3 MP4-BTM.
+- Not yet: VobSub, hiding Attachments from the player (mkv-cut).
 - [x] External subtitles: Stremio's OpenSubtitles addon (`opensubtitles-v3.strem.io`), up to three per
   language, listed after the file's own and downloaded only when chosen. No default flag, so one plays
   only when its language is the chosen one, and the file's own wins a tie. OpenSubtitles' four codes
@@ -56,4 +61,6 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 - [x] 3 UI (overlay, menus, sheet, episode row, skip from chapters and from AniSkip, IntroDB,
   TheIntroDB). Verified on the TV: a stream switch resumes where it was, an episode from the row plays,
   an addon subtitle downloads and draws, delay steps 0.1 s and comes back with the file, audio Off sticks.
-- [ ] 4 performance
+- [x] 4 performance: every tour within budget, and GUI stalls measured apart (a heartbeat). Entering
+  the player and the streams page stalled 50-65 ms building stream rows; rows are now made
+  asynchronously, and neither stalls.

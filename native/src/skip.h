@@ -18,7 +18,7 @@ public:
     // `videoId` is "tt…:season:episode" or "kitsu:N:episode"; `chapters` [{ start, end, title }] in ms
     Q_INVOKABLE void resolve(const QString &videoId, double durationMs, const QVariantList &chapters) {
         const int ticket = ++m_ticket;
-        const QString key = videoId + "|" + QString::number(qRound(durationMs / 1000));
+        const QString key = videoId + "|" + QString::number(qRound(durationMs / 1000)) + "|" + QString::number(chapters.size());
         if (m_cache.contains(key)) { emit resolved(m_cache.value(key)); return; }
         auto state = std::make_shared<State>();
         state->duration = durationMs; state->key = key; state->ticket = ticket;

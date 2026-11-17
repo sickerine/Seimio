@@ -76,8 +76,10 @@ WebOSWindow {
     }
     function openStreams(episode) {
         commit(); playMenu = false;
-        playTarget = target(episode); pageLayer = layer === "menu" ? "home" : layer; layer = "streams";
-        streamPage.open(displayItem, playTarget);
+        // the fetch starts before the page is up, so its list waits for the new streams instead of
+        // building the last ones first
+        playTarget = target(episode); pageLayer = layer === "menu" ? "home" : layer;
+        streamPage.open(displayItem, playTarget); layer = "streams";
     }
     Connections {
         target: streams

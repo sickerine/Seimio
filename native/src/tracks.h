@@ -107,7 +107,8 @@ public:
     void setDataDir(const QString &d) { m_dir = d; m_store.setDir(d); emit changed(); }
 
     // Chooses the tracks to play. `tracks` are { id, type: "audio" | "sub", lang, title, default, forced,
-    // playable } in container order. Returns { audio: id or -1, sub: id or -1, audioOff, subsOff }.
+    // playable, external } in container order (`external`: loaded for the file, as the OpenSubtitles
+    // addon's are). Returns { audio: id or -1, sub: id or -1, audioOff, subsOff }.
     Q_INVOKABLE QVariantMap choose(const QVariantList &tracks, const QString &group) {
         const QJsonObject pref = m_store.data().value("prefs").toObject().value(group).toObject();
         const QString audioPref = pref.value("audio").toString(), subPref = pref.value("sub").toString();
@@ -119,7 +120,8 @@ public:
             all.append({ m.value("id").toInt(), m.value("type").toString() == "sub",
                          lang::of(m.value("lang").toString(), title),
                          m.value("default").toBool(), m.value("forced").toBool(), m.value("playable", true).toBool(),
-                         title.contains(QRegularExpression("sign", QRegularExpression::CaseInsensitiveOption)), sign.match(title).hasMatch() });
+                         title.contains(QRegularExpression("sign", QRegularExpression::CaseInsensitiveOption)), sign.match(title).hasMatch(),
+                         m.value("external").toBool() });
         }
         const QStringList alang = audioPref.isEmpty() || audioPref == "off" ? QStringList() : QStringList { audioPref };
         const T *audio = pick(all, false, alang, QString());
@@ -158,10 +160,15 @@ signals:
     void changed();
 private:
     // signs: the title names signs (sub-select's blacklist); signsOrSongs: signs or songs (its whitelist)
-    struct T { int id; bool sub; QString lang; bool def, forced, playable, signs, signsOrSongs; bool forcedSelect = false; };
-    // mpv's compare_track for tracks of one file: is a preferred over b?
+    // external: loaded for the file (mpv's auto_loaded)
+    struct T { int id; bool sub; QString lang; bool def, forced, playable, signs, signsOrSongs, external; bool forcedSelect = false; };
+    // mpv's compare_track for tracks of one file: is a preferred over b? mpv ranks auto-loaded tracks
+    // after the file's own before it looks at languages; here a track in the chosen language comes first
+    // (choose() only sees tracks that qualify), then the file's own, then how closely the tag matches
     static bool better(const T &a, const T &b, const QStringList &langs) {
         const int la = lang::match(langs, a.lang), lb = lang::match(langs, b.lang);
+        if ((la > 0) != (lb > 0)) return la > 0;
+        if (a.external != b.external) return !a.external;
         if (la != lb) return la > lb;
         if (a.forcedSelect != b.forcedSelect) return a.forcedSelect;
         if (a.def != b.def) return a.def;
