@@ -1,0 +1,57 @@
+// Track choice follows mpv: languages match across ISO 639-1/639-2 and titles, an active choice becomes
+// the group's default, and a fallback is never saved. The tracks are a real Blu-ray release's
+// ([Salieri] Demon Slayer S3, as ffprobe lists them). Qt runs the tests in name order, so each keeps to
+// its own group.
+import QtQuick 2.12
+import QtTest 1.2
+import Seimio.Data 1.0
+
+TestCase {
+    name: "Tracks"
+    Tracks { id: tracks; dataDir: "/tmp/seimio-tracks-test-" + Date.now() }
+    readonly property var salieri: [
+        { id: 0, type: "audio", lang: "eng", title: "ENG", default: true },
+        { id: 1, type: "audio", lang: "jpn", title: "JPN" },
+        { id: 0, type: "sub", lang: "eng", title: "Signs & Songs 01", default: true, forced: true },
+        { id: 1, type: "sub", lang: "eng", title: "Dialogue 01" },
+        { id: 2, type: "sub", lang: "eng", title: "Signs 02", playable: false },
+        { id: 3, type: "sub", lang: "eng", title: "Dialogue 02", playable: false },
+        { id: 4, type: "sub", lang: "eng", title: "S&S", forced: true },
+        { id: 5, type: "sub", lang: "eng", title: "Dialog - ENG", default: true },
+        { id: 6, type: "sub", lang: "eng", title: "[Tenrai-Sensei] No Honorifics" }
+    ]
+    function test_noChoiceKeepsTheFilesDefaults() {
+        var c = tracks.choose(salieri, "fresh");
+        compare(c.audio, 0);
+        compare(c.sub, 0, "English audio: the forced signs and songs, as for a dub");
+        tracks.prefer("japanese", "audio", "jpn", "");
+        compare(tracks.choose(salieri, "japanese").sub, 5, "Japanese audio: the default full subtitles, not the forced ones");
+    }
+    function test_japaneseAudioCarriesOverHoweverItsTagged() {
+        tracks.prefer("anime", "audio", "jpn", "JPN");
+        compare(tracks.choose(salieri, "anime").audio, 1);
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "en" }, { id: 1, type: "audio", lang: "ja" }], "anime").audio, 1, "ja is jpn");
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "und", title: "English" }, { id: 1, type: "audio", lang: "", title: "Japanese (Original)" }], "anime").audio, 1, "from the title");
+        compare(tracks.choose(salieri, "other").audio, 0, "other titles keep their own default");
+    }
+    function test_aFallbackIsNotSaved() {
+        tracks.prefer("fallback", "audio", "jpn", "");
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "eng", default: true }], "fallback").audio, 0, "no Japanese: the file's default plays");
+        compare(tracks.preferences("fallback").audio, "jpn", "and Japanese stays the choice");
+    }
+    function test_subtitlesOffAndOn() {
+        tracks.prefer("other", "sub", "off", "");
+        var c = tracks.choose(salieri, "other");
+        compare(c.sub, -1); verify(c.subsOff);
+        tracks.prefer("other", "sub", "en", "");
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "jpn" }, { id: 0, type: "sub", lang: "fre" }, { id: 1, type: "sub", lang: "eng" }], "other").sub, 1);
+    }
+    function test_unplayableTracksAreNeverChosen() {
+        tracks.prefer("other", "audio", "eng", "");
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "eng", playable: false }, { id: 1, type: "audio", lang: "eng" }], "other").audio, 1);
+    }
+    function test_delayIsPerFile() {
+        tracks.setDelay("a.mkv", 300);
+        compare(tracks.delay("a.mkv"), 300); compare(tracks.delay("b.mkv"), 0);
+    }
+}

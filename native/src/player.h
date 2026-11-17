@@ -105,7 +105,7 @@ public:
         const QJsonObject v = e.begin().value().toObject();
         if (kind == "currentTime") { m_position = v.value("currentTime").toDouble(); emit positionChanged(); return; }
         if (kind == "bufferRange") return;
-        m_seen[kind] = json.left(600);
+        m_seen[kind] = kind == "sourceInfo" ? json : json.left(600);
         if (kind == "sourceInfo") {
             const QJsonObject program = v.value("programInfo").toArray().first().toObject();
             m_duration = program.value("duration").toDouble();

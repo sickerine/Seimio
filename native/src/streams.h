@@ -22,12 +22,9 @@
 #include <QThread>
 #include <QUrlQuery>
 #include <QTimer>
-#include <QStandardPaths>
+#include "store.h"
 #include <QSslSocket>
 #include <QSslConfiguration>
-#include <QFile>
-#include <QDir>
-#include <QFileInfo>
 #include <QAbstractListModel>
 #include <memory>
 
@@ -414,17 +411,10 @@ private:
     void pick(int i, int ticket) { m_chosen = m_all[i].fields; resolve(m_all[i], ticket); }
 
     // the AI picks so far, by video id: { videoId: the stream's addon url }
-    QString picksPath() const { return (m_dataDir.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) : m_dataDir) + "/ai-picks.json"; }
-    QJsonObject &aiPicks() {
-        if (!m_picksRead) { QFile f(picksPath()); if (f.open(QIODevice::ReadOnly)) m_picks = QJsonDocument::fromJson(f.readAll()).object(); m_picksRead = true; }
-        return m_picks;
-    }
+    QJsonObject &aiPicks() { m_picks.setDir(m_dataDir); return m_picks.data(); }
     void remember(int i) {
         aiPicks()[m_videoId] = m_all[i].url;
-        QDir().mkpath(QFileInfo(picksPath()).path());
-        QFile f(picksPath());
-        m_picksStatus = f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(m_picks).toJson(QJsonDocument::Compact)) > 0
-            ? "saved " + picksPath() : "can't save to " + picksPath() + ": " + f.errorString();
+        m_picksStatus = m_picks.save();
         for (int k = 0; k < m_all.size(); k++) m_all[k].fields["aiPick"] = k == i;
         if (!m_rows.isEmpty()) emit dataChanged(index(0), index(m_rows.size() - 1));
     }
@@ -466,9 +456,8 @@ private:
 
     QNetworkAccessManager m_net;
     QString m_addon, m_torbox, m_openrouter, m_decider = "typesafe/jev-1.14", m_title, m_failure, m_stage, m_videoId;
-    QJsonObject m_picks;
+    JsonStore m_picks { "ai-picks.json" };
     QString m_dataDir, m_picksStatus;
-    bool m_picksRead = false;
     QVector<Item> m_all;
     QVector<int> m_rows;
     QVariantMap m_mix, m_chosen;
