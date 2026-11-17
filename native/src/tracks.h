@@ -10,6 +10,11 @@
 //   language), subs-fallback-forced=yes (forced subtitles in the audio's language play), and
 //   subs-with-matching-audio=yes (preferred subtitles play even when the audio is in that language).
 //   Tracks the TV can't decode are never chosen on their own.
+// - Subtitles named for signs follow mpv-sub-select's default rules (CogentRedTester/mpv-sub-select,
+//   sub-select.json): with audio in another language, tracks whose title contains "sign" are passed
+//   over for dialogue (its blacklist), and come back only if nothing else fits; with the audio in the
+//   subtitles' language (a dub), they count as forced, as its whitelist of "sign" and "song" does.
+//   Files often leave a "Signs & Songs" track unflagged, or flag it default.
 // Preferences: for each group ("anime", "other"), the audio and subtitle language, or "off". Only an
 // active choice in the menus (prefer()) sets one; whatever choose() falls back to is never saved.
 // Subtitle delay is kept per file.
@@ -109,9 +114,12 @@ public:
         QVector<T> all;
         for (const QVariant &v : tracks) {
             const QVariantMap m = v.toMap();
+            static const QRegularExpression sign("sign|song", QRegularExpression::CaseInsensitiveOption);
+            const QString title = m.value("title").toString();
             all.append({ m.value("id").toInt(), m.value("type").toString() == "sub",
-                         lang::of(m.value("lang").toString(), m.value("title").toString()),
-                         m.value("default").toBool(), m.value("forced").toBool(), m.value("playable", true).toBool() });
+                         lang::of(m.value("lang").toString(), title),
+                         m.value("default").toBool(), m.value("forced").toBool(), m.value("playable", true).toBool(),
+                         title.contains(QRegularExpression("sign", QRegularExpression::CaseInsensitiveOption)), sign.match(title).hasMatch() });
         }
         const QStringList alang = audioPref.isEmpty() || audioPref == "off" ? QStringList() : QStringList { audioPref };
         const T *audio = pick(all, false, alang, QString());
@@ -143,24 +151,31 @@ public:
 signals:
     void changed();
 private:
-    struct T { int id; bool sub; QString lang; bool def, forced, playable; bool forcedSelect = false; };
+    // signs: the title names signs (sub-select's blacklist); signsOrSongs: signs or songs (its whitelist)
+    struct T { int id; bool sub; QString lang; bool def, forced, playable, signs, signsOrSongs; bool forcedSelect = false; };
     // mpv's compare_track for tracks of one file: is a preferred over b?
     static bool better(const T &a, const T &b, const QStringList &langs) {
         const int la = lang::match(langs, a.lang), lb = lang::match(langs, b.lang);
         if (la != lb) return la > lb;
         if (a.forcedSelect != b.forcedSelect) return a.forcedSelect;
         if (a.def != b.def) return a.def;
-        if (a.sub && a.forced != b.forced) return !a.forced;
+        if (a.sub && (a.forced || a.signsOrSongs) != (b.forced || b.signsOrSongs)) return !(a.forced || a.signsOrSongs);
         return a.id <= b.id;
     }
-    // mpv's select_default_track, with mpv's default options
+    // mpv's select_default_track, with mpv's default options; for subtitles, a first pass that passes over
+    // signs tracks when the audio is in another language, then one that doesn't
     static const T *pick(QVector<T> &all, bool sub, const QStringList &langs, const QString &audioLang) {
+        const T *best = pickPass(all, sub, langs, audioLang, true);
+        return best || !sub ? best : pickPass(all, sub, langs, audioLang, false);
+    }
+    static const T *pickPass(QVector<T> &all, bool sub, const QStringList &langs, const QString &audioLang, bool strict) {
         const T *best = nullptr;
         for (T &t : all) {
             if (t.sub != sub || !t.playable) continue;
             if (sub) {
                 const bool audioMatches = lang::match({ audioLang }, t.lang) > 0;
-                const bool forced = t.forced && audioMatches;               // subs-fallback-forced=yes
+                if (strict && !audioMatches && t.signs) continue;          // sub-select: blacklist "sign"
+                const bool forced = (t.forced || t.signsOrSongs) && audioMatches;   // subs-fallback-forced=yes; sub-select's whitelist
                 const bool langMatch = lang::match(langs, t.lang) > 0;
                 const bool fallback = t.def;                                // subs-fallback=default
                 if (!forced && !langMatch && !fallback) continue;           // (subs-with-matching-audio=yes)

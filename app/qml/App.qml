@@ -292,6 +292,7 @@ WebOSWindow {
             episodeId: app.playTarget ? app.playTarget.id : ""
             onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
             // another stream of the same video, from where it is now
+            onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
             onSwitchStream: { app.playTarget.progress = player.duration ? player.position / player.duration * 100 : 0; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
             group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"

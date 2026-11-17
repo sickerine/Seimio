@@ -31,7 +31,7 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
-    function subtitleInfo() { return subs.info() + " tee " + tee.stats() }
+    function subtitleInfo() { return subs.info() + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0

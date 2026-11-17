@@ -46,6 +46,20 @@ TestCase {
         tracks.prefer("other", "sub", "en", "");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "jpn" }, { id: 0, type: "sub", lang: "fre" }, { id: 1, type: "sub", lang: "eng" }], "other").sub, 1);
     }
+    // a release that flags its signs track default and not forced, and leaves the dialogue unflagged
+    readonly property var badlyFlagged: [
+        { id: 0, type: "audio", lang: "jpn", default: true },
+        { id: 1, type: "audio", lang: "eng" },
+        { id: 0, type: "sub", lang: "eng", title: "Signs & Songs", default: true },
+        { id: 1, type: "sub", lang: "eng", title: "Full Subtitles" }
+    ]
+    function test_dialogueOverSignsWithForeignAudio() {
+        tracks.prefer("signs", "sub", "eng", "");
+        compare(tracks.choose(badlyFlagged, "signs").sub, 1, "Japanese audio: the dialogue, though signs is the default");
+        tracks.prefer("signs", "audio", "eng", "");
+        compare(tracks.choose(badlyFlagged, "signs").sub, 0, "English audio: the signs, as for a dub");
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "jpn" }, { id: 3, type: "sub", lang: "eng", title: "Signs" }], "signs").sub, 3, "signs only: better than nothing");
+    }
     function test_unplayableTracksAreNeverChosen() {
         tracks.prefer("other", "audio", "eng", "");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "eng", playable: false }, { id: 1, type: "audio", lang: "eng" }], "other").audio, 1);
