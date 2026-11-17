@@ -295,6 +295,7 @@ WebOSWindow {
             episodes: sameShow ? showPage.episodes : []
             episodeCards: sameShow ? showPage.episodeData : []
             episodeId: app.playTarget ? app.playTarget.id : ""
+            videoId: app.playTarget ? app.playTarget.id : ""
             onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
             // another stream of the same video, from where it is now
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too

@@ -24,13 +24,13 @@ docker run --rm -v ~/Library/Caches/webos-sdk:/sdk -v "$REPO":/repo -w /repo/nat
   T=/sdk/arm-webos-linux-gnueabi_sdk-buildroot; export PATH=$T/bin:$PATH
   S=$(arm-webos-linux-gnueabi-gcc -print-sysroot)
   Q=qt512/usr/include/arm-linux-gnueabihf/qt5
-  arm-webos-linux-gnueabi-g++ -std=c++17 -O2 -fPIC -shared -o out/libseimionative.so src/plugin.cpp $(ls out/moc/moc_*.cpp | grep -v -e moc_catalog -e moc_streams -e moc_tracks) \
+  arm-webos-linux-gnueabi-g++ -std=c++17 -O2 -fPIC -shared -o out/libseimionative.so src/plugin.cpp $(ls out/moc/moc_*.cpp | grep -v -e moc_catalog -e moc_streams -e moc_tracks -e moc_skip) \
     -Isrc -Iout/moc -I$Q -I$Q/QtCore -I$Q/QtGui -I$Q/QtQml -I$Q/QtQuick -I$Q/QtGui/5.12.8 -I$Q/QtGui/5.12.8/QtGui -I$Q/QtCore/5.12.8 -I$Q/QtCore/5.12.8/QtCore \
     -I/repo/third_party/libass/out/include -I$S/usr/include/glib-2.0 -I$S/usr/lib/glib-2.0/include -I$Q/QtNetwork \
     -DQT_NO_DEBUG -DQT_PLUGIN -DQT_QML_LIB -DQT_QUICK_LIB -DQT_GUI_LIB -DQT_NETWORK_LIB -DQT_CORE_LIB \
     -L/repo/tvlibs -l:libQt5Quick.so.5 -l:libQt5Qml.so.5 -l:libQt5Gui.so.5 -l:libQt5Network.so.5 -l:libQt5Core.so.5 -l:libumedia_api.so.1 -l:libwebos-platform-interface.so.1 -l:libluna-service2.so.3 -l:libglib-2.0.so.0 \
     -L/repo/third_party/libass/out/lib -lass -Wl,-rpath,\$ORIGIN -Wl,--allow-shlib-undefined
-  arm-webos-linux-gnueabi-g++ -std=c++17 -O2 -fPIC -shared -o out/libseimiodata.so src/data_plugin.cpp out/moc/moc_catalog.cpp out/moc/moc_streams.cpp out/moc/moc_tracks.cpp \
+  arm-webos-linux-gnueabi-g++ -std=c++17 -O2 -fPIC -shared -o out/libseimiodata.so src/data_plugin.cpp out/moc/moc_catalog.cpp out/moc/moc_streams.cpp out/moc/moc_tracks.cpp out/moc/moc_skip.cpp \
     -Isrc -Iout/moc -I$Q -I$Q/QtCore -I$Q/QtGui -I$Q/QtQml -I$Q/QtNetwork \
     -DQT_NO_DEBUG -DQT_PLUGIN -DQT_QML_LIB -DQT_NETWORK_LIB -DQT_CORE_LIB \
     -L/repo/tvlibs -l:libQt5Qml.so.5 -l:libQt5Network.so.5 -l:libQt5Core.so.5 -lpthread -Wl,--allow-shlib-undefined

@@ -48,5 +48,5 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 - [x] 2 tee (tee.h: server and Matroska parser; subtitle_layer.h: libass fed by the tee). Verified on
   the TV with [Salieri] Demon Slayer S3E9: 7 subtitle tracks, 35 fonts, chapters, ASS drawn. Not yet:
   hiding Attachments from the player (mkv-cut), PGS, external subtitles.
-- [ ] 3 UI
+- [x] 3 UI (overlay, menus, sheet, episode row, skip from chapters). Not yet: online skip times (AniSkip, IntroDB, TheIntroDB), MP4 subtitles, PGS, external subtitles.
 - [ ] 4 performance

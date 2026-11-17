@@ -9,6 +9,7 @@
 import QtQuick 2.12
 import Seimio.UI 1.0
 import Seimio.Native 1.0
+import Seimio.Data 1.0
 
 FocusScope {
     id: page
@@ -58,7 +59,7 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
-        subs.reset(); trackList = []; choice = ({}); chapters = []; pendingChapters = [];
+        subs.reset(); trackList = []; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
@@ -155,15 +156,20 @@ FocusScope {
     // the transport hides on its own after a while, unless paused or seeking
     Timer { id: hide; interval: 4000; onTriggered: if (page.zone === "bar" && !media.paused && page.seekTarget < 0) page.zone = "none"; else if (page.zone === "bar") restart() }
 
-    // intro and outro, from the file's chapters (named as stremio-webos skip-timestamps.js reads them)
+    // intro and outro: the file's chapters, the IntroDB, TheIntroDB and AniSkip, reconciled (SkipTimes),
+    // asked once the length is known and the chapters are in
+    property string videoId: ""
+    property var skipTimes: ({})
+    SkipTimes { id: skipLookup; onResolved: page.skipTimes = segments }
+    Timer {
+        id: askSkip; interval: 2500
+        onTriggered: if (media.duration > 0) skipLookup.resolve(page.videoId, media.duration, page.chapters)   // no id: chapters only
+    }
+    Connections { target: media; onLoadedChanged: if (media.loaded) askSkip.restart() }
     readonly property var segments: {
-        var out = [], c = chapters.slice().sort(function (a, b) { return a.start - b.start });
-        for (var i = 0; i < c.length; i++) {
-            var t = c[i].title.trim().toLowerCase(), end = c[i].end > 0 ? c[i].end : (i + 1 < c.length ? c[i + 1].start : media.duration);
-            var kind = /^(?:intro|ncop|op(?:ening)?)(?:\s*[-_:]?\s*\d+)?(?:\s+(?:theme|credits|song))?$/.test(t) ? "intro"
-                     : /^(?:outro|credits|nced|ed|ending)(?:\s*[-_:]?\s*\d+)?(?:\s+(?:theme|credits|song))?$|^end credits$/.test(t) ? "outro" : "";
-            if (kind && end > c[i].start + 5000) out.push({ kind: kind, start: c[i].start, end: end });
-        }
+        var out = [];
+        if (skipTimes.intro) out.push({ kind: "intro", start: skipTimes.intro.from, end: skipTimes.intro.to });
+        if (skipTimes.outro) out.push({ kind: "outro", start: skipTimes.outro.from, end: skipTimes.outro.to });
         return out;
     }
     readonly property var segmentNow: {
