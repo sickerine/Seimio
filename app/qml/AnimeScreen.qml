@@ -284,6 +284,9 @@ FocusScope {
                     else r = wanted;
                 }
                 Connections { target: scrolling; onRunningChanged: if (!scrolling.running && slot.r !== slot.wanted) slot.r = slot.wanted }
+                // another press moved where the scroll ends and brought it on screen: it takes its row now
+                // (waiting for the scroll to end left it empty, then snapping in, while presses kept coming)
+                onShownAtRestChanged: if (shownAtRest && !take.running && r !== wanted) r = wanted
                 Timer { id: take; onTriggered: slot.r = slot.wanted }
                 readonly property bool schedule: !!(r && r.schedule)
                 // a slot fully off screen isn't drawn (Qt draws what's off screen)
