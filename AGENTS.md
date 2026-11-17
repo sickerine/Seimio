@@ -11,7 +11,7 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   and compares them with `tools/preview/baseline/`. A CHANGED state leaves the render and a brightened
   diff in `.lab/shots/`. Look at both: an intended change gets `tools/preview/shots.sh --approve <state>`,
   anything else gets fixed. A new control or state goes into the gallery or the state list too.
-- The TV check deploys and runs `tools/tour.sh home|calendar|show|menu` against the frame budget in
+- The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams` against the frame budget in
   `tour.sh`. A new screen or interaction gets a route there too. TV runs vary by about 2x, so judge a
   change by three runs, not one. An OVER BUDGET line means a regression; find it like this:
   1. `VARIANT='{"timing": true}' tools/tour.sh <route>`, then `tools/lab-timeline.py` lines up key

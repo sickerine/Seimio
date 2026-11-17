@@ -9,10 +9,10 @@ approve=0; [ "$1" = --approve ] && { approve=1; shift; }
 # finds an item in the window's tree by a test (screen ids aren't reachable from the preview)
 FIND_JS='function f(o, t) { if (o && t(o)) return o; for (var i = 0; o && i < o.children.length; i++) { var r = f(o.children[i], t); if (r) return r } return null }
 var home = f(win.canvas, function (o) { return o.continueWatching !== undefined && o.catalog !== undefined });'
-# every state renders on the same day, so the calendar and its baselines don't change with the date
-DAY_JS='win.today = "2026-11-16";'
+# every state renders on the same day, so the calendar and its baselines don't change with the date; the
+# app starts on that day, so nothing rebuilds when it's set (gallery.qml takes no properties)
+DAY='{"today": "2026-11-16"}'
 js() {
-  echo -n "$DAY_JS "
   case $1 in
     calendar) echo "$FIND_JS home.row = 1; var g = f(home, function (o) { return o.cellWidth !== undefined && o.today !== undefined });"\
                    ' g.showFocus = true; g.select("2026-11-17")' ;;
@@ -26,7 +26,7 @@ fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; [ "$s" = gallery ] && screen="$P/gallery.qml"
   rm -f "$OUT/$s.png" "$OUT/$s-diff.png"
-  (cd "$REPO/app" && perl -e 'alarm 60; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 >/dev/null 2>&1)
+  (cd "$REPO/app" && perl -e 'alarm 60; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 "$([ "$s" = gallery ] || echo "$DAY")" >/dev/null 2>&1)
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }
   base="$P/baseline/$s.png"
   if [ $approve = 1 ]; then

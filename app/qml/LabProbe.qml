@@ -2,7 +2,9 @@
 // thread) grouped by `phase`, key latency, and keys seen to the Mac's lab server. It reads switches
 // from the server at launch ({ "captureAt": [ms...], "autopop": true }) and can capture the TV's
 // screen through LG's capture service. { "openMenu": true } opens quick actions 2 s after launch, for
-// testing the menu with the network remote, which can't long-press. { "timing": true } adds Qt's own
+// testing the menu with the network remote, which can't long-press; { "openStreams": ms } opens the stream
+// list for the title on screen that long after launch, for the same reason. { "noAi": true } keeps the AI
+// pick from being called (no key), so tours cost nothing. { "timing": true } adds Qt's own
 // per-frame render loop timing (GUI-thread sync vs render thread) to each report, along with stamped
 // key presses, late frames and GUI-thread stalls; a string instead of true sets other Qt log rules
 // (e.g. "qt.scenegraph.time.texture.debug=true"). { "bench": true } times card creation on the TV.
@@ -21,6 +23,7 @@ Item {
     property var stateOf: null
     signal autopop()
     signal openMenu()
+    signal openStreams()
 
     // name what is animating now; it falls back to "idle" 900 ms after the last change
     function act(p) { phase = p; phaseReset.restart() }
@@ -50,6 +53,7 @@ Item {
     }
     Timer { running: !!probe.variant.autopop; interval: 2500; repeat: true; onTriggered: probe.autopop() }
     Timer { running: !!probe.variant.openMenu; interval: 2000; onTriggered: probe.openMenu() }
+    Timer { running: !!probe.variant.openStreams; interval: probe.variant.openStreams || 1; onTriggered: probe.openStreams() }
 
     // { "bench": true }: times creating cards and swapping a strip's model on the TV, 4 s after launch
     property var benchOut: null

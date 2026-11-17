@@ -18,16 +18,22 @@ FocusScope {
     width: Theme.screenWidth; height: Theme.screenHeight
 
     readonly property var seasons: show ? show.seasons : []
-    // OK on Play or on an episode: { id, label } of the episode to play
+    // OK on Play or on an episode plays it (the AI pick); a long OK asks how, from a menu beside `rect`
     signal play(var episode)
-    function target(season, ep) { return ep ? { id: ep.id, label: (seasons.length > 1 ? "S" + season + " " : "") + "E" + ep.episode } : null }
+    signal playHeld(var episode, rect rect)
+    // { id, label, progress } of an episode, for playing it
+    function target(sh, season, ep) {
+        return { id: ep.id, label: (sh.seasons.length > 1 ? "S" + sh.seasons[season].season + " " : "") + "E" + ep.episode, progress: ep.progress || 0 };
+    }
+    function resumeTarget(sh) { var p = posIn(sh); return sh && sh.seasons && sh.seasons.length ? target(sh, p.s, sh.seasons[p.s].episodes[p.e]) : null }
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
     // the season the episode row shows and its card data, set together by showSeason(), so the row is
     // built once per change instead of once per binding that moves
     property int shownSeason: 0
     property var episodes: []
     property var episodeData: []
-    readonly property string today: new Date().toISOString().slice(0, 10)
+    property string today: new Date().toISOString().slice(0, 10)   // App passes its own, so previews can fix the day
+    onTodayChanged: if (show) showSeason(shownSeason, strip.currentIndex)   // what has aired changes at midnight
     function showSeason(s, e) {
         shownSeason = s;
         episodes = seasons.length ? seasons[s].episodes : [];
@@ -43,17 +49,17 @@ FocusScope {
     }
 
     // where you are in the show: the episode Stremio has as current, else the first unwatched
-    function currentPos() {
-        if (!show) return { s: 0, e: 0 };
+    function posIn(sh) {
+        var seasons = sh && sh.seasons ? sh.seasons : [];
         for (var s = 0; s < seasons.length; s++)
             for (var e = 0; e < seasons[s].episodes.length; e++)
-                if (seasons[s].episodes[e].id === show.current) return { s: s, e: e };
+                if (seasons[s].episodes[e].id === sh.current) return { s: s, e: e };
         for (s = 0; s < seasons.length; s++)
             for (e = 0; e < seasons[s].episodes.length; e++)
                 if (!seasons[s].episodes[e].watched) return { s: s, e: e };
         return { s: 0, e: 0 };
     }
-    readonly property var resumePos: currentPos()
+    readonly property var resumePos: posIn(show)
     // (bindings update in no set order when the show changes, so resumePos can still be the last show's)
     readonly property var resumeSeason: seasons[resumePos.s] || null
     readonly property var resumeEp: resumeSeason ? resumeSeason.episodes[resumePos.e] || null : null
@@ -126,7 +132,8 @@ FocusScope {
         ButtonRow {
             id: actions
             focus: page.zone === 0
-            onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.target(page.resumeSeason.season, page.resumeEp))
+            onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.resumeTarget(page.show))
+            onHeld: if (buttonIndex === 0 && page.resumeEp) page.playHeld(page.resumeTarget(page.show), buttonRect(0))
             model: [
                 { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 },
                 { label: "Add to library", icon: "plus", round: true },
@@ -162,7 +169,12 @@ FocusScope {
                 model: page.episodeData
                 cardWidth: 384; cardHeight: 216; spacing: 32
                 showTitles: false; nextLabels: false
-                onActivated: if (page.episodes[cardIndex]) page.play(page.target(page.seasons[page.shownSeason].season, page.episodes[cardIndex]))
+                onActivated: if (page.episodes[cardIndex]) page.play(page.target(page.show, page.shownSeason, page.episodes[cardIndex]))
+                onHeld: {
+                    if (!page.episodes[cardIndex]) return;
+                    var p = strip.mapToItem(null, strip.inset, 0);
+                    page.playHeld(page.target(page.show, page.shownSeason, page.episodes[cardIndex]), Qt.rect(p.x, p.y, strip.cardWidth, strip.cardHeight));
+                }
             }
             // the focused episode (or the resume episode while focus is above the row)
             Item {

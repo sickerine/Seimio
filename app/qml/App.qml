@@ -1,5 +1,6 @@
 // The app window. State lives here and nowhere else:
 //   layer        which screen has the remote: home | tabs | show | title | menu | streams | player
+//   playMenu     the Play options are open over the page (a long OK on Play or an episode)
 //   focusItem    the title the remote is on (from Home), changes instantly
 //   displayItem  the one title the backdrop, info and the title pages render; it changes only through
 //                commit(). Moving focus commits once it settles, so key presses stay light; opening
@@ -50,17 +51,52 @@ WebOSWindow {
         if (displayItem && catalog.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
-    // MOCK: the stream picker and player. A show's page passes the episode; the title page plays the movie,
-    // or the show's only episode
-    property string pageLayer: "title"          // the page the picker returns to
-    function openStreams(episode) {
-        if (!episode) {
-            var show = showData(displayItem.id), only = show && show.seasons && show.seasons.length ? show.seasons[0].episodes[0] : null;
-            episode = only ? { id: only.id, label: "E" + only.episode } : null;
-        }
-        pageLayer = layer; layer = "streams";
-        streamPage.open(displayItem, episode ? "series" : "movie", episode ? episode.id : displayItem.id, episode ? episode.label : "");
+    // Playing. Play (and OK on an episode) plays the AI pick: the player opens at once and says what it's
+    // doing while `streams` fetches, asks the decision model and resolves the link; if the pick fails, the
+    // stream list opens on what was fetched. A long OK offers both ways (Play AI Pick, Play from Stream).
+    // `episode` is { id, label, progress } from a show's page; without one it's the movie, or the show's
+    // next episode.
+    property var playTarget: null
+    property string pageLayer: "title"          // where the stream list goes back to
+    property string playerBack: "title"         // where the player goes back to
+    function target(episode) {
+        if (episode) return { type: "series", id: episode.id, label: episode.label, progress: episode.progress };
+        var t = showPage.resumeTarget(showData(displayItem.id));
+        return t ? { type: "series", id: t.id, label: catalog.episodeCount(displayItem.id) > 1 ? t.label : "", progress: t.progress }
+                 : { type: "movie", id: displayItem.id, label: "", progress: displayItem.progress || 0 };
     }
+    function playAi(episode) {
+        commit(); playMenu = false;
+        playTarget = target(episode); playerBack = layer === "menu" ? "home" : layer;
+        player.prepare(displayItem, playTarget.label); layer = "player";
+        streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""));
+    }
+    function openStreams(episode) {
+        commit(); playMenu = false;
+        playTarget = target(episode); pageLayer = layer === "menu" ? "home" : layer; layer = "streams";
+        streamPage.open(displayItem, playTarget);
+    }
+    Connections {
+        target: streams
+        onPlayable: {
+            if (app.layer === "streams") { app.playerBack = "streams"; player.prepare(app.displayItem, streamPage.label); app.layer = "player" }
+            if (app.layer !== "player") return;
+            // resume where it was left, unless it was nearly done
+            var p = app.playTarget ? app.playTarget.progress || 0 : 0;
+            player.start(url, stream, p > 0 && p < 95 ? p / 100 : 0);
+        }
+        onFailed: {
+            if (app.layer !== "player") return;
+            app.pageLayer = app.playerBack; app.layer = "streams";
+            // with nothing listed the list says why itself
+            streamPage.show(app.displayItem, app.playTarget.label, streams.total ? reason + ". Choose a stream to play." : "");
+        }
+    }
+    // the Play options (a long OK on Play or an episode), over the page that has them
+    property bool playMenu: false
+    property var menuEpisode: null
+    property rect menuAnchor: Qt.rect(0, 0, 0, 0)
+    function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; playMenu = true }
     readonly property bool watching: layer === "player" && player.playing
     // lab: { "playList": [{ "title", "url" }], "playSeconds": 20 } plays each in turn from 8 s after launch
     // and logs how each went (playLog, in the lab reports)
@@ -79,10 +115,10 @@ WebOSWindow {
                 app.playLog = log; player.stop();
             }
             if (++app.playIndex >= list.length) { stop(); app.layer = "home"; return }
-            player.start({ url: list[app.playIndex].url }, { name: list[app.playIndex].title }); app.layer = "player";
+            player.prepare({ name: list[app.playIndex].title }, ""); player.start(list[app.playIndex].url, null, 0); app.layer = "player";
         }
     }
-    function openMenu() { commit(); layer = "menu"; probe.captures() }
+    function openMenu() { commit(); playMenu = false; layer = "menu"; probe.captures() }
     onLayerChanged: { probe.act(layer); probe.captures() }
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
@@ -96,7 +132,13 @@ WebOSWindow {
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     WindowTools { id: tools }
-    Streams { id: streams; addon: "https://torrentio.strem.fun/torbox=TORBOX_KEY/" }
+    Streams {
+        id: streams
+        addon: "https://torrentio.strem.fun/torbox=TORBOX_KEY/"
+        torbox: "TORBOX_KEY"
+        // the lab's tours run without the AI pick (LabProbe "noAi")
+        openrouter: probe.variant.noAi ? "" : "OPENROUTER_KEY"
+    }
     LabProbe {
         id: probe; window: app
         stateOf: function () {
@@ -106,10 +148,12 @@ WebOSWindow {
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
                              visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
                      playLog: app.playLog,
+                     playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
+        onOpenStreams: app.openStreams(null)
     }
 
     FocusScope {
@@ -167,16 +211,19 @@ WebOSWindow {
             }
             ShowScreen {
                 id: showPage
-                focus: app.layer === "show"
-                onPlay: app.openStreams(episode)
+                today: app.today
+                focus: app.layer === "show" && !app.playMenu
+                onPlay: app.playAi(episode)
+                onPlayHeld: app.openPlayMenu(episode, rect)
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: probe.act("show " + ["actions", "seasons", "episodes"][zone])
             }
             TitleScreen {
                 id: titlePage
-                focus: app.layer === "title"
-                onPlay: app.openStreams()
+                focus: app.layer === "title" && !app.playMenu
+                onPlay: app.playAi(null)
+                onPlayHeld: app.openPlayMenu(null, rect)
                 active: app.layer === "title"
             }
             HomeScreen {
@@ -204,8 +251,9 @@ WebOSWindow {
             source: scene
             darken: 0.55
             frozen: true; sourceBusy: hero.busy || info.busy
-            hole: home.focusRect
-            opacity: app.layer === "menu" ? 1 : (app.warming ? 0.003 : 0)
+            // around the held card, or the held Play button or episode
+            hole: app.playMenu ? Qt.rect(app.menuAnchor.x - 14, app.menuAnchor.y - 14, app.menuAnchor.width + 28, app.menuAnchor.height + 28) : home.focusRect
+            opacity: app.layer === "menu" || app.playMenu ? 1 : (app.warming ? 0.003 : 0)
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.InOutQuad } }
         }
         SegmentedBar {
@@ -228,11 +276,11 @@ WebOSWindow {
             active: app.layer === "streams"
             source: backdropFrost
             streams: streams
-            onPlay: { player.start(stream, app.displayItem); app.layer = "player" }
         }
         PlayerScreen {
             id: player
             window: app
+            streams: streams
             focus: app.layer === "player"
             active: app.layer === "player"
         }
@@ -243,12 +291,24 @@ WebOSWindow {
             source: scene
             x: Theme.margin + home.focusCardWidth * 1.1 + 44
             y: home.focusRect.y + 10
-            onTriggered: app.layer = "home"
+            // Play plays the AI pick; the library and watched actions aren't wired yet
+            onTriggered: if (actionIndex === 0) app.playAi(null); else app.layer = "home"
+        }
+        QuickMenu {
+            id: playOptions
+            focus: app.playMenu
+            open: app.playMenu
+            source: scene
+            actions: [{ label: "Play AI Pick", icon: "play" }, { label: "Play from Stream", icon: "list" }]
+            x: app.menuAnchor.x + app.menuAnchor.width + 44
+            y: Math.min(app.menuAnchor.y, Theme.screenHeight - height - 60)
+            onTriggered: if (actionIndex === 0) app.playAi(app.menuEpisode); else app.openStreams(app.menuEpisode)
         }
 
         Keys.onPressed: {
-            if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; player.stop(); streamPage.starting = -1; app.layer = "streams" }
-            else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; app.layer = app.pageLayer }
+            if (Remote.isBack(event.key) && app.playMenu) { event.accepted = true; app.playMenu = false }
+            else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; streams.cancel(); player.stop(); app.layer = app.playerBack }
+            else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.layer = app.pageLayer }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
         }

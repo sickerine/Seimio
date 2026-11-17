@@ -7,6 +7,7 @@ Item {
     property string logo
     property string name
     property int nameSize: 72
+    property bool centered: false      // centre the logo or name in the box instead of starting at its left
     // true once whatever should show (the logo, or the name when there is no logo) is on screen
     readonly property bool ready: shownLogo === logo && (logo === "" || preload.status !== Image.Loading)
     property string shownLogo: ""
@@ -25,14 +26,15 @@ Item {
     }
     Image {
         anchors.fill: parent
-        fillMode: Image.PreserveAspectFit; horizontalAlignment: Image.AlignLeft; verticalAlignment: Image.AlignBottom
+        fillMode: Image.PreserveAspectFit; horizontalAlignment: art.centered ? Image.AlignHCenter : Image.AlignLeft; verticalAlignment: Image.AlignBottom
         asynchronous: true; sourceSize.width: 780
         source: art.hasLogo ? art.shownLogo : ""
         visible: art.hasLogo
     }
     Text {
         visible: !art.hasLogo
-        anchors.bottom: parent.bottom; width: parent.width * 1.3
+        anchors.bottom: parent.bottom; width: art.centered ? parent.width : parent.width * 1.3
+        horizontalAlignment: art.centered ? Text.AlignHCenter : Text.AlignLeft
         wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
         text: art.name; color: Theme.ink
         font.family: Theme.face; font.pixelSize: art.nameSize; font.weight: Font.Bold; lineHeight: 0.95

@@ -1,9 +1,8 @@
-// MOCK, for agreeing the design: the streams for a title, to pick one to play. The filter bar sits where
-// Home's tabs are (anime: All, Seasonal, BD; anything else: All, Supported, Unsupported, starting on
-// Supported), the title and a summary of what's listed on the left, the streams on the right. Anime lists
-// by seeders, anything else keeps Torrentio's quality-first order (as in the patched Stremio app).
-// open(item, type, videoId, label) shows the loading rows while `streams` (Seimio.Data) fetches and reads
-// the video's streams, then deals them in. OK on a stream emits play(stream).
+// The streams for a title, to pick one to play. The filter bar sits where Home's tabs are (anime: All,
+// Seasonal, BD; anything else: All, Supported, Unsupported, starting on Supported), the title and a
+// summary of what's listed on the left, the streams on the right. The list, its filter and order live in
+// `streams` (Seimio.Data Streams). open() fetches a video's streams; show() lists what `streams` already
+// holds (after the AI pick gave up), with `note` saying why. OK on a stream resolves and plays it.
 import QtQuick 2.12
 import Seimio.UI 1.0
 
@@ -11,60 +10,40 @@ FocusScope {
     id: page
     property bool active: false
     property var item: null
-    property var entry: null             // { anime, streams, failure }
     property var streams                 // Seimio.Data Streams
-    property string label: ""            // the episode, "S2 E3" or "E7"; empty for a movie
     property Item source                 // what the filter bar's glass shows (already blurred)
-    property bool loading: true
+    property string label: ""            // the episode, "S2 E3" or "E7"; empty for a movie
+    property string note: ""             // why the list opened instead of playing
     property bool fresh: false           // rows deal in one after another while true
-    property var rows: []
     property int starting: -1            // the row that's starting to play
-    signal play(var stream)
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: page.active ? 240 : 200 } }
 
-    readonly property bool anime: animeOpen
-    readonly property var kinds: anime ? ["All", "Seasonal", "BD"] : ["All", "Supported", "Unsupported"]
-    readonly property var captions: anime ? ["streams", "seasonal releases", "Blu-ray releases"] : ["streams", "play here", "won't play here"]
-    readonly property int kind: bar.currentIndex
-    property bool animeOpen: false
+    readonly property bool loading: streams.loading
+    readonly property int count: list.count
+    readonly property var kinds: streams.anime ? ["All", "Seasonal", "BD"] : ["All", "Supported", "Unsupported"]
+    readonly property var captions: streams.anime ? ["streams", "seasonal releases", "Blu-ray releases"] : ["streams", "play here", "won't play here"]
 
-    function open(title, type, videoId, episodeLabel) {
-        item = title; label = episodeLabel; entry = null; rows = []; loading = true; starting = -1;
-        animeOpen = videoId.indexOf("kitsu:") === 0;
-        bar.currentIndex = animeOpen ? 0 : 1;
+    function open(title, target) { show(title, target.label, ""); streams.fetch(target.type, target.id) }
+    function show(title, episodeLabel, why) {
+        item = title; label = episodeLabel; note = why; starting = -1;
         list.currentIndex = 0; list.focus = true;
-        streams.fetch(type, videoId);
+        if (!loading) dealIn();
     }
+    function dealIn() { fresh = true; dealt.restart(); list.currentIndex = 0; list.positionViewAtBeginning() }
+    Timer { id: dealt; interval: 900; onTriggered: page.fresh = false }
     Connections {
         target: page.streams
-        onReady: { page.entry = { anime: page.animeOpen, streams: streams, failure: failure }; page.loading = false; page.refilter() }
-    }
-    onKindChanged: if (!loading) refilter()
-
-    function refilter() {
-        var all = entry ? entry.streams : [], out;
-        if (anime) out = kind === 1 ? all.filter(function (s) { return s.seasonal }) : kind === 2 ? all.filter(function (s) { return s.bd }) : all.slice();
-        else out = kind === 1 ? all.filter(function (s) { return s.support !== "unsupported" }) : kind === 2 ? all.filter(function (s) { return s.support === "unsupported" }) : all.slice();
-        if (anime) out.sort(function (a, b) { return b.seeders - a.seeders });
-        fresh = true; dealt.restart();
-        rows = out;
-        list.currentIndex = 0; list.positionViewAtBeginning();
-    }
-    Timer { id: dealt; interval: 900; onTriggered: page.fresh = false }
-
-    // share of each resolution among the listed streams, for the summary bar
-    readonly property var mix: {
-        var n = { "4K": 0, "1080p": 0, "720p": 0, other: 0 };
-        for (var i = 0; i < rows.length; i++) { var r = rows[i].res; if (n[r] !== undefined) n[r]++; else n.other++ }
-        return n;
+        onListChanged: { if (bar.currentIndex !== page.streams.kind) bar.currentIndex = page.streams.kind; if (!page.loading) page.dealIn() }
+        onPlayable: page.starting = -1
+        onFailed: page.starting = -1
     }
 
     Keys.onPressed: {
         if (event.key === Qt.Key_Up && list.activeFocus && list.currentIndex === 0) { bar.focus = true; event.accepted = true }
-        else if (event.key === Qt.Key_Down && bar.activeFocus && rows.length) { list.focus = true; event.accepted = true }
+        else if (event.key === Qt.Key_Down && bar.activeFocus && page.count) { list.focus = true; event.accepted = true }
     }
 
     // ---- filter bar, where Home's tabs are ----
@@ -72,6 +51,7 @@ FocusScope {
         id: bar
         source: page.source; preblurred: true
         model: page.kinds
+        onCurrentIndexChanged: page.streams.kind = currentIndex
         shadow: 0.8
         x: (parent.width - width) / 2; y: page.active ? 44 : -100
         Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
@@ -89,31 +69,35 @@ FocusScope {
                 Chip { visible: page.label !== ""; kind: "solid"; icon: "play"; text: page.label }
                 Chip { visible: !!(page.item && page.item.year); text: page.item && page.item.year ? page.item.year : "" }
             }
-            Item { width: 1; height: 24 }
+            Text {
+                width: 460; wrapMode: Text.WordWrap; visible: page.note !== ""
+                text: page.note; color: Theme.inkDim
+                font.family: Theme.face; font.pixelSize: 24
+            }
             // how many, and their resolutions as one bar
             Item {
                 width: 460; height: 150
-                opacity: page.loading || !page.rows.length ? 0 : 1
+                opacity: page.loading || !page.count ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 Text {
                     id: count
-                    text: page.rows.length; color: Theme.ink
+                    text: page.count; color: Theme.ink
                     font.family: Theme.face; font.pixelSize: 84; font.weight: Font.Bold
                 }
                 Text {
                     anchors.left: count.right; anchors.leftMargin: 16; anchors.baseline: count.baseline
-                    text: page.captions[page.kind] || ""; color: Theme.inkDim
+                    text: page.captions[bar.currentIndex] || ""; color: Theme.inkDim
                     font.family: Theme.face; font.pixelSize: 30; font.weight: Font.Medium
                 }
                 Row {
                     id: mixBar
                     y: 112; width: 460; height: 10; spacing: 4
-                    readonly property real unit: page.rows.length ? (width - spacing * 3) / page.rows.length : 0
+                    readonly property real unit: page.count ? (width - spacing * 3) / page.count : 0
                     Repeater {
                         model: [["4K", Theme.rating], ["1080p", "#f2ffffff"], ["720p", "#80ffffff"], ["other", "#40ffffff"]]
                         Rectangle {
                             height: 10; radius: 5; color: modelData[1]
-                            width: Math.max(0, (page.mix[modelData[0]] || 0) * mixBar.unit)
+                            width: Math.max(0, (page.streams.mix[modelData[0]] || 0) * mixBar.unit)
                             Behavior on width { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
                         }
                     }
@@ -123,8 +107,8 @@ FocusScope {
                     Repeater {
                         model: ["4K", "1080p", "720p"]
                         Text {
-                            visible: (page.mix[modelData] || 0) > 0
-                            text: modelData + "  " + (page.mix[modelData] || 0); color: Theme.inkDim
+                            visible: (page.streams.mix[modelData] || 0) > 0
+                            text: modelData + "  " + (page.streams.mix[modelData] || 0); color: Theme.inkDim
                             font.family: Theme.face; font.pixelSize: 20; font.weight: Font.Medium
                         }
                     }
@@ -165,16 +149,16 @@ FocusScope {
     // nothing to list
     Column {
         x: page.listX + 60; y: 360; spacing: 14
-        opacity: !page.loading && page.active && page.rows.length === 0 ? 1 : 0
+        opacity: !page.loading && page.active && page.count === 0 ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         Text {
-            text: page.entry && page.entry.streams.length ? "No " + (page.captions[page.kind] === "streams" ? "streams" : page.kinds[page.kind].toLowerCase() + " streams") : "No streams yet"
+            text: page.streams.failure ? "Couldn't load streams" : page.streams.total ? "No " + page.captions[bar.currentIndex] : "No streams yet"
             color: Theme.ink; font.family: Theme.face; font.pixelSize: 40; font.weight: Font.DemiBold
         }
         Text {
             width: 900; wrapMode: Text.WordWrap
-            text: page.entry && page.entry.failure ? "Couldn't reach Torrentio: " + page.entry.failure
-                : page.entry && page.entry.streams.length ? "Try All to see every release."
+            text: page.streams.failure ? page.streams.failure
+                : page.streams.total ? "Try All to see every release."
                 : "Nobody has released " + (page.label || "this") + " yet. It shows here once someone does."
             color: Theme.inkDim; font.family: Theme.face; font.pixelSize: 26
         }
@@ -185,7 +169,7 @@ FocusScope {
         x: page.listX; y: 180; width: page.listWidth; height: Theme.screenHeight - y
         clip: true
         spacing: 14
-        model: page.rows.length
+        model: page.streams
         opacity: page.loading ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         // the focus rests in the upper rows and the list moves under it
@@ -203,8 +187,10 @@ FocusScope {
 
         delegate: Item {
             id: row
-            readonly property var s: page.rows[index] || ({})
             readonly property bool current: ListView.isCurrentItem && list.activeFocus
+            readonly property bool unsupported: model.support === "unsupported"
+            // the static chips, made in C++ (inside a Repeater, `model` is its own, so read it here)
+            readonly property var chips: model.chips || []
             width: page.listWidth; height: page.rowHeight
             Reveal {
                 shown: true
@@ -212,21 +198,21 @@ FocusScope {
                 duration: page.fresh ? Theme.slow : 1
                 dy: 18
                 width: row.width; height: row.height
-                opacity: t * (row.s.support === "unsupported" && !row.current ? 0.5 : 1)
+                opacity: t * (row.unsupported && !row.current ? 0.5 : 1)
 
                 // resolution, and which HDR
                 Column {
                     x: 34; y: 26; width: 120; spacing: 8
                     Text {
-                        text: row.s.res || "SD"
-                        color: row.s.res === "4K" ? Theme.rating : row.s.res === "1080p" ? Theme.ink : Theme.inkDim
-                        font.family: Theme.face; font.pixelSize: row.s.res === "4K" ? 40 : 30; font.weight: Font.Bold
+                        text: model.res || "SD"
+                        color: model.res === "4K" ? Theme.rating : model.res === "1080p" ? Theme.ink : Theme.inkDim
+                        font.family: Theme.face; font.pixelSize: model.res === "4K" ? 40 : 30; font.weight: Font.Bold
                     }
-                    Chip { visible: !!row.s.hdr; size: 16; kind: "tint"; tint: row.s.hdr === "DV" ? "#8b5cf6" : "#e8590c"; text: row.s.hdr || "" }
+                    Chip { visible: !!model.hdr; size: 16; kind: "tint"; tint: model.hdr === "DV" ? "#8b5cf6" : "#e8590c"; text: model.hdr || "" }
                 }
                 Text {
                     x: 180; y: 22; width: page.listWidth - 180 - 40
-                    text: page.shortName(row.s.release || "")
+                    text: model.shortName
                     elide: Text.ElideRight; color: Theme.ink; textFormat: Text.PlainText
                     font.family: Theme.face; font.pixelSize: 27; font.weight: Font.DemiBold
                 }
@@ -234,41 +220,30 @@ FocusScope {
                     x: 180; y: 66; spacing: 8
                     // why it won't play here, or that it's starting
                     Chip {
-                        visible: row.s.support === "unsupported" || page.starting === index
+                        visible: row.unsupported || page.starting === index
                         size: 18; kind: page.starting === index ? "solid" : "tint"; tint: "#b42318"
                         icon: page.starting === index ? "play" : ""
-                        text: page.starting === index ? "Starting" : "No " + (row.s.why || "audio")
+                        text: page.starting === index ? "Starting" : "No " + (model.why || "audio")
                         SequentialAnimation on opacity { running: page.starting === index; loops: Animation.Infinite
                             NumberAnimation { to: 0.5; duration: 500 } NumberAnimation { to: 1; duration: 500 } }
                     }
-                    Chip { size: 18; icon: "up"; text: row.s.seeders || 0 }
-                    Chip { visible: !!row.s.size; size: 18; text: row.s.size || "" }
-                    Repeater { model: row.s.audio || []; Chip { size: 18; text: modelData } }
-                    Chip { visible: !!row.s.bd; size: 18; kind: "tint"; tint: "#0f766e"; text: "BD" }
-                    Chip { visible: !!row.s.version; size: 18; kind: "tint"; tint: "#7c3aed"; text: row.s.version || "" }
-                    Repeater { model: (row.s.langs || []).slice(0, 2); Chip { size: 18; text: modelData } }
-                    Chip { visible: !!row.s.file; size: 18; text: "Pack" }
-                    Chip { visible: row.s.cached === false; size: 18; icon: "down"; text: "Not cached" }
+                    // the last AI pick for this video, to tell it apart
+                    Chip { visible: model.aiPick; size: 18; kind: "tint"; tint: "#2563eb"; icon: "star"; text: "AI pick" }
+                    Repeater {
+                        model: row.chips
+                        Chip {
+                            size: 18; text: modelData.text; icon: modelData.icon
+                            kind: modelData.tag ? "tint" : "glass"; tint: modelData.tag === "bd" ? "#0f766e" : "#7c3aed"
+                        }
+                    }
                 }
             }
         }
     }
 
-    // a release name without the title in front: its group, then what follows the episode tag or year,
-    // when that leaves enough to tell releases apart
-    function shortName(name) {
-        var t = name.replace(/\./g, " ");
-        var m = /\bS\d{1,2}E\d{1,4}\b|\[S\d{1,2}E\d{1,4}\]|\s-\s\d{1,4}\b|[(\[ ](19|20)\d\d[)\] ]/i.exec(t);
-        if (!m || m.index < 4 || m.index > t.length * 0.6) return t;
-        var rest = t.slice(m.index + m[0].length).replace(/^[\s\]\)\-:]+/, "").replace(/\s(mkv|mp4|avi)$/i, "");
-        var group = /^\[[^\]]+\]/.exec(t);                   // the release group, as anime names lead with it
-        return rest.length > 12 ? (group ? group[0] + " " : "") + rest : t;
-    }
-
     function choose() {
-        var s = rows[list.currentIndex];
-        if (!s || starting >= 0) return;
+        if (!count || starting >= 0) return;
         starting = list.currentIndex;
-        play(s);
+        streams.playRow(list.currentIndex);
     }
 }

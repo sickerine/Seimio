@@ -21,16 +21,17 @@ Rectangle {
     border.width: glass ? 1 : 0
     border.color: Theme.hairline
 
-    Icon {
+    // the icon exists only when there is one: most chips have none, and lists create many chips
+    Loader {
         id: glyph
-        visible: chip.icon !== ""
-        name: chip.icon; color: chip.ink
+        active: chip.icon !== ""
         width: chip.size; height: chip.size
-        x: chip.padX - inkLeft; anchors.verticalCenter: parent.verticalCenter
+        x: chip.padX - (item ? item.inkLeft : 0); anchors.verticalCenter: parent.verticalCenter
+        sourceComponent: Icon { name: chip.icon; color: chip.ink; width: chip.size; height: chip.size }
     }
     Text {
         id: label
-        x: chip.icon !== "" ? glyph.x + glyph.inkRight + Math.round(chip.size * 0.35) : chip.padX
+        x: glyph.item ? glyph.x + glyph.item.inkRight + Math.round(chip.size * 0.35) : chip.padX
         anchors.verticalCenter: parent.verticalCenter
         text: chip.text; color: chip.ink; textFormat: Text.PlainText
         font.family: Theme.face; font.pixelSize: chip.size; font.weight: chip.glass ? Font.Medium : Font.Bold

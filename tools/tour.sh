@@ -2,14 +2,18 @@
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
 # phase (render-thread stamps from LabProbe). Routes: home (Continue Watching, tabs, a movie's title
 # page), calendar (entering it, moving, scrolling into the next month, a day opening and turning,
-# leaving), show (a show page), menu (quick actions opening and closing on a timer).
-# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu   (VARIANT: LabProbe switches)
+# leaving), show (a show page), menu (quick actions opening and closing on a timer), play (an SDR episode
+# from a show page: the loading screen, then the video with the controls over it; an HDR or Dolby Vision
+# video would leave the panel at 48 Hz after it, which LG keeps until an SDR video plays), streams (a show's stream
+# list, opened by the lab 12 s after launch: scrolling, filtering, leaving).
+# Tours never call the AI pick ("noAi": the app gets no OpenRouter key and plays the best stream by rank).
+# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 route=${1:-home}
 mkdir -p .lab/www
-python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v.update({"autopop": True} if sys.argv[2] == "menu" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
+python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v["noAi"] = True; v.update({"autopop": True} if sys.argv[2] == "menu" else {"openStreams": 12000} if sys.argv[2] == "streams" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
 failed=0
 # 8 s: the catalog loads and the calendar's art decodes for about 5 s after launch; that's startup, not
 # what a tour measures
@@ -24,6 +28,8 @@ case $route in
   show) p RIGHT 1 600; p ENTER 1 1500; p RIGHT 2 400; p DOWN 1 600; p LEFT 1 900; p RIGHT 1 900; p DOWN 1 600
         p RIGHT 4 350; p LEFT 2 350; p UP 1 600; p UP 1 600; p BACK 1 1500 ;;
   menu) sleep 15 ;;
+  play) p RIGHT 3 1500; p ENTER 1 2500; p DOWN 2 900; p LEFT 1 900; p ENTER 1 14000; p RIGHT 1 1500; p LEFT 1 3000; p BACK 1 2500 ;;
+  streams) p RIGHT 1 5000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
 esac
 sleep 4; echo '{}' > .lab/www/variant.json
 python3 - .lab/reports $S <<'PY'

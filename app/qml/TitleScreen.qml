@@ -8,7 +8,9 @@ FocusScope {
     id: page
     property bool active: false
     property var item: null
+    // OK on Play plays the title (the AI pick); a long OK asks how, from a menu beside `rect`
     signal play()
+    signal playHeld(rect rect)
     readonly property real actionsY: 884        // the actions' top; the info sits 40 px above them
     width: Theme.screenWidth; height: Theme.screenHeight
 
@@ -24,6 +26,7 @@ FocusScope {
             id: actions
             focus: true
             onTriggered: if (buttonIndex === 0) page.play()
+            onHeld: if (buttonIndex === 0) page.playHeld(buttonRect(0))
             model: [
                 { label: page.item && page.item.progress > 0 ? "Resume" : "Play", icon: "play", primary: true,
                   progress: page.item && page.item.progress > 0 ? page.item.progress : -1 },
