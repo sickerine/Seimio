@@ -46,19 +46,24 @@ WebOSWindow {
     Timer {
         id: prepareShow; interval: 1200
         onTriggered: {
-            if (!app.displayItem || !app.onHome) return;
-            // an Anime chart show is made playable ahead too (ARM, then Kitsu), so OK opens it at once
-            if (app.animeTab && app.displayItem.id.indexOf("anilist:") === 0) { app.loadAnime(app.displayItem); return }
-            // and its page is built
-            if ((app.animeTab || home.row === 0) && app.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id));
+            if (!app.displayItem || !app.onHome || !(app.animeTab || home.row === 0)) return;
+            // an anime's franchise is fetched ahead (its page is built when it's in), so OK opens it at once
+            if (app.isAnime(app.displayItem.id)) { app.loadFranchise(app.displayItem); return }
+            if (app.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id));
         }
     }
 
     function open() {
         commit();
-        // the title page is for a movie, or a show whose whole run is one season with one episode; any
-        // other show gets the show page, even when one of its seasons has a single episode
-        // a calendar release opens on its own episode (`video`); anything else where you are in the show
+        // an anime opens as its whole franchise, wherever it was picked (Continue Watching, the calendar, the
+        // Anime tab)
+        if (displayItem && isAnime(displayItem.id)) { openFranchise(displayItem); return }
+        openPage();
+    }
+    // the title page is for a movie, or a show whose whole run is one season with one episode; any other
+    // show gets the show page, even when one of its seasons has a single episode. A calendar release opens on
+    // its own episode (`video`); anything else where you are in the show
+    function openPage() {
         if (displayItem && app.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id), displayItem.video || ""); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
@@ -165,32 +170,44 @@ WebOSWindow {
         for (var s = 0; sh && sh.seasons && s < sh.seasons.length; s++) n += sh.seasons[s].episodes.length;
         return n;
     }
-    // an Anime chart show: made playable once (fetched ahead while the selection rests on it, or on OK),
-    // and opened when it's ready if OK asked for it (`animeOpening`)
-    property string animeOpening: ""
-    property var animeLoading: ({})
-    function loadAnime(item) {
-        if (anime.resolved[item.id] || animeLoading[item.id]) return;
-        animeLoading[item.id] = true;
+    // An anime (a Kitsu or AniList id) is a franchise (Catalog.loadFranchise): fetched once, ahead while the
+    // selection rests on it or on OK, kept by the id it was asked for and by its Kitsu id (`franchises`), and
+    // opened when it's in if OK asked for it (`franchiseOpening`) and it's still the selection. Without it
+    // (not on Kitsu, the services down) the title's own page opens, if it has one.
+    function isAnime(id) { return /^(kitsu|anilist):/.test(id || "") }
+    property var franchises: ({})
+    property var franchiseLoading: ({})
+    property string franchiseOpening: ""
+    function loadFranchise(item) {
+        if (franchises[item.id] || franchiseLoading[item.id]) return;
+        franchiseLoading[item.id] = true;
         catalog.loadFranchise(item);
     }
-    function openAnime(item) {
-        if (anime.resolved[item.id]) { open(); return }
-        animeOpening = item.id; loadAnime(item);
+    function openFranchise(item) {
+        var f = franchises[item.id];
+        if (!f) { franchiseOpening = item.id; loadFranchise(item); return }
+        showPage.open(f.item, f.show, item.video || f.item.video || "");
+        layer = "show";
     }
+    function selected(sourceId, item) { var s = focusItem; return !!s && (s.id === sourceId || s.id === item.id) }
     Connections {
         target: catalog
         onFranchiseReady: {
-            delete app.animeLoading[sourceId];
-            if (!anime.resolved[sourceId]) { app.shows[item.id] = show; anime.resolve(sourceId, item) }
-            // it opens only if OK's show is still the one selected on the Anime tab
-            if (sourceId !== app.animeOpening) return;
-            app.animeOpening = "";
-            if (app.layer === "home" && app.animeTab && anime.focusItem === anime.resolved[sourceId]) app.open();
+            delete app.franchiseLoading[sourceId];
+            var f = { item: item, show: show };
+            app.franchises[sourceId] = f; app.franchises[item.id] = f;
+            app.shows[item.id] = show;                     // its episodes, for the player's row and what's next
+            if (sourceId.indexOf("anilist:") === 0) anime.resolve(sourceId, item);   // the chart's selection becomes the Kitsu item
+            if (!app.onHome || !app.selected(sourceId, item)) { if (sourceId === app.franchiseOpening) app.franchiseOpening = ""; return }
+            if (sourceId !== app.franchiseOpening) { showPage.load(item, show); return }      // built ahead
+            app.franchiseOpening = "";
+            app.commit(); app.openFranchise(item);
         }
         onFranchiseFailed: {
-            delete app.animeLoading[sourceId];
-            if (sourceId === app.animeOpening) { app.animeOpening = ""; anime.say(reason) }
+            delete app.franchiseLoading[sourceId];
+            if (sourceId !== app.franchiseOpening) return;
+            app.franchiseOpening = "";
+            if (app.animeTab) anime.say(reason); else if (app.onHome && app.focusItem && app.focusItem.id === sourceId) app.openPage();
         }
     }
     WindowTools { id: tools }
@@ -329,7 +346,7 @@ WebOSWindow {
                 onExitTop: app.layer = "tabs"
                 onRowChanged: probe.act("anime row")
                 // a show from the chart opens once its franchise is in (Catalog.loadFranchise)
-                onActivated: if (item.id.indexOf("anilist:") === 0) app.openAnime(item); else app.open()
+                onActivated: app.open()
             }
         }
 
