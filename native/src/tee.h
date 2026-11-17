@@ -34,6 +34,7 @@ public:
     std::function<void(const QString &, const QByteArray &)> onFont;
     std::function<void(qint64, qint64, const QString &)> onChapter;           // start ms, end ms, title
     std::function<void(int, qint64, qint64, const QByteArray &)> onBlock;      // track, start ms, duration ms, payload
+    bool clusterSeen = false;                                                  // past the header elements
     void pushAt(qint64 offset, const QByteArray &bytes) {
         int &m_matroska = m_shared->matroska;
         if (m_matroska == 0 || (m_matroska == -1 && offset != 0 && m_pending.isNull())) return;   // mid-file before the head is known
@@ -97,6 +98,7 @@ public:
 private:
 
     void openMaster(quint32 id) {
+        if (id == CLUSTER) clusterSeen = true;
         if (id == TRACKENTRY) m_track = Track();
         if (id == ATTACHEDFILE) { m_fontName.clear(); m_fontData.clear(); }
         if (id == CHAPTERATOM) { m_chapStart = m_chapEnd = -1; m_chapTitle.clear(); }
@@ -222,7 +224,8 @@ private:
 // there. Each connection walks top-level boxes from wherever one starts; the one that reads moov finds the
 // text tracks and their sample tables (stts, stsc, stsz, stco/co64, as ISO 14496-12 lays them out), and
 // from then on every connection picks out the samples whose bytes it passes. A sample is a 16-bit text
-// length and the text (style boxes after it are ignored).
+// length and the text (style boxes after it are ignored). A track's edit list (elst) moves its times as
+// ffmpeg's mov.c applies it: empty edits delay it, the first edit's media time is where it starts.
 class Mp4Subs {
 public:
     struct Sample { qint64 offset; int size, track; qint64 start, duration; };      // ms
@@ -293,13 +296,18 @@ private:
     void moov(const QByteArray &moov) {
         Shared &sh = *m_shared;
         QVector<Track> tracks;
+        qint64 movieScale = 0;
+        boxes(moov, 0, [&](const QByteArray &type, const QByteArray &d) {
+            if (type == "mvhd" && d.size() >= 24) movieScale = be32(d, d[0] == 1 ? 20 : 12);
+        });
         boxes(moov, 0, [&](const QByteArray &type, const QByteArray &trak) {
             if (type != "trak") return;
             int id = 0, scale = 0; QString lang, name, handler, format;
-            QByteArray stts, stsc, stsz, stco; bool wide = false;
+            QByteArray stts, stsc, stsz, stco, elst; bool wide = false;
             std::function<void(const QByteArray &)> walk = [&](const QByteArray &box) {
                 boxes(box, 0, [&](const QByteArray &t, const QByteArray &d) {
-                    if (t == "mdia" || t == "minf" || t == "stbl") walk(d);
+                    if (t == "mdia" || t == "minf" || t == "stbl" || t == "edts") walk(d);
+                    else if (t == "elst") elst = d;
                     else if (t == "tkhd" && d.size() >= 24) id = int(be32(d, d[0] == 1 ? 20 : 12));
                     else if (t == "mdhd" && d.size() >= 24) {
                         const int v1 = d[0] == 1; scale = int(be32(d, v1 ? 20 : 12));
@@ -337,10 +345,24 @@ private:
                     }
                 }
             }
+            // the edit list: empty edits (media time -1) delay the track, in the movie's timescale; the first
+            // real edit says which media time plays first
+            qint64 delayMs = 0, firstMs = 0;
+            if (elst.size() >= 8 && movieScale > 0) {
+                const bool v1 = elst.at(0) == 1; const int entry = v1 ? 20 : 12;
+                for (int e = 0, n = int(be32(elst, 4)); e < n && 8 + entry * (e + 1) <= elst.size(); e++) {
+                    const int at = 8 + entry * e;
+                    const qint64 duration = v1 ? qint64((quint64(be32(elst, at)) << 32) | be32(elst, at + 4)) : be32(elst, at);
+                    const qint64 media = v1 ? qint64((quint64(be32(elst, at + 8)) << 32) | be32(elst, at + 12)) : qint32(be32(elst, at + 4));
+                    if (media == -1) { delayMs += duration * 1000 / movieScale; continue; }
+                    firstMs = media * 1000 / scale;
+                    break;
+                }
+            }
             qint64 t = 0; int i = 0;
             for (int r = 0; r < int(be32(stts, 4)) && 8 + 8 * r + 8 <= stts.size(); r++) {
                 const int n = int(be32(stts, 8 + 8 * r)); const qint64 d = be32(stts, 12 + 8 * r);
-                for (int k = 0; k < n && i < out.size(); k++, i++) { out[i].start = t * 1000 / scale; out[i].duration = d * 1000 / scale; t += d; }
+                for (int k = 0; k < n && i < out.size(); k++, i++) { out[i].start = t * 1000 / scale - firstMs + delayMs; out[i].duration = d * 1000 / scale; t += d; }
             }
             sh.samples += out;
         });
@@ -352,10 +374,11 @@ private:
     void samples(qint64 offset, const QByteArray &bytes) {
         const QVector<Sample> &all = m_shared->samples;
         if (all.isEmpty()) return;
-        if (m_partial.size() && offset == m_partialEnd) {
+        if (m_partial.size() && offset != m_partialEnd) m_partial.clear();      // the player jumped: it's gone
+        if (m_partial.size()) {
             m_partial += bytes.left(int(m_partialWant - m_partial.size()));
-            if (m_partial.size() == m_partialWant) emitSample(m_partialSample, m_partial);
-            if (m_partial.size() >= m_partialWant) m_partial.clear();
+            m_partialEnd = offset + bytes.size();
+            if (m_partial.size() >= m_partialWant) { emitSample(m_partialSample, m_partial); m_partial.clear(); }
         }
         auto it = std::lower_bound(all.begin(), all.end(), offset, [](const Sample &s, qint64 o) { return s.offset < o; });
         const qint64 end = offset + bytes.size();
@@ -501,7 +524,7 @@ public slots:
         for (const auto &c : m_waiting) { c->done = true; c->socket->disconnectFromHost(); }
         m_waiting.clear(); m_cuesWaiting.clear();
         stopBoot(); stopCues();
-        m_view = Pending; m_cut = MkvCut(); m_size = -1; m_head.clear(); m_cues.clear(); m_cuesState = 0;
+        m_view = Pending; m_cut = MkvCut(); m_size = -1; m_head.clear(); m_cues.clear(); m_cuesState = 0; m_cuesTries = 0;
         m_bootParser = std::make_shared<MkvSubs>(m_shared);
         auto none = std::make_shared<Mp4Subs>(m_mp4);
         wire(*m_bootParser, *none, session);
@@ -600,7 +623,7 @@ private:
             return;
         }
         qint64 to = qMin(real + kChunk - 1, realLast);
-        if (m_cuesState == 1 && real < m_cut.cuesAt) to = qMin(to, m_cut.cuesAt - 1);
+        if (m_cut.cuesAt >= 0 && real < m_cut.cuesAt) to = qMin(to, m_cut.cuesAt - 1);   // the Cues come from us
         fetch(c, real, to);
     }
     // asks for the next piece when the player has room for it
@@ -690,7 +713,8 @@ private:
             m_bootParser->pushAt(m_bootAt, data);
             m_bootAt += data.size();
             if (m_view == Pending) { m_head += data; plan(false); }
-            if (m_view == Whole || (m_view == Cut && m_bootAt >= m_cut.end)) stopBoot();   // the player reads the rest itself
+            // past the fonts, on to the first Cluster: Chapters or Tags after the Attachments are only read here
+            if (m_view == Whole || (m_view == Cut && m_bootAt >= m_cut.end && m_bootParser->clusterSeen)) stopBoot();   // the player reads the rest
         });
         connect(r, &QNetworkReply::finished, this, [this, r, session] {
             r->deleteLater();
@@ -698,7 +722,8 @@ private:
             m_boot = nullptr;
             if (session != m_session) return;
             if (m_view == Pending) plan(true);
-            if (m_view == Cut && r->error() == QNetworkReply::NoError && m_bootAt < m_cut.end) boot(m_bootAt, m_cut.end - 1);   // the rest of the fonts
+            if (m_view == Cut && r->error() == QNetworkReply::NoError && !m_bootParser->clusterSeen && m_bootAt < m_cut.end + kChunk)
+                boot(m_bootAt, m_cut.end + kChunk - 1);                                                   // the rest of the fonts
         });
     }
     void stopBoot() { if (QNetworkReply *r = m_boot) { m_boot = nullptr; r->abort(); } }
@@ -734,10 +759,12 @@ private:
         });
         connect(r, &QNetworkReply::finished, this, [this, r] { r->deleteLater(); if (m_cuesReply == r) cuesDone(false); });
     }
-    // a Cues element that can't be had is served as it is (seeking may land wrong, playing doesn't)
+    // a Cues element that can't be had is tried three times, then served as it is (the player's seeks
+    // may land off and resync, playing isn't affected)
     void cuesDone(bool ok) {
-        if (!ok) { m_cuesState = -1; m_cues.clear(); }
         stopCues();
+        if (!ok && ++m_cuesTries < 3) { loadCues(); return; }
+        if (!ok) { m_cuesState = -1; m_cues.clear(); }
         const auto waiting = m_cuesWaiting; m_cuesWaiting.clear();
         for (const auto &c : waiting) if (!c->done) pump(c);
     }
@@ -782,7 +809,7 @@ private:
     MkvCut m_cut;
     qint64 m_size = -1, m_bootAt = 0;
     QByteArray m_head, m_cues;                          // the head while planning; the rewritten Cues
-    int m_cuesState = 0;                                // 0 loading (or none needed), 1 rewritten, -1 as it is
+    int m_cuesState = 0, m_cuesTries = 0;               // state: 0 loading (or none needed), 1 rewritten, -1 as it is
     QNetworkReply *m_boot = nullptr, *m_cuesReply = nullptr;
     std::shared_ptr<MkvSubs> m_bootParser;
     QVector<std::shared_ptr<Conn>> m_waiting, m_cuesWaiting;

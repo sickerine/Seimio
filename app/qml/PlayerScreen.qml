@@ -60,8 +60,10 @@ FocusScope {
     function prepare(title, episodeLabel) { item = title; label = episodeLabel; stream = null; pendingUrl = ""; media.unload(); subs.reset(); trackList = []; choice = ({}); chapters = []; skipLookup.cancel(); askSkip.stop(); skipTimes = ({}) }
     // the file, as subtitle delays are kept: the stream's own link, which names the torrent and the file
     readonly property string fileKey: stream && stream.url ? stream.url : ""
-    function start(url, s, fraction) {
-        stream = s; pendingUrl = url; media.startFraction = fraction || 0;
+    // `at`: where to start, a fraction of the way (a resume) or { ms } (a stream switch keeps the time)
+    function start(url, s, at) {
+        stream = s; pendingUrl = url;
+        media.startAt = at && at.ms !== undefined ? at.ms : -1; media.startFraction = typeof at === "number" ? at : 0;
         if (media.windowId) load(); else { media.setEventSlot(48); media.exportWindow(window) }
     }
     function load() {

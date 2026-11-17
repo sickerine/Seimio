@@ -87,9 +87,9 @@ WebOSWindow {
             if (app.layer === "streams") { app.playerBack = "streams"; player.prepare(app.displayItem, streamPage.label); app.layer = "player" }
             if (app.layer !== "player") return;
             // resume where it was left, unless it was nearly done
-            // a stream switch keeps the place exactly (`resumeAt`)
+            // a stream switch keeps the time exactly (`resumeMs`: files of one episode differ in length)
             var t = app.playTarget, p = t ? t.progress || 0 : 0;
-            player.start(url, stream, t && t.resumeAt !== undefined ? t.resumeAt : p > 0 && p < 95 ? p / 100 : 0);
+            player.start(url, stream, t && t.resumeMs !== undefined ? { ms: t.resumeMs } : p > 0 && p < 95 ? p / 100 : 0);
         }
         onFailed: {
             if (app.layer !== "player") return;
@@ -308,7 +308,7 @@ WebOSWindow {
             onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
             // another stream of the same video, from where it is now
-            onSwitchStream: { app.playTarget.resumeAt = player.duration ? player.position / player.duration : 0; streams.playRow(row) }
+            onSwitchStream: { app.playTarget.resumeMs = player.position; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
             group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"
             focus: app.layer === "player"

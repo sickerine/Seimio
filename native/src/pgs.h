@@ -6,7 +6,8 @@
 // segments when long; End (0x80). A composition without objects clears the screen. A set that isn't an
 // epoch start or acquisition point reuses the objects and palettes of the sets before it.
 //
-// Sets are kept by start time. A film's track is about 6 KB a second and a remux can carry thirty, so
+// A set usually comes as one block, but muxers that write a segment a block give several with the same
+// time: they're joined (each block once, however often it's read). Sets are kept by start time. A film's track is about 6 KB a second and a remux can carry thirty, so
 // only a window around where the player is reading stays (keepNear()): a seek makes the player read
 // those bytes again, and the tee hands them over again. The window follows the reading, not the
 // clock: right after a seek the player reads the new place before it reports its new position.
@@ -14,23 +15,28 @@
 #include <QMap>
 #include <QHash>
 #include <QVector>
+#include <QSet>
 
 class Pgs {
 public:
-    // a display set at its start (ms); `duration` 0 when the next set ends it
+    // a display set (or part of one) at its start (ms); `duration` 0 when the next set ends it
     bool add(qint64 start, qint64 duration, const QByteArray &segments) {
-        if (m_sets.contains(start)) return false;                   // read again after a seek
-        m_sets.insert(start, { segments, duration });
+        Set &set = m_sets[start];
+        const uint key = qHash(segments);
+        if (set.parts.contains(key)) return false;                  // read again after a seek
+        set.parts.insert(key); set.data += segments; set.duration = qMax(set.duration, duration);
         return true;
     }
     // keeps the sets from 90 s before `ms` (the one showing then, and its epoch's start) to 30 s after:
-    // the playhead trails the reading by the player's buffer
+    // the playhead trails the reading by the player's buffer. An epoch is followed back at most kEpoch
+    // sets, here and when drawing, so one that never restarts can't hold a whole track
+    static constexpr int kEpoch = 64;
     void keepNear(qint64 ms) {
         while (!m_sets.isEmpty() && m_sets.lastKey() > ms + 30000) m_sets.erase(--m_sets.end());
         auto keep = m_sets.upperBound(ms - 90000);
         if (keep == m_sets.begin()) return;
         --keep;
-        while (keep != m_sets.begin() && !(state(keep.value().data) & 0xc0)) --keep;
+        for (int n = 0; keep != m_sets.begin() && !(state(keep.value().data) & 0xc0) && n < kEpoch; n++) --keep;
         while (m_sets.begin() != keep) m_sets.erase(m_sets.begin());
     }
     void clear() { m_sets.clear(); }
@@ -48,7 +54,7 @@ public:
         auto end = m_sets.find(start);
         if (end == m_sets.end()) return QImage();
         auto from = end;
-        for (int n = 0; from != m_sets.begin() && !(state(from.value().data) & 0xc0) && n < 32; n++) --from;
+        for (int n = 0; from != m_sets.begin() && !(state(from.value().data) & 0xc0) && n < kEpoch; n++) --from;
         QHash<int, QVector<QRgb>> palettes;
         QHash<int, Object> objects;
         Composition shown;
@@ -75,7 +81,7 @@ public:
     }
 
 private:
-    struct Set { QByteArray data; qint64 duration; };
+    struct Set { QByteArray data; qint64 duration = 0; QSet<uint> parts; };
     struct Object { int width = 0, height = 0; QByteArray rle; };
     struct Placed { int object, x, y; };
     struct Composition { int width = 0, height = 0, palette = 0; QVector<Placed> placed; };

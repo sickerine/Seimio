@@ -95,7 +95,10 @@ public slots:
         auto it = m_tracks.find(number);
         if (it != m_tracks.end() && it->image) {
             // a window around where the player reads (see pgs.h); the picture showing is picked up on the next tick
-            if (it->image == 1 ? it->pgs.add(start, duration, payload) : it->vob.add(start, duration, payload)) statBlocks++;
+            if (it->image == 1 ? it->pgs.add(start, duration, payload) : it->vob.add(start, duration, payload)) {
+                statBlocks++;
+                if (number == m_number && start == m_shownSet) m_shownSet = -2;   // more of the set on screen
+            }
             if (it->image == 1) it->pgs.keepNear(start); else it->vob.keepNear(start);
             if (number == m_number && !m_playing) render();
             return;

@@ -12,6 +12,7 @@ QtObject {
     property double position: 0
     property int audioTrack: -1
     property double startFraction: 0
+    property double startAt: -1
     property var languages: ["en"]
     property var seen: ({})
     property var audioTracks: []
