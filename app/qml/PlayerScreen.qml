@@ -40,7 +40,7 @@ FocusScope {
     readonly property string failure: media.failure
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
-        + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
+        + " favs " + JSON.stringify(tracks.favorites("sub")) + " fav-menu " + favoriteMenu + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
         + " audio " + trackList.filter(function (t) { return t.type === "audio" }).map(function (t) { return t.id + ":" + t.lang + (t.playable ? "" : "x") }).join(",")
         + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
@@ -145,6 +145,7 @@ FocusScope {
     signal switchStream(int row)
     onZoneChanged: {
         hide.restart();
+        favoriteMenu = false;
         if (zone === "audio" || zone === "subs") { levelSwap.stop(); menu.opacity = 1; menuShift.x = 0; menuLevel = "main"; buildMenu() }
         if (zone === "streams") { var r = stream ? streams.rowOf(stream.url) : -1; streamList.currentIndex = Math.max(0, r); streamList.positionViewAtIndex(Math.max(0, r), ListView.Center) }
     }
@@ -200,7 +201,8 @@ FocusScope {
         if (!media.loaded) return;
         var k = event.key, back = Remote.isBack(k), ok = Remote.isOk(k);
         if (back) {
-            if ((zone === "audio" || zone === "subs") && menuLevel === "other") openLevel("main");
+            if (favoriteMenu) favoriteMenu = false;
+            else if ((zone === "audio" || zone === "subs") && menuLevel === "other") openLevel("main");
             else if (zone === "audio" || zone === "subs" || zone === "streams") zone = "row";
             else if (zone !== "none") { seekNow(); zone = "none" }
             else return;                                        // the app stops the player
@@ -217,7 +219,7 @@ FocusScope {
             else return;
         } else if (zone === "row") {
             if (k === Qt.Key_Down) zone = "bar"; else return;
-        } else if (zone === "subs" && (k === Qt.Key_Left || k === Qt.Key_Right)) {
+        } else if (zone === "subs" && !favoriteMenu && (k === Qt.Key_Left || k === Qt.Key_Right)) {
             setDelay(subs.delay + (k === Qt.Key_Left ? -100 : 100));
         } else if (zone === "episodes") {
             if (k === Qt.Key_Up) zone = "bar"; else return;
@@ -236,17 +238,16 @@ FocusScope {
     }
     property var menuTracks: []                                  // the tracks the open list shows, in order
     property string menuLevel: "main"                           // "main", or "other" (Other languages)
-    // The Audio and Subtitles lists. The first level: Off, then the three languages picked most
-    // (Tracks.topLanguages: English, Japanese and Arabic until picks say otherwise), each with the
-    // file's own tracks in it, or the one found online when the file has none, then Other languages.
-    // Other languages lists the rest by name: the file's tracks, and one row a language found online
-    // (the addon lists its best match first). The delay isn't a row: it's the panel's foot, and
-    // Left/Right set it from any row.
+    // The Audio and Subtitles lists: Off, the file's own tracks, then the languages found online, one row
+    // each (the addon lists its best match first), by name. Holding OK on a language makes it a
+    // favourite (Tracks.favorites, per list); with any, the list is Off, the favourites' tracks (or their
+    // online match) in the order they were added, then Other languages, which opens the rest. The delay
+    // isn't a row: it's the panel's foot, and Left/Right set it from any row.
     // `keep`: stay on the row (the list changing under it), rather than go to the checked one
     function buildMenu(keep) {
         var type = zone === "audio" ? "audio" : "sub";
         var current = type === "audio" ? (choice.audioOff ? -2 : media.audioTrack) : subs.track;
-        var top = tracks.topLanguages(type), groups = ({}), order = [];
+        var favorites = tracks.favorites(type), groups = ({}), order = [];
         for (var i = 0; i < trackList.length; i++) {
             var t = trackList[i];
             if (t.type !== type) continue;
@@ -256,7 +257,7 @@ FocusScope {
             if (t.external) { if (!g.online) g.online = t; else if (t.id === current) g.online = t; continue }
             g.own.push(t);
         }
-        function rowOf(t) {
+        function rowOf(t, star) {
             var name = tracks.languageName(tracks.languageOf(t.lang, t.title)), extra = [];
             if (t.external) extra.push("Online");
             else {
@@ -265,28 +266,57 @@ FocusScope {
                 if (t.forced) extra.push("Forced");
                 if (!t.playable) extra.push("won't play");
             }
-            return { label: name || t.title || "Unknown", detail: extra.join("   "), checked: t.id === current };
+            return { label: name || t.title || "Unknown", detail: extra.join("   "), checked: t.id === current, icon: star ? "star" : "" };
         }
-        function tracksOf(g) { return g.own.length ? g.own : g.online ? [g.online] : [] }
-        var rows = [], list = [], others = [];
-        for (var b = 0; b < order.length; b++) if (top.indexOf(order[b]) < 0) others.push(order[b]);
-        others.sort(function (x, y) { return groups[x].name.localeCompare(groups[y].name) });
-        if (menuLevel === "other") {
-            for (var o = 0; o < others.length; o++) tracksOf(groups[others[o]]).forEach(function (t) { rows.push(rowOf(t)); list.push(t) });
+        // the file's own tracks in file order, then the online languages by name
+        function listOf(bases, star) {
+            var own = [], online = [];
+            bases.forEach(function (b) { groups[b].own.forEach(function (t) { own.push(t) }); if (!groups[b].own.length && groups[b].online) online.push(b) });
+            online.sort(function (x, y) { return groups[x].name.localeCompare(groups[y].name) });
+            var out = [];
+            own.forEach(function (t) { out.push(t) });
+            online.forEach(function (b) { out.push(groups[b].online) });
+            return out;
+        }
+        var favs = favorites.filter(function (f) { return !!groups[f] }), rest = order.filter(function (b) { return favorites.indexOf(b) < 0 });
+        var rows = [], list = [];
+        if (menuLevel === "other" && favs.length) {
+            listOf(rest, false).forEach(function (t) { rows.push(rowOf(t, false)); list.push(t) });
         } else {
             rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) }); list.push(null);
-            for (var k = 0; k < top.length; k++) if (groups[top[k]]) tracksOf(groups[top[k]]).forEach(function (t) { rows.push(rowOf(t)); list.push(t) });
-            if (others.length) {
-                // checked, and named, when what plays is in there
-                var inside = null;
-                for (var q = 0; q < others.length && !inside; q++) tracksOf(groups[others[q]]).forEach(function (t) { if (t.id === current) inside = groups[others[q]].name });
-                rows.push({ label: "Other languages", detail: inside || (others.length + " more"), value: "", checked: !!inside }); list.push("other");
+            if (!favs.length) listOf(order, false).forEach(function (t) { rows.push(rowOf(t, false)); list.push(t) });
+            else {
+                // favourites in the order added, each with its own tracks or its online match
+                favs.forEach(function (f) { listOf([f], true).forEach(function (t) { rows.push(rowOf(t, true)); list.push(t) }) });
+                var others = listOf(rest, false);
+                if (others.length) {
+                    // checked, and named, when what plays is in there
+                    var inside = null;
+                    others.forEach(function (t) { if (t.id === current) inside = tracks.languageName(tracks.languageOf(t.lang, t.title)) });
+                    rows.push({ label: "Other languages", detail: inside || (others.length + " more"), checked: !!inside }); list.push("other");
+                }
             }
         }
         menuTracks = list; menu.model = rows;
         for (var r = 0; !keep && r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
         if (!keep && r === rows.length) menu.currentIndex = 0;
         if (!keep) menu.follow(true);
+    }
+    // holding OK on a language offers to make it a favourite, or stop it being one
+    property bool favoriteMenu: false
+    property string favoriteLanguage: ""
+    function holdRow(row) {
+        var t = menuTracks[row];
+        if (!t || t === "other") return;
+        favoriteLanguage = tracks.baseLanguage(t.lang, t.title);
+        favoriteMenu = true;
+    }
+    function toggleFavorite() {
+        var type = zone === "audio" ? "audio" : "sub", on = tracks.favorites(type).indexOf(favoriteLanguage) < 0;
+        tracks.setFavorite(type, favoriteLanguage, on);
+        favoriteMenu = false;
+        if (!tracks.favorites(type).length) menuLevel = "main";
+        buildMenu();
     }
     // between the levels the list slides across, the way it goes
     function openLevel(level) {
@@ -525,9 +555,10 @@ FocusScope {
             x: 16; y: 16; width: parent.width - 32
             transform: Translate { id: menuShift }
             maxRows: 8                                          // a file's tracks and the addon's run long
-            focus: menuPanel.open
             shown: menuPanel.open
             onTriggered: page.pickFromMenu(rowIndex)
+            onHeld: page.holdRow(rowIndex)
+            focus: menuPanel.open && !page.favoriteMenu
         }
         // the delay, set with Left/Right from any row
         Item {
@@ -552,6 +583,29 @@ FocusScope {
                 }
                 Icon { name: "up"; rotation: 90; width: 26; height: 26; anchors.verticalCenter: parent.verticalCenter; color: Theme.inkDim }
             }
+        }
+    }
+
+    // the favourite menu, beside the held row
+    Rectangle {
+        id: favoritePanel
+        readonly property bool open: page.favoriteMenu && menuPanel.open
+        readonly property bool isFavorite: open && tracks.favorites(page.zone === "audio" ? "audio" : "sub").indexOf(page.favoriteLanguage) >= 0
+        width: 470; height: favoriteList.implicitHeight + 32; radius: 32
+        x: menuPanel.x - width - 18
+        y: menuPanel.y + 16 + menu.currentY + (70 - height) / 2
+        color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
+        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.Right
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        Behavior on scale { NumberAnimation { duration: 300; easing.type: Theme.spring; easing.overshoot: 1.3 } }
+        MenuList {
+            id: favoriteList
+            x: 16; y: 16; width: parent.width - 32
+            focus: favoritePanel.open
+            shown: favoritePanel.open
+            model: [{ label: favoritePanel.isFavorite ? "Remove from favorites" : "Add to favorites", icon: "star" }]
+            onTriggered: page.toggleFavorite()
         }
     }
 

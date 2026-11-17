@@ -15,7 +15,10 @@ FocusScope {
     property int rowSpacing: 8
     property int maxRows: 0                       // 0: every row shows
     signal triggered(int rowIndex)
+    signal held(int rowIndex)                  // a long OK
     readonly property int stride: rowHeight + rowSpacing
+    // where the focused row is drawn, for placing something beside it
+    readonly property real currentY: currentIndex * stride - view.contentY
     readonly property bool scrolls: maxRows > 0 && model.length > maxRows
     implicitWidth: 408
     implicitHeight: (scrolls ? maxRows : model.length) * stride - rowSpacing
@@ -88,6 +91,6 @@ FocusScope {
     }
     Keys.onUpPressed: if (currentIndex > 0) currentIndex--
     Keys.onDownPressed: if (currentIndex < model.length - 1) currentIndex++
-    OkPress { id: ok; onTapped: menu.triggered(menu.currentIndex) }
+    OkPress { id: ok; onTapped: menu.triggered(menu.currentIndex); onHeld: menu.held(menu.currentIndex) }
     Keys.forwardTo: [ok]
 }

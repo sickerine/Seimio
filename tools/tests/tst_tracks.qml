@@ -80,16 +80,18 @@ TestCase {
         tracks.prefer("image", "sub", "eng", "");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "jpn" }, { id: 3, type: "sub", lang: "eng", codec: "S_HDMV/PGS" }, { id: 4, type: "sub", lang: "eng", codec: "S_TEXT/UTF8" }], "image").sub, 4);
     }
-    // the lists show three languages before "Other languages": English, Japanese, Arabic until picks say otherwise
-    function test_topLanguagesFollowPicks() {
+    // favourites: per list, in the order added, toggled off again, and cleared with every choice
+    function test_favorites() {
         tracks.clearPreferences();
-        compare(tracks.topLanguages("sub"), ["eng", "jpn", "ara"]);
-        tracks.prefer("top", "sub", "fr", ""); tracks.prefer("top", "sub", "fre", "");
-        tracks.prefer("top", "sub", "pt-BR", "");
-        compare(tracks.topLanguages("sub"), ["fre", "por", "eng"], "French twice, Portuguese (any region) once, then English");
-        compare(tracks.topLanguages("audio"), ["eng", "jpn", "ara"], "audio counts apart");
-        tracks.prefer("top", "sub", "off", "");
-        compare(tracks.topLanguages("sub"), ["fre", "por", "eng"], "Off isn't a language");
+        compare(tracks.favorites("sub"), []);
+        tracks.setFavorite("sub", "eng", true); tracks.setFavorite("sub", "jpn", true); tracks.setFavorite("sub", "eng", true);
+        compare(tracks.favorites("sub"), ["jpn", "eng"], "added again goes last, once");
+        compare(tracks.favorites("audio"), [], "audio keeps its own");
+        tracks.setFavorite("sub", "jpn", false);
+        compare(tracks.favorites("sub"), ["eng"]);
+        compare(tracks.baseLanguage("pt-BR", ""), "por");
+        tracks.clearPreferences();
+        compare(tracks.favorites("sub"), []);
     }
     function test_unplayableTracksAreNeverChosen() {
         tracks.prefer("other", "audio", "eng", "");

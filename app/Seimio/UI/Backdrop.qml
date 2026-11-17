@@ -65,8 +65,11 @@ Item {
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(1, status === Image.Ready)
     }
     property real zoom: 1
+    // previews hold the zoom at rest, so a still captured at any moment is the same
+    property bool still: false
+    onStillChanged: if (still) zoom = 1
     SequentialAnimation on zoom {
-        running: root.visible
+        running: root.visible && !root.still
         loops: Animation.Infinite
         NumberAnimation { from: 1.0; to: 1.07; duration: 18000; easing.type: Easing.InOutSine }
         NumberAnimation { from: 1.07; to: 1.0; duration: 18000; easing.type: Easing.InOutSine }
