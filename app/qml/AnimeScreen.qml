@@ -116,6 +116,22 @@ FocusScope {
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 320 } }
 
+    // The left edge's shade, mirrored into the top-right corner under the countdown, so it reads over any
+    // art: full from the countdown's left edge to the screen's, down to below the day, then fading out
+    // above the controls. It fades with the countdown.
+    ShaderEffect {
+        opacity: countdown.opacity
+        visible: opacity > 0
+        x: Theme.screenWidth - width; y: 0; width: 1100; height: 640
+        fragmentShader: "
+            varying highp vec2 qt_TexCoord0;
+            uniform lowp float qt_Opacity;
+            void main() {
+                lowp float a = 0.62 * smoothstep(0.0, 0.5, qt_TexCoord0.x) * (1.0 - smoothstep(0.62, 1.0, qt_TexCoord0.y));
+                gl_FragColor = vec4(0.0, 0.0, 0.0, a) * qt_Opacity;
+            }"
+    }
+
     // ---- the next episode, beside the info --------------------------------------------------------------
     Item {
         id: countdown
@@ -147,6 +163,7 @@ FocusScope {
             return d ? [part(d, "d"), part(h, "h"), part(mi, "m")] : h ? [part(h, "h"), part(mi, "m")] : [part(Math.max(1, mi), "m")];
         }
         Column {
+            id: countdownText
             anchors.right: parent.right
             spacing: 6
             Text {
@@ -211,6 +228,7 @@ FocusScope {
             spacing: 22
             bars: anime.view === "schedule" ? [viewBar, formatBar, genreBar] : [viewBar, formatBar, sortBar, genreBar]
             Text {
+                id: seasonLabel
                 anchors.verticalCenter: parent.verticalCenter
                 text: anime.catalog ? anime.catalog.seasonName : ""
                 rightPadding: 10
@@ -243,6 +261,11 @@ FocusScope {
                 Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 onCurrentIndexChanged: anime.sort = anime.sorts[currentIndex][1]
             }
+            // what's left of the width, so the genre control ends on the right margin whatever its name
+            Item {
+                width: Math.max(0, anime.contentWidth - seasonLabel.width - viewBar.width - formatBar.width - sortBar.width - genreBar.width - 5 * bars.spacing)
+                height: 1
+            }
             SegmentedBar {
                 id: genreBar; selectOnOk: true
                 source: anime.glassSource; preblurred: true
@@ -267,7 +290,11 @@ FocusScope {
         return out;
     }
     // the cards: the chart's covers, the schedule's episode stills
-    readonly property size chartCard: Qt.size(190, 285)
+    // The page spans the margins, as the countdown does: the chart's 7 covers and their gaps fill the width
+    // exactly (204 px covers, 42 px gaps), and the genre control's right edge sits on the right margin.
+    readonly property int contentWidth: Theme.screenWidth - 2 * Theme.margin
+    readonly property size chartCard: Qt.size(204, 306)
+    readonly property int chartGap: (contentWidth - perRow * chartCard.width) / (perRow - 1)
     readonly property size scheduleCard: Qt.size(384, 216)
     readonly property size coverSize: { var c = rowsView === "schedule" ? scheduleCard : chartCard; return Qt.size(c.width * Theme.cardDecode, c.height * Theme.cardDecode) }
     Repeater {
@@ -353,7 +380,7 @@ FocusScope {
                     nextLabels: false
                     cardWidth: slot.schedule ? anime.scheduleCard.width : anime.chartCard.width
                     cardHeight: slot.schedule ? anime.scheduleCard.height : anime.chartCard.height
-                    spacing: 36
+                    spacing: slot.schedule ? 36 : anime.chartGap
                     showFocus: activeFocus
                     onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) anime.rememberColumn(slot.idx, currentIndex); else anime.column = currentIndex }
                     onActivated: anime.activated(model[cardIndex])
