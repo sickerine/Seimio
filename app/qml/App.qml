@@ -115,7 +115,9 @@ WebOSWindow {
     property var menuEpisode: null
     property rect menuAnchor: Qt.rect(0, 0, 0, 0)
     function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; playMenu = true }
-    readonly property bool watching: layer === "player" && player.playing
+    // a handoff (a switch inside the player) is still watching: the scene behind stays away, or the
+    // title's backdrop showed through as the still dissolved into the new video
+    readonly property bool watching: layer === "player" && (player.playing || !!player.handoff)
     // lab: { "playList": [{ "title", "url" }], "playSeconds": 20 } plays each in turn from 8 s after launch
     // and logs how each went (playLog, in the lab reports)
     property var playLog: []

@@ -71,9 +71,27 @@ FocusScope {
     // the still dissolves into the new video at its first frame. The old video unloads only once the still
     // covers it. `handoff` is { art, chip, title } while a switch loads.
     property var handoff: null
-    function beginHandoff(art, chip, title) { handoff = { art: art || (item && item.backdrop) || "", chip: chip || "", title: title || "" } }
+    function beginHandoff(art, chip, title) { handoffLast = -1; handoffSteady = 0; handoffCap.stop(); handoff = { art: art || (item && item.backdrop) || "", chip: chip || "", title: title || "" } }
     Timer { id: unloadLater; interval: 400; onTriggered: media.unload() }
-    Connections { target: media; onStateChanged: if (page.handoff && (media.playing || media.failure)) page.handoff = null }
+    // The still goes once frames are on screen. LG says "playing" before the first one shows, and a
+    // resume jumps the reported time ahead, so neither means a picture yet: the time has to move in small,
+    // even steps (each under 0.6 s) for 0.8 s in all, or 6 s pass.
+    property real handoffLast: -1
+    property real handoffSteady: 0
+    Connections {
+        target: media
+        onStateChanged: if (page.handoff && media.failure) page.endHandoff()
+        onPositionChanged: {
+            if (!page.handoff || !media.playing) return;
+            if (!handoffCap.running) handoffCap.restart();
+            const step = media.position - page.handoffLast;
+            if (page.handoffLast >= 0 && step > 0 && step < 600) page.handoffSteady += step;
+            page.handoffLast = media.position;
+            if (page.handoffSteady >= 800) page.endHandoff();
+        }
+    }
+    Timer { id: handoffCap; interval: 6000; onTriggered: page.endHandoff() }
+    function endHandoff() { handoffCap.stop(); handoffLast = -1; handoffSteady = 0; handoff = null }
     // the file, as subtitle delays are kept: the stream's own link, which names the torrent and the file
     readonly property string fileKey: stream && stream.url ? stream.url : ""
     // `at`: where to start, a fraction of the way (a resume) or { ms } (a stream switch keeps the time)
