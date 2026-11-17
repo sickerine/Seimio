@@ -91,6 +91,9 @@ Each rule comes from a measured stall on the C5.
   `Icon.inkLeft`/`inkRight`, and centre a label and anything under it (a progress bar) as one block.
   Measure the gaps on a 2x render (see the gallery) rather than trusting box maths.
 - Nothing shifts once shown: give placeholders the final size, and fade art in when it's decoded.
+- What fades out keeps showing what it showed until its fade ends. Content that reads the state that
+  hides it (which list a panel is, the selected show) reads it through `Latch` (`live` while open), never
+  live: the subtitle panel's delay row vanished the moment its fade began.
 - Reuse the library (`app/Seimio/UI`) before writing a new control; extend it when a screen needs a
   variant, so every screen keeps the same chips, buttons, glass and motion (`Theme` durations and
   easing).

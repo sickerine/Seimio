@@ -542,7 +542,9 @@ FocusScope {
     Rectangle {
         id: menuPanel
         readonly property bool open: page.zone === "audio" || page.zone === "subs"
-        readonly property bool delayFoot: page.zone === "subs"
+        // which list it is, held while the panel fades out (the delay foot vanished as it began to)
+        Latch { id: menuKind; value: page.zone; live: menuPanel.open }
+        readonly property bool delayFoot: menuKind.current === "subs"
         width: 760; height: menu.implicitHeight + 32 + (delayFoot ? 84 : 0); radius: 32
         anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 830 - height
         color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
@@ -590,10 +592,14 @@ FocusScope {
     Rectangle {
         id: favoritePanel
         readonly property bool open: page.favoriteMenu && menuPanel.open
-        readonly property bool isFavorite: open && tracks.favorites(page.zone === "audio" ? "audio" : "sub").indexOf(page.favoriteLanguage) >= 0
+        // what it offers and where, held while it fades out: the toggle rebuilds the list under it
+        Latch { id: favoriteShown; live: favoritePanel.open
+                value: page.favoriteMenu && tracks.favorites(page.zone === "audio" ? "audio" : "sub").indexOf(page.favoriteLanguage) >= 0 }
+        Latch { id: favoriteY; live: favoritePanel.open; value: menuPanel.y + 16 + menu.currentY + (70 - favoritePanel.height) / 2 }
+        readonly property bool isFavorite: !!favoriteShown.current
         width: 470; height: favoriteList.implicitHeight + 32; radius: 32
         x: menuPanel.x - width - 18
-        y: menuPanel.y + 16 + menu.currentY + (70 - height) / 2
+        y: favoriteY.current
         color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
         opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.Right
         visible: opacity > 0.01

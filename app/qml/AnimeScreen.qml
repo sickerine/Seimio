@@ -79,13 +79,17 @@ FocusScope {
     // ---- the next episode, beside the info --------------------------------------------------------------
     Item {
         id: countdown
-        readonly property var m: anime.shownItem
+        // the show it counts down for, held while it fades out (it emptied as a show without a next
+        // episode came in)
+        readonly property bool itemAiring: !!(anime.shownItem && anime.shownItem.nextAt > anime.now)
+        Latch { id: counted; value: anime.shownItem; live: anime.row <= 0 && countdown.itemAiring }
+        readonly property var m: counted.current
         readonly property double at: m && m.nextAt ? m.nextAt : 0
         readonly property double remaining: Math.max(0, at - anime.now)
         readonly property bool airing: at > anime.now
         x: Theme.screenWidth - Theme.margin - width; y: 170
         width: 470; height: 230
-        opacity: anime.row <= 0 && airing ? 1 : 0
+        opacity: anime.row <= 0 && itemAiring ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         // each new show rises in, as the info does
