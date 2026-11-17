@@ -45,6 +45,8 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 ## Status
 
 - [x] 1 track engine (tracks.h, tools/tests/tst_tracks.qml)
-- [ ] 2 tee
+- [x] 2 tee (tee.h: server and Matroska parser; subtitle_layer.h: libass fed by the tee). Verified on
+  the TV with [Salieri] Demon Slayer S3E9: 7 subtitle tracks, 35 fonts, chapters, ASS drawn. Not yet:
+  hiding Attachments from the player (mkv-cut), PGS, external subtitles.
 - [ ] 3 UI
 - [ ] 4 performance

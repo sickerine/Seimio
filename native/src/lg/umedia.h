@@ -30,6 +30,8 @@ public:
     bool seek(long long position);
     bool unload();
     bool selectTrack(std::string &type, int index);
+    bool setAudioMute(bool mute);
+    bool setSubtitleEnable(bool enable);
 private:
     char m_opaque[4096]; // the real object is smaller; this keeps subclass members clear of it
 };

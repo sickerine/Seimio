@@ -132,6 +132,7 @@ WebOSWindow {
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     WindowTools { id: tools }
+    Tracks { id: trackChoice }
     Streams {
         id: streams
         addon: "https://torrentio.strem.fun/torbox=TORBOX_KEY/"
@@ -147,7 +148,7 @@ WebOSWindow {
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
                              visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
-                     playLog: app.playLog,
+                     playLog: app.playLog, subs: player.active ? player.subtitleInfo() : "",
                      playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
@@ -281,6 +282,9 @@ WebOSWindow {
             id: player
             window: app
             streams: streams
+            tracks: trackChoice
+            // anime by its Kitsu id; everything else keeps its own track choices
+            group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"
             focus: app.layer === "player"
             active: app.layer === "player"
         }

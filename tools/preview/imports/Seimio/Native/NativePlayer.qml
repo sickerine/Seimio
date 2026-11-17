@@ -14,6 +14,10 @@ QtObject {
     property double startFraction: 0
     property var languages: ["en"]
     property var seen: ({})
+    property var audioTracks: []
+    property int preferredAudio: -1
+    function selectAudio(i) { audioTrack = i; return true }
+    function mute(on) { return true }
     signal event(string json)
     function exportWindow(w) { windowId = "mac"; return "" }
     function setEventSlot(n) {}

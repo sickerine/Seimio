@@ -5,3 +5,5 @@ LogTap 1.0 Stub.qml
 WindowTools 1.0 WindowTools.qml
 LunaClient 1.0 LunaClient.qml
 NativePlayer 1.0 NativePlayer.qml
+Tee 1.0 Tee.qml
+SubtitleLayer 1.0 SubtitleLayer.qml

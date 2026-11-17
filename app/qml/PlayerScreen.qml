@@ -13,6 +13,11 @@ FocusScope {
     property bool active: false
     property var window
     property var streams                 // Seimio.Data Streams, for what the AI pick is doing
+    property var tracks                  // Seimio.Data Tracks: which audio and subtitles play, and the choices
+    property string group: "other"       // whose track choices apply: "anime" or "other"
+    property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
+    property var choice: ({})            // what Tracks chose for this file
+    property var chapters: []            // { start, end, title } from the file
     property var item: null
     property string label: ""
     property var stream: null            // the stream being played, once chosen
@@ -23,6 +28,7 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
+    function subtitleInfo() { return subs.info() + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
@@ -39,19 +45,69 @@ FocusScope {
         if (s.size) out.push({ text: s.size });
         return out;
     }
-    function prepare(title, episodeLabel) { item = title; label = episodeLabel; stream = null; pendingUrl = ""; media.unload() }
+    function prepare(title, episodeLabel) { item = title; label = episodeLabel; stream = null; pendingUrl = ""; media.unload(); subs.reset(); trackList = []; choice = ({}); chapters = [] }
+    // the file, as subtitle delays are kept: the stream's own link, which names the torrent and the file
+    readonly property string fileKey: stream && stream.url ? stream.url : ""
     function start(url, s, fraction) {
         stream = s; pendingUrl = url; media.startFraction = fraction || 0;
         if (media.windowId) load(); else { media.setEventSlot(48); media.exportWindow(window) }
     }
     function load() {
         if (!pendingUrl) return;
-        media.load(pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
+        subs.reset(); trackList = []; choice = ({}); chapters = [];
+        media.load(tee.open(pendingUrl), JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
+        subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
     }
     function stop() { media.unload(); stream = null; pendingUrl = "" }
 
-    NativePlayer { id: media; onWindowIdChanged: page.load() }
+    NativePlayer {
+        id: media
+        onWindowIdChanged: page.load()
+        // a file that isn't Matroska: LG's own list of audio tracks is all there is
+        onAudioTracksChanged: if (!page.trackList.length && audioTracks.length && page.fileIsOther) page.chooseTracks(page.lgTracks())
+        onLoadedChanged: if (loaded && page.choice.audioOff) media.mute(true)
+    }
+    // the file's tracks, chapters and subtitles, read from the bytes the player loads (Seimio.Native Tee)
+    property bool fileIsOther: false
+    Tee {
+        id: tee
+        onTracksRead: {
+            page.fileIsOther = !matroska;
+            if (matroska) page.chooseTracks(page.fileTracks(tracks)); else if (media.audioTracks.length) page.chooseTracks(page.lgTracks());
+        }
+        onChapter: { var c = page.chapters.slice(); c.push({ start: startMs, end: endMs, title: title }); page.chapters = c }
+    }
+    // what LG's player decodes: Dolby Digital (Plus), AAC, MP3, FLAC, PCM, Vorbis; not DTS, TrueHD or Opus
+    function audioPlays(codec) { return !/dts|truehd|mlp|opus/i.test(codec) }
+    function fileTracks(list) {
+        var out = [], audio = 0;
+        for (var i = 0; i < list.length; i++) {
+            var t = list[i];
+            if (t.type === 2) out.push({ id: audio++, type: "audio", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced, playable: audioPlays(t.codec) });
+            else if (t.type === 17) out.push({ id: t.number, type: "sub", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced,
+                                                 playable: /^S_TEXT\/(ASS|SSA|UTF8)/.test(t.codec) });
+        }
+        return out;
+    }
+    function lgTracks() {
+        var out = [];
+        for (var i = 0; i < media.audioTracks.length; i++) out.push({ id: i, type: "audio", lang: media.audioTracks[i].lang, title: "", codec: media.audioTracks[i].codec, playable: audioPlays(media.audioTracks[i].codec) });
+        return out;
+    }
+    function chooseTracks(list) {
+        trackList = list; choice = tracks.choose(list, group);
+        if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
+        if (media.loaded) media.mute(!!choice.audioOff);
+        subs.track = choice.sub;
+    }
+    SubtitleLayer {
+        id: subs
+        anchors.fill: parent
+        source: tee
+        position: media.position
+        playing: media.playing && !media.paused
+    }
 
     Keys.onPressed: {
         if (!media.loaded) return;

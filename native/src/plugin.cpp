@@ -6,6 +6,7 @@
 #include "luna_client.h"
 #include "player.h"
 #include "subtitle_layer.h"
+#include "tee.h"
 #include "probes.h"
 #include "window_tools.h"
 
@@ -33,6 +34,7 @@ public:
         qmlRegisterType<LunaClient>(uri, 1, 0, "LunaClient");
         qmlRegisterType<NativePlayer>(uri, 1, 0, "NativePlayer");
         qmlRegisterType<SubtitleLayer>(uri, 1, 0, "SubtitleLayer");
+        qmlRegisterType<Tee>(uri, 1, 0, "Tee");
         qmlRegisterType<KeyLatency>(uri, 1, 0, "KeyLatency");
         qmlRegisterType<FrameStats>(uri, 1, 0, "FrameStats");
         qmlRegisterType<LogTap>(uri, 1, 0, "LogTap");

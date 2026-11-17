@@ -47,6 +47,8 @@ class NativePlayer : public QObject {
     Q_PROPERTY(double startFraction MEMBER m_startFraction NOTIFY settingsChanged)
     Q_PROPERTY(QStringList languages MEMBER m_languages NOTIFY settingsChanged)
     Q_PROPERTY(QVariantMap seen MEMBER m_seen NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList audioTracks MEMBER m_audioTracks NOTIFY stateChanged)     // { lang, codec } per audio track
+    Q_PROPERTY(int preferredAudio MEMBER m_preferredAudio NOTIFY settingsChanged)     // chosen before load ends, or -1
 public:
     // Unload before the client goes, so a pipeline never outlives the app (a leaked one jammed the TV's audio).
     ~NativePlayer() override { live().removeAll(this); if (m_client) { m_client->unload(); delete m_client; } }
@@ -78,7 +80,7 @@ public:
     Q_INVOKABLE bool load(const QString &uri, const QString &payload) {
         ensure();
         m_loaded = m_playing = m_paused = m_buffering = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
-        m_tracks = QJsonArray(); m_seen.clear();
+        m_tracks = QJsonArray(); m_seen.clear(); m_audioTracks.clear(); m_preferredAudio = -1;
         emit stateChanged(); emit positionChanged();
         return m_client->loadAsync(uri.toStdString(), "media", payload.toStdString());
     }
@@ -90,6 +92,8 @@ public:
         std::string t = type.toStdString();
         return m_client->selectTrack(t, index);
     }
+    Q_INVOKABLE bool selectAudio(int index) { std::string a("audio"); if (!m_client || !m_client->selectTrack(a, index)) return false; m_audioTrack = index; emit stateChanged(); return true; }
+    Q_INVOKABLE bool mute(bool on) { return m_client && m_client->setAudioMute(on); }
     Q_INVOKABLE bool unload() { m_playing = m_loaded = false; emit stateChanged(); return m_client && m_client->unload(); }
     // "slot:count" for every slot that has fired, to find which one carries raw events.
     Q_INVOKABLE QString slotCounts() const {
@@ -110,9 +114,12 @@ public:
             const QJsonObject program = v.value("programInfo").toArray().first().toObject();
             m_duration = program.value("duration").toDouble();
             m_tracks = program.value("audioTrackInfo").toArray();
+            m_audioTracks.clear();
+            for (const QJsonValue &t : m_tracks) m_audioTracks << QVariantMap { { "lang", t.toObject().value("language").toString() }, { "codec", t.toObject().value("codec").toString() } };
         } else if (kind == "loadCompleted") {
             m_loaded = true;
-            const int best = bestAudio();
+            m_client->setSubtitleEnable(false);                                // ours draws them (SubtitleLayer)
+            const int best = m_preferredAudio >= 0 && m_preferredAudio < m_tracks.size() ? m_preferredAudio : bestAudio();
             if (best > 0 || (best == 0 && m_tracks.size() > 1)) { std::string a("audio"); m_client->selectTrack(a, best); }
             m_audioTrack = best;
             if (m_startFraction > 0 && m_duration > 0) m_client->seek((long long)(m_duration * m_startFraction));
@@ -172,6 +179,8 @@ private:
     int m_audioTrack = -1;
     QStringList m_languages { "en" };
     QJsonArray m_tracks;
+    QVariantList m_audioTracks;
+    int m_preferredAudio = -1;
     QVariantMap m_seen;
     Client *m_client = nullptr;
     WebOSExported *m_exported = nullptr;
