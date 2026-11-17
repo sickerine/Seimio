@@ -17,7 +17,7 @@ import QtQuick 2.12
 Item {
     id: root
     property string target
-    property size decodeSize: Qt.size(960, 540)
+    property size decodeSize: Qt.size(1920, 1080)          // the screen's own size: half of it looked soft
     property real pan: 0
     property real radius: 0                   // rounded corners for a framed backdrop (blends then)
     property string shown: ""

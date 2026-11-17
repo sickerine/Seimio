@@ -1,9 +1,12 @@
 """Fetches one anime season from AniList into app/art/season.json, the way AniChart lists it: every
 show starting that season or carrying over, with its next episode's air time, studio, format, genres,
-score and popularity, and its cover and banner saved under app/art/. No adult titles; leftovers from
+score and popularity, and its cover and art saved under app/art/: the full-screen background is the
+fanart Stremio's Kitsu addon lists (1920x1080; Kitsu ids from ARM, Fribb's anime-lists), with AniList's
+banner (a 1900x400 strip) only when there's none. No adult titles; leftovers from
 earlier seasons are kept when they're still airing (AniChart's "leftovers").
 
-usage: python3 -I tools/fetch-season.py FALL 2026 [--min-popularity 3000]"""
+usage: /opt/homebrew/bin/python3 -I tools/fetch-season.py FALL 2026 [--min-popularity 3000]
+(the system Python's LibreSSL can't reach fanart.tv)"""
 import datetime, json, os, re, sys, time, urllib.request
 
 ART = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "art")
@@ -48,6 +51,23 @@ def pages(query, variables, min_pop):
         page += 1
 
 
+def backgrounds(anilist_ids):
+    """anilist id -> the Kitsu addon's background url, for those that have one"""
+    ids = list(anilist_ids)
+    out = {}
+    for i in range(0, len(ids), 100):
+        body = json.dumps([{"anilist": a} for a in ids[i:i + 100]]).encode()
+        rows = json.loads(urllib.request.urlopen(urllib.request.Request("https://arm.haglund.dev/api/v2/ids", body, UA), timeout=30).read())
+        for row in rows:
+            if not row or not row.get("kitsu"): continue
+            try:
+                meta = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://anime-kitsu.strem.fun/meta/series/kitsu:{row['kitsu']}.json", headers={"User-Agent": UA["User-Agent"]}), timeout=30).read())["meta"]
+            except Exception:
+                continue
+            if meta.get("background"): out[row["anilist"]] = meta["background"]
+    return out
+
+
 def main():
     season, year = sys.argv[1].upper(), int(sys.argv[2])
     min_pop = int(sys.argv[sys.argv.index("--min-popularity") + 1]) if "--min-popularity" in sys.argv else 3000
@@ -70,6 +90,12 @@ def main():
             "banner": save(md["bannerImage"], f"al_{md['id']}") if md["bannerImage"] else "",
             "description": re.sub(r"\s+", " ", re.sub(r"<[^>]+>|\(Source:[^)]*\)", " ", md["description"] or "")).strip()[:320],
         })
+    art = backgrounds(int(s["id"].split(":")[1]) for s in out)
+    for s in out:
+        url = art.get(int(s["id"].split(":")[1]))
+        if url:
+            try: s["background"] = save(url, f"ab_{s['id'].split(':')[1]}")
+            except Exception: pass
     json.dump({"season": season, "year": year, "fetched": int(time.time()), "shows": out},
               open(os.path.join(ART, "season.json"), "w"), ensure_ascii=False, indent=0)
     print(f"{len(out)} shows ({sum(s['leftover'] for s in out)} leftovers)")

@@ -345,7 +345,8 @@ private:
                 static const QHash<QString, QString> formats { { "TV", "TV" }, { "TV_SHORT", "TV short" }, { "MOVIE", "Movie" }, { "ONA", "ONA" }, { "OVA", "OVA" }, { "SPECIAL", "Special" } };
                 for (const QJsonValue &v : season["shows"].toArray()) {
                     const QJsonObject a = v.toObject();
-                    const QString cover = art(a["cover"].toString()), banner = art(a["banner"].toString());
+                    // the backdrop: the full-screen fanart, or AniList's banner strip, or the cover
+                    const QString cover = art(a["cover"].toString()), banner = art(a["banner"].toString()), background = art(a["background"].toString());
                     const QString format = formats.value(a["format"].toString(), a["format"].toString());
                     const int episodes = a["episodes"].toInt();
                     QStringList chips { format };
@@ -358,7 +359,7 @@ private:
                     const QJsonObject next = a["next"].toObject();
                     d.season.append(QVariantMap{
                         { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
-                        { "art", cover }, { "cover", cover }, { "backdrop", banner.isEmpty() ? cover : banner }, { "logo", QString() },
+                        { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", QString() },
                         { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
                         { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },
                         { "format", a["format"].toString() }, { "studio", a["studio"].toString() }, { "color", a["color"].toString() },
@@ -400,6 +401,7 @@ private:
         QVariantMap item = source;
         item["id"] = "kitsu:" + QString::number(kitsu);
         item["logo"] = meta.value("logo").toString();
+        if (!meta.value("background").toString().isEmpty()) item["backdrop"] = meta.value("background").toString();   // full-screen fanart
         if (item["description"].toString().isEmpty()) item["description"] = meta.value("description").toString();
         QMap<int, QVariantList> bySeason;
         for (const QJsonValue &v : meta.value("videos").toArray()) {
