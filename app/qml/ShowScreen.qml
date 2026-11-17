@@ -27,6 +27,8 @@ FocusScope {
     }
     function resumeTarget(sh) { var p = posIn(sh); return sh && sh.seasons && sh.seasons.length ? target(sh, p.s, sh.seasons[p.s].episodes[p.e]) : null }
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
+    // one season: no season bar, and the episodes move up into its place
+    readonly property bool oneSeason: seasons.length < 2
     // the season the episode row shows and its card data, set together by showSeason(), so the row is
     // built once per change instead of once per binding that moves
     property int shownSeason: 0
@@ -144,6 +146,7 @@ FocusScope {
 
     Reveal {
         shown: page.active; delay: 260
+        visible: !page.oneSeason
         x: Theme.margin; y: 548
         SegmentedBar {
             id: seasonBar
@@ -157,7 +160,7 @@ FocusScope {
 
     Reveal {
         shown: page.active; delay: 330; dy: 30
-        y: 640; width: page.width; height: 440
+        y: page.oneSeason ? 548 : 640; width: page.width; height: 440
         Item {
             width: page.width; height: 440
             opacity: page.rowFade
@@ -199,6 +202,6 @@ FocusScope {
         }
     }
 
-    Keys.onDownPressed: if (zone < 2) zone++
-    Keys.onUpPressed: if (zone > 0) zone--
+    Keys.onDownPressed: if (zone < 2) zone = oneSeason ? 2 : zone + 1
+    Keys.onUpPressed: if (zone > 0) zone = oneSeason ? 0 : zone - 1
 }
