@@ -1,13 +1,17 @@
 // A show's page: title, actions (resume with progress, library, watched), seasons and episodes, with
 // details of the focused episode. load(item, show) builds the page for a title and its seasons and
-// episodes with watch state, at its resume position; App calls it ahead of time while Home sits on a
-// show, so open(item, show) usually only resets focus. The page keeps its title until the next load,
-// so it still shows it while it fades out. The zones are library controls
+// episodes with watch state, resting where you are in the show (Episodes.resting, also what Play
+// plays); App calls it ahead of time while Home sits on a show, so open(item, show, episodeId) usually
+// only places focus. The page rests on the episodes, never on Play: on `episodeId` when given (the
+// calendar's release), else where you are; rest(episodeId) does the same on a page already open (back
+// from the player, on the episode last played). Play stays a shortcut one row up.
+// The page keeps its title until the next load, so it still shows it while it fades out. The zones are library controls
 // that handle their own keys; this page moves focus between them with Up/Down. The episode row shows
 // `shownSeason`, which follows the season bar through a short slide, so a season change never flashes
 // the old episodes at the new position.
 import QtQuick 2.12
 import Seimio.UI 1.0
+import "Episodes.js" as Episodes
 
 FocusScope {
     id: page
@@ -25,7 +29,10 @@ FocusScope {
     function target(sh, season, ep) {
         return { id: ep.id, label: (sh.seasons.length > 1 ? "S" + sh.seasons[season].season + " " : "") + "E" + ep.episode, progress: ep.progress || 0 };
     }
-    function resumeTarget(sh) { var p = posIn(sh); return sh && sh.seasons && sh.seasons.length ? target(sh, p.s, sh.seasons[p.s].episodes[p.e]) : null }
+    function resumeTarget(sh) {
+        var p = Episodes.resting(sh, today);
+        return sh && sh.seasons && sh.seasons.length && sh.seasons[p.s].episodes.length ? target(sh, p.s, sh.seasons[p.s].episodes[p.e]) : null;
+    }
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
     // one season: no season bar, and the episodes move up into its place
     readonly property bool oneSeason: seasons.length < 2
@@ -35,7 +42,7 @@ FocusScope {
     property var episodes: []
     property var episodeData: []
     property string today: new Date().toISOString().slice(0, 10)   // App passes its own, so previews can fix the day
-    onTodayChanged: if (show) showSeason(shownSeason, strip.currentIndex)   // what has aired changes at midnight
+    onTodayChanged: if (show) { resumePos = Episodes.resting(show, today); showSeason(shownSeason, strip.currentIndex) }   // what has aired changes at midnight
     function showSeason(s, e) {
         shownSeason = s;
         episodes = seasons.length ? seasons[s].episodes : [];
@@ -50,19 +57,8 @@ FocusScope {
         strip.jumpTo(e);
     }
 
-    // where you are in the show: the episode Stremio has as current, else the first unwatched
-    function posIn(sh) {
-        var seasons = sh && sh.seasons ? sh.seasons : [];
-        for (var s = 0; s < seasons.length; s++)
-            for (var e = 0; e < seasons[s].episodes.length; e++)
-                if (seasons[s].episodes[e].id === sh.current) return { s: s, e: e };
-        for (s = 0; s < seasons.length; s++)
-            for (e = 0; e < seasons[s].episodes.length; e++)
-                if (!seasons[s].episodes[e].watched) return { s: s, e: e };
-        return { s: 0, e: 0 };
-    }
-    readonly property var resumePos: posIn(show)
-    // (bindings update in no set order when the show changes, so resumePos can still be the last show's)
+    // where you are in the show ({ s, e }), set with the show by load(), so it is never the last show's
+    property var resumePos: ({ s: 0, e: 0 })
     readonly property var resumeSeason: seasons[resumePos.s] || null
     readonly property var resumeEp: resumeSeason ? resumeSeason.episodes[resumePos.e] || null : null
     readonly property string resumeLabel: resumeEp
@@ -71,15 +67,24 @@ FocusScope {
 
     function load(title, seasonsAndEpisodes) {
         if (title === item && seasonsAndEpisodes === show) return;
+        resumePos = Episodes.resting(seasonsAndEpisodes, today);
         item = title; show = seasonsAndEpisodes;
-        seasonBar.currentIndex = resumePos.s;
-        showSeason(resumePos.s, resumePos.e);
+        place(resumePos);
     }
-    function open(title, seasonsAndEpisodes) {
+    function open(title, seasonsAndEpisodes, episodeId) {
         load(title, seasonsAndEpisodes);
-        zone = 0; actions.currentIndex = 0;
-        seasonBar.currentIndex = resumePos.s;
-        if (shownSeason !== resumePos.s) showSeason(resumePos.s, resumePos.e); else strip.jumpTo(resumePos.e);
+        actions.currentIndex = 0;
+        rest(episodeId);
+    }
+    function rest(episodeId) {
+        zone = 2;
+        place((episodeId && Episodes.find(show, episodeId)) || resumePos);
+    }
+    // shows season p.s with episode p.e focused: the row first, so the season bar's change below finds
+    // it already shown and doesn't start a slide
+    function place(p) {
+        if (shownSeason !== p.s || episodes !== (seasons.length ? seasons[p.s].episodes : [])) showSeason(p.s, p.e); else strip.jumpTo(p.e);
+        seasonBar.currentIndex = p.s;
     }
 
     // season change: slide the old episodes out, swap, slide the new ones in from the side moved toward

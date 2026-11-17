@@ -83,7 +83,8 @@ FocusScope {
         dayItems = cards.map(function (c) {
             var e = c.entry;
             if (c.kind === "release")
-                return { id: e.item.id, name: e.name, title: e.name, logo: e.item.logo || "", backdrop: e.item.backdrop, art: e.art,
+                // `video`: the release's episode, where the show page opens
+                return { id: e.item.id, video: e.video, name: e.name, title: e.name, logo: e.item.logo || "", backdrop: e.item.backdrop, art: e.art,
                          description: e.overview || e.item.description || "", episode: "Episode " + e.episode,
                          chips: [e.time, stateOf(e)].filter(function (s) { return s }), rating: "", progress: -1 };
             // a neighbouring day: its date as the title, and the first few of its shows

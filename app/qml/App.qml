@@ -51,7 +51,8 @@ WebOSWindow {
         commit();
         // the title page is for a movie, or a show whose whole run is one season with one episode; any
         // other show gets the show page, even when one of its seasons has a single episode
-        if (displayItem && app.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id)); layer = "show" }
+        // a calendar release opens on its own episode (`video`); anything else where you are in the show
+        if (displayItem && app.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id), displayItem.video || ""); layer = "show" }
         else { titlePage.open(displayItem); layer = "title" }
     }
     // Playing. Play (and OK on an episode) plays the AI pick: the player opens at once and says what it's
@@ -392,7 +393,12 @@ WebOSWindow {
 
         Keys.onPressed: {
             if (Remote.isBack(event.key) && app.playMenu) { event.accepted = true; app.playMenu = false }
-            else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; streams.cancel(); player.stop(); app.layer = app.playerBack }
+            else if (Remote.isBack(event.key) && app.layer === "player") {
+                event.accepted = true; streams.cancel(); player.stop();
+                // the show page comes back on the episode last played (it may have changed in the player)
+                if (app.playerBack === "show" && app.playTarget && app.playTarget.type === "series") showPage.rest(app.playTarget.id);
+                app.layer = app.playerBack;
+            }
             else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.layer = app.pageLayer }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }

@@ -17,7 +17,7 @@ python3 - "$tmp/app/appinfo.json" "$next" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p)); d["version"] = sys.argv[2]; json.dump(d, open(p, "w"), indent=2)
 PY
-ares-package "$tmp/app" -o .lab/ipk >/dev/null || exit 1
+ares-package --no-minify "$tmp/app" -o .lab/ipk >/dev/null || exit 1
 ares-launch -d tv --close "$id" >/dev/null 2>&1
 ares-install -d tv ".lab/ipk/${id}_${next}_all.ipk" >/dev/null || exit 1
 rm -rf "$tmp"

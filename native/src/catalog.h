@@ -26,12 +26,12 @@
 // One release on one day: an episode of a library show or of the airing schedule.
 struct Release {
     QVariantMap item;            // the title entry Home shows for it (backdrop, logo, description, ...)
-    QString name, art, title, overview, released, time;
+    QString name, art, title, overview, released, time, video;     // video: the episode's id
     int season = 1, episode = 0;
     bool watched = false;
     QVariantMap toMap() const {
         return { {"item", item}, {"name", name}, {"art", art}, {"title", title}, {"overview", overview},
-                 {"released", released}, {"time", time}, {"season", season}, {"episode", episode}, {"watched", watched} };
+                 {"released", released}, {"time", time}, {"season", season}, {"episode", episode}, {"watched", watched}, {"video", video} };
     }
 };
 using Calendar = QHash<QString, QVector<Release>>;   // "YYYY-MM-DD" -> releases, library first
@@ -325,7 +325,7 @@ private:
                             Release r;
                             r.item = *item; r.name = show["name"].toString(); r.art = e["thumb"].toString().isEmpty() ? (*item)["backdrop"].toString() : art(e["thumb"].toString());
                             r.season = s["season"].toInt(); r.episode = e["episode"].toInt(); r.title = e["title"].toString();
-                            r.overview = e["overview"].toString(); r.watched = e["watched"].toBool(); r.released = released;
+                            r.overview = e["overview"].toString(); r.watched = e["watched"].toBool(); r.released = released; r.video = e["id"].toString();
                             d.calendar[released].append(r);
                         }
                     }
