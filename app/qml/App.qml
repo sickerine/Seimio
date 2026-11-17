@@ -232,7 +232,7 @@ WebOSWindow {
                 id: backdropFrost
                 anchors.fill: parent
                 source: hero
-                frozen: true; sourceBusy: hero.busy || panning.running
+                frozen: true; sourceBusy: hero.busy || panning.running; sourceMoving: hero.fading
                 opacity: (app.onHome && app.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }

@@ -23,6 +23,7 @@ Item {
     property string shown: ""
     property string incoming: ""
     readonly property bool busy: target !== shown
+    readonly property bool fading: fade.running
     signal crossfadeStarted()
 
     property int front: 0                     // which image is on screen; the other one loads and fades in

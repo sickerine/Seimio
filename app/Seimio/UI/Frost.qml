@@ -13,6 +13,7 @@ Item {
     property real holeRadius: 18
     property bool frozen: false
     property bool sourceBusy: false
+    property bool sourceMoving: false
     visible: opacity > 0
 
     BlurChain {
@@ -22,6 +23,7 @@ Item {
         active: frost.visible
         frozen: frost.frozen
         sourceBusy: frost.sourceBusy
+        sourceMoving: frost.sourceMoving
     }
     ShaderEffect {
         anchors.fill: parent

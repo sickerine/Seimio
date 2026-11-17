@@ -80,7 +80,8 @@ Each rule comes from a measured stall on the C5.
   work that runs while something slides away waits until it has (the calendar returns to today 520 ms
   after it leaves).
 - A frozen blur refreshes every 50 ms, not every frame, while its source changes (`BlurChain`); every
-  frame cost ~10 render passes and a blur that wide hides the difference.
+  frame cost ~10 render passes and a blur that wide hides the difference, except during the backdrop's 700 ms crossfade
+  (`sourceMoving`), where a full-screen frost stepping at 20 Hz showed; that costs no late frames.
 - Blur once. Glass over a Frost samples the frost directly (`preblurred`) instead of blurring it again.
 - Batch data arrival: the calendar is built once when all its sources have arrived, and a refresh goes
   through the same staging as a month turn.
