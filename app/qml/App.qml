@@ -74,8 +74,17 @@ WebOSWindow {
         if (layer !== "player") playerBack = layer === "menu" ? "home" : layer;     // an episode from the player goes back where it came from
         // the episode row under the player shows the show page's season: load the show if it isn't there
         if (playTarget.type === "series" && showPage.item !== displayItem && catalog.episodeCount(displayItem.id) > 1) showPage.load(displayItem, showData(displayItem.id));
+        // switching episodes inside the player keeps the release: Stremio's binge group (see Streams.play)
+        var binge = layer === "player" && player.stream ? player.stream.bingeGroup || "" : "";
         player.prepare(displayItem, playTarget.label); layer = "player";
-        streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""));
+        player.stillArt = episodeArt(playTarget.id);
+        streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""), binge);
+    }
+    // an episode's thumbnail from the show page's season, or the title's backdrop
+    function episodeArt(id) {
+        var eps = showPage.item === displayItem ? showPage.episodes : [];
+        for (var i = 0; i < eps.length; i++) if (eps[i].id === id && eps[i].thumb) return eps[i].thumb;
+        return displayItem ? displayItem.backdrop : "";
     }
     function openStreams(episode) {
         commit(); playMenu = false;
@@ -321,7 +330,13 @@ WebOSWindow {
             episodeCards: sameShow ? showPage.episodeData : []
             episodeId: app.playTarget ? app.playTarget.id : ""
             videoId: app.playTarget ? app.playTarget.id : ""
-            onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
+            // inside the player, an episode change hands off: the picture fades into the episode's still
+            onPlayEpisode: { player.beginHandoff(episode.thumb, "E" + episode.episode, episode.title || ""); app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode)) }
+            // once an episode plays, the next one's streams are fetched ahead (as stremio-core does)
+            onPlayingChanged: if (playing && app.playTarget && app.playTarget.type === "series") {
+                var eps = player.episodes;
+                for (var i = 0; i + 1 < eps.length; i++) if (eps[i].id === app.playTarget.id) { streams.prefetch("series", eps[i + 1].id); break }
+            }
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
             onMenuLevelChanged: probe.captures()
             onFavoriteMenuChanged: probe.captures()

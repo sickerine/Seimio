@@ -264,11 +264,27 @@ public:
     QVariantMap chosen() const { return m_chosen; }
 
     // Fetches the streams for a video ("movie", "tt..." or "series", "kitsu:N:E") into the list.
-    Q_INVOKABLE void fetch(const QString &type, const QString &videoId) { m_auto = false; setStage(""); load(type, videoId); }
+    Q_INVOKABLE void fetch(const QString &type, const QString &videoId) { m_auto = false; m_binge.clear(); setStage(""); load(type, videoId); }
     // The AI pick: fetches the video's streams, then chooses one and resolves it (`title` names the
     // video for the decision model, e.g. "Dexter: Resurrection S2 E3").
-    Q_INVOKABLE void play(const QString &type, const QString &videoId, const QString &title) {
-        m_auto = true; m_title = title; m_chosen.clear(); setStage("fetching"); load(type, videoId);
+    // `bingeGroup`: the binge group of what was playing (an episode switch). As Stremio's player does
+    // (stremio-core models/player.rs, next_stream_update and Stream::is_binge_match), the first stream in
+    // the addon's order with the same group plays, here only if it's cached and plays on this TV;
+    // otherwise the AI picks as usual.
+    Q_INVOKABLE void play(const QString &type, const QString &videoId, const QString &title, const QString &bingeGroup = QString()) {
+        m_auto = true; m_title = title; m_binge = bingeGroup; m_chosen.clear(); setStage("fetching"); load(type, videoId);
+    }
+    // Fetches a video's streams ahead, kept for its play() (stremio-core's next_streams_update: the next
+    // episode's streams are asked for as soon as one plays). One video at a time.
+    Q_INVOKABLE void prefetch(const QString &type, const QString &videoId) {
+        if (m_ahead.videoId == videoId) return;
+        m_ahead = { videoId, QByteArray(), false };
+        QNetworkReply *reply = m_net.get(request(QUrl(m_addon + "stream/" + type + "/" + videoId + ".json")));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, videoId] {
+            reply->deleteLater();
+            if (m_ahead.videoId != videoId || reply->error() != QNetworkReply::NoError) return;
+            m_ahead.body = reply->readAll(); m_ahead.ready = true;
+        });
     }
     // Resolves the listed stream at `row` (the picker's choice).
     Q_INVOKABLE void playRow(int row) {
@@ -290,6 +306,9 @@ signals:
 
 private:
     struct Item { QVariantMap fields; QString option, url, file; };
+    struct Ahead { QString videoId; QByteArray body; bool ready = false; };
+    Ahead m_ahead;
+    QString m_binge;
 
     // The decision model's instructions; the state names the video and whether it's anime.
     static QString rules() {
@@ -341,6 +360,12 @@ private:
                 if (--join->pending == 0) parse(join, ticket);
             });
         }
+        // fetched ahead: no wait
+        if (m_ahead.videoId == videoId && m_ahead.ready) {
+            join->body = m_ahead.body;
+            if (--join->pending == 0) parse(join, ticket);
+            return;
+        }
         QNetworkReply *reply = m_net.get(request(QUrl(m_addon + "stream/" + type + "/" + videoId + ".json")));
         connect(reply, &QNetworkReply::finished, this, [this, reply, ticket, join] {
             reply->deleteLater();
@@ -359,7 +384,9 @@ private:
                     const QJsonObject s = v.toObject();
                     const QString name = s.value("name").toString(), title = s.value("title").toString(), url = s.value("url").toString();
                     const QString file = s.value("behaviorHints").toObject().value("filename").toString();
-                    out->append({ releases::read(name, title, url, anime),
+                    QVariantMap fields = releases::read(name, title, url, anime);
+                    fields["bingeGroup"] = s.value("behaviorHints").toObject().value("bingeGroup").toString();
+                    out->append({ fields,
                                   QString(name).replace('\n', ' ') + " | " + QString(title).replace('\n', " | ") + " | file: " + file, url, file });
                 }
             });
@@ -409,6 +436,10 @@ private:
     void choose(int ticket, int attempt = 1) {
         const QVector<int> c = candidates();
         if (c.isEmpty()) { fail(m_all.isEmpty() ? (m_failure.isEmpty() ? "No streams yet" : m_failure) : "Nothing cached plays on this TV"); return; }
+        // the same release as the episode before: the first in the addon's order with its binge group
+        if (!m_binge.isEmpty() && attempt == 1)
+            for (int i = 0; i < m_all.size(); i++)
+                if (m_all[i].fields["bingeGroup"].toString() == m_binge && c.contains(i)) { pick(i, ticket); return; }
         // one candidate needs no decision; without a key (the lab's tours) the best by rank plays
         if (c.size() == 1 || m_openrouter.isEmpty() || m_decider.isEmpty()) { pick(c[0], ticket); return; }
         setStage("choosing");

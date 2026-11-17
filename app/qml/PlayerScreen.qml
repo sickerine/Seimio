@@ -40,7 +40,7 @@ FocusScope {
     readonly property string failure: media.failure
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
-        + " favs " + JSON.stringify(tracks.favorites("sub")) + " fav-menu " + favoriteMenu + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
+        + " binge " + (stream ? stream.bingeGroup : "") + " favs " + JSON.stringify(tracks.favorites("sub")) + " fav-menu " + favoriteMenu + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
         + " audio " + trackList.filter(function (t) { return t.type === "audio" }).map(function (t) { return t.id + ":" + t.lang + (t.playable ? "" : "x") }).join(",")
         + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
@@ -59,7 +59,21 @@ FocusScope {
         if (s.size) out.push({ text: s.size });
         return out;
     }
-    function prepare(title, episodeLabel) { item = title; label = episodeLabel; stream = null; pendingUrl = ""; media.unload(); subs.reset(); trackList = []; choice = ({}); chapters = []; skipLookup.cancel(); askSkip.stop(); skipTimes = ({}) }
+    function prepare(title, episodeLabel) {
+        item = title; label = episodeLabel; stream = null; pendingUrl = "";
+        // in a handoff the old picture stays under the still while it fades in, then goes
+        if (handoff) unloadLater.restart(); else media.unload();
+        subs.reset(); trackList = []; choice = ({}); chapters = []; skipLookup.cancel(); askSkip.stop(); skipTimes = ({})
+    }
+    // ---- the handoff ----------------------------------------------------------------------------------
+    // A switch inside the player (another episode, another stream) doesn't go back to the loading screen:
+    // the picture fades into a still of what's coming (`art`), with a chip and a title at the bottom, and
+    // the still dissolves into the new video at its first frame. The old video unloads only once the still
+    // covers it. `handoff` is { art, chip, title } while a switch loads.
+    property var handoff: null
+    function beginHandoff(art, chip, title) { handoff = { art: art || (item && item.backdrop) || "", chip: chip || "", title: title || "" } }
+    Timer { id: unloadLater; interval: 400; onTriggered: media.unload() }
+    Connections { target: media; onStateChanged: if (page.handoff && (media.playing || media.failure)) page.handoff = null }
     // the file, as subtitle delays are kept: the stream's own link, which names the torrent and the file
     readonly property string fileKey: stream && stream.url ? stream.url : ""
     // `at`: where to start, a fraction of the way (a resume) or { ms } (a stream switch keeps the time)
@@ -70,6 +84,7 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
+        if (unloadLater.running) { unloadLater.stop(); media.unload() }
         loadedAt = Date.now(); startMs = -1;
         subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
@@ -78,7 +93,7 @@ FocusScope {
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
     }
-    function stop() { media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop() }
+    function stop() { unloadLater.stop(); handoff = null; media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop() }
 
     NativePlayer {
         id: media
@@ -132,6 +147,57 @@ FocusScope {
         audioMuted = !!choice.audioOff;
         if (media.loaded) media.mute(audioMuted);
         subs.track = subtitlesShown ? choice.sub : -1;
+    }
+
+    // the still of what's playing, for a stream switch (App sets it: the episode's thumbnail)
+    property string stillArt: ""
+    Item {
+        id: handoffLayer
+        anchors.fill: parent
+        // what it shows, held while it dissolves into the new video
+        Latch { id: handing; value: page.handoff; live: !!page.handoff }
+        opacity: page.handoff ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: page.handoff ? 380 : 700; easing.type: Theme.ease } }
+        Rectangle { anchors.fill: parent; color: "black" }
+        Image {
+            id: still
+            anchors.fill: parent
+            source: handing.current ? handing.current.art : ""
+            sourceSize: Qt.size(1280, 720); fillMode: Image.PreserveAspectCrop; asynchronous: true
+            opacity: status === Image.Ready ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 300 } }
+            // it drifts while it waits, so the screen never looks stopped
+            scale: 1.0
+            NumberAnimation on scale { running: handoffLayer.visible; from: 1.0; to: 1.06; duration: 9000; easing.type: Easing.OutSine }
+        }
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient { GradientStop { position: 0.45; color: "#00000000" } GradientStop { position: 1; color: "#e6000000" } }
+        }
+        Column {
+            x: Theme.margin; anchors.bottom: parent.bottom; anchors.bottomMargin: 110
+            spacing: 18
+            Chip {
+                visible: !!(handing.current && handing.current.chip)
+                kind: "solid"; icon: "play"; text: handing.current ? handing.current.chip : ""
+            }
+            Text {
+                width: 1100; elide: Text.ElideRight
+                text: handing.current ? handing.current.title : ""
+                color: Theme.ink; font.family: Theme.face; font.pixelSize: 44; font.weight: Font.Bold
+            }
+            // the loading light, as on the loading screen
+            Rectangle {
+                width: 360; height: 4; radius: 2; color: "#26ffffff"; clip: true
+                Rectangle {
+                    width: 120; height: 4; radius: 2
+                    gradient: Gradient { orientation: Gradient.Horizontal
+                        GradientStop { position: 0; color: "#00ffffff" } GradientStop { position: 0.5; color: "white" } GradientStop { position: 1; color: "#00ffffff" } }
+                    NumberAnimation on x { from: -120; to: 360; duration: 1100; loops: Animation.Infinite; running: handoffLayer.visible; easing.type: Easing.InOutSine }
+                }
+            }
+        }
     }
 
     // ---- the overlay -------------------------------------------------------------------------------------
@@ -390,7 +456,7 @@ FocusScope {
     // loading: the title over its art, until the first frame
     Column {
         anchors.centerIn: parent; spacing: 30
-        opacity: !media.playing ? 1 : 0
+        opacity: !media.playing && !page.handoff ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
         TitleArt {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -652,12 +718,19 @@ FocusScope {
             highlight: Rectangle { radius: 24; color: "#3dffffff" }
             preferredHighlightBegin: 0; preferredHighlightEnd: 400; highlightRangeMode: ListView.ApplyRange
             // the sheet slides away as the new stream loads behind it; the one playing just closes it
-            function choose() { page.zone = "none"; if (!(page.stream && page.streams.rowOf(page.stream.url) === currentIndex)) page.switchStream(currentIndex) }
+            function choose() {
+                page.zone = "none";
+                if (page.stream && page.streams.rowOf(page.stream.url) === currentIndex) return;
+                page.beginHandoff(page.stillArt, currentItem ? currentItem.res : "", currentItem ? currentItem.release : "");
+                page.switchStream(currentIndex);
+            }
             Keys.onReturnPressed: choose()
             Keys.onEnterPressed: choose()
             delegate: Item {
                 id: streamRow
                 readonly property var chips: model.chips || []
+                readonly property string res: model.res || ""            // for the handoff
+                readonly property string release: model.shortName || ""
                 width: streamList.width; height: 100
                 Text {
                     x: 24; y: 20; width: 96
