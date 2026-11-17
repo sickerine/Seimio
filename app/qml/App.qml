@@ -67,7 +67,8 @@ WebOSWindow {
     }
     function playAi(episode) {
         commit(); playMenu = false;
-        playTarget = target(episode); playerBack = layer === "menu" ? "home" : layer;
+        playTarget = target(episode);
+        if (layer !== "player") playerBack = layer === "menu" ? "home" : layer;     // an episode from the player goes back where it came from
         player.prepare(displayItem, playTarget.label); layer = "player";
         streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""));
     }
@@ -283,6 +284,15 @@ WebOSWindow {
             window: app
             streams: streams
             tracks: trackChoice
+            useTee: !probe.variant.noTee
+            // the season's episodes, when the show page holds this show
+            readonly property bool sameShow: showPage.item === app.displayItem && !!app.playTarget && app.playTarget.type === "series"
+            episodes: sameShow ? showPage.episodes : []
+            episodeCards: sameShow ? showPage.episodeData : []
+            episodeId: app.playTarget ? app.playTarget.id : ""
+            onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
+            // another stream of the same video, from where it is now
+            onSwitchStream: { app.playTarget.progress = player.duration ? player.position / player.duration * 100 : 0; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
             group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"
             focus: app.layer === "player"

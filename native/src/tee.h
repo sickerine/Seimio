@@ -7,7 +7,7 @@
 // pulls anyway. Matroska only; anything else passes through untouched.
 //
 // It runs on its own thread (network, parsing and socket writes never touch the GUI thread) and talks
-// to the rest through queued signals. Read-ahead per connection is capped (`kReadAhead`), so memory
+// to the rest through queued signals. Each connection holds at most kReadAhead + kChunk, so memory
 // stays bounded whatever the file's size.
 #include <QtQml>
 #include <QTcpServer>
@@ -214,13 +214,12 @@ private:
 };
 
 // ---- the server ----------------------------------------------------------------------------------------
-// One stream at a time (`open` replaces the last). Each player connection gets its own upstream
-// request for the range it asked for; bytes go out as they come in, and upstream reading pauses while a
-// connection has more than kReadAhead waiting to be written.
+// One stream at a time (`open` replaces the last). Each player connection fetches its range upstream
+// piece by piece (see serve()).
 class TeeWorker : public QObject {
     Q_OBJECT
 public:
-    static constexpr qint64 kReadAhead = 16 << 20;
+    static constexpr qint64 kReadAhead = 8 << 20;
     TeeWorker() {
         connect(&m_server, &QTcpServer::newConnection, this, [this] { while (auto s = m_server.nextPendingConnection()) serve(s); });
     }
@@ -237,61 +236,97 @@ signals:
     void font(int session, const QString &name, const QByteArray &data);
     void chapter(int session, qint64 startMs, qint64 endMs, const QString &title);
 private:
+    // One player connection: the range it asked for is fetched upstream in kChunk pieces, one at a time,
+    // each asked for only once the player has taken most of what's waiting. Memory per connection stays
+    // under kReadAhead + kChunk whatever the network or Qt's reply buffering does (Qt 5.12 on the TV
+    // kept downloading into a reply past its read-buffer limit: the app grew ~30 MB a second).
+    static constexpr qint64 kChunk = 4 << 20;
+    struct Conn {
+        QTcpSocket *socket = nullptr;
+        QNetworkReply *reply = nullptr;
+        std::shared_ptr<MkvSubs> parser;
+        qint64 from = 0, last = -1, next = 0, total = -1;   // last: the last byte to send (-1: to the end)
+        int session = 0;
+        bool ranged = false, head = false, headerSent = false, done = false;
+    };
     void serve(QTcpSocket *s) {
+        m_served++; m_sockets.insert(s);
+        auto c = std::make_shared<Conn>();
+        c->socket = s;
         auto request = std::make_shared<QByteArray>();
-        connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
-        connect(s, &QTcpSocket::readyRead, this, [this, s, request] {
+        connect(s, &QTcpSocket::disconnected, this, [this, s, c] {
+            m_sockets.remove(s);
+            if (c->reply) { c->reply->abort(); c->reply->deleteLater(); c->reply = nullptr; }
+            c->done = true; s->deleteLater();
+        });
+        connect(s, &QTcpSocket::bytesWritten, this, [this, c] { more(c); });
+        connect(s, &QTcpSocket::readyRead, this, [this, s, c, request] {
             *request += s->readAll();
             if (!request->contains("\r\n\r\n")) return;
             disconnect(s, &QTcpSocket::readyRead, this, nullptr);
             static const QRegularExpression range("\\r\\n[Rr]ange:\\s*bytes=(\\d+)-(\\d*)");
             const auto m = range.match(QString::fromLatin1(*request));
-            const qint64 from = m.hasMatch() ? m.captured(1).toLongLong() : 0;
-            const bool head = request->startsWith("HEAD");
-            QNetworkRequest up { QUrl(m_url) };
-            up.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
-            up.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-            if (m.hasMatch()) up.setRawHeader("Range", ("bytes=" + m.captured(1) + "-" + m.captured(2)).toLatin1());
-            QNetworkReply *reply = head ? m_net.head(up) : m_net.get(up);
-            reply->setReadBufferSize(1 << 20);
-            const int session = m_session;
-            auto offset = std::make_shared<qint64>(from);
-            auto sentHeader = std::make_shared<bool>(false);
-            auto parser = std::make_shared<MkvSubs>(m_shared);
-            wire(*parser, session);
-            auto pump = [this, s, reply, offset, session, parser] {
-                // bytes go to the player as they come, and to this connection's parser while it's the stream
-                while (reply->bytesAvailable() && s->bytesToWrite() < kReadAhead) {
-                    const QByteArray chunk = reply->read(256 << 10);
-                    if (chunk.isEmpty()) break;
-                    s->write(chunk);
-                    if (session == m_session) parser->pushAt(*offset, chunk);
-                    *offset += chunk.size();
-                }
-                // not Matroska: the player gets the bytes, and the app hears there's nothing to read
-                if (session == m_session && !m_sent && m_shared->matroska == 0) { m_sent = true; emit tracks(session, {}, false); }
-            };
-            connect(reply, &QNetworkReply::metaDataChanged, this, [s, reply, sentHeader] {
-                if (*sentHeader || reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid()) return;
-                *sentHeader = true;
-                const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-                QByteArray h = "HTTP/1.1 " + QByteArray::number(status ? status : 502) + " " + reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toByteArray() + "\r\n";
-                for (const char *k : { "Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag" })
-                    if (reply->hasRawHeader(k)) h += QByteArray(k) + ": " + reply->rawHeader(k) + "\r\n";
-                h += "Connection: close\r\n\r\n";
-                s->write(h);
-            });
-            connect(reply, &QNetworkReply::readyRead, this, pump);
-            connect(s, &QTcpSocket::bytesWritten, reply, pump);
-            connect(reply, &QNetworkReply::finished, s, [s, reply, pump] {
-                pump();
-                if (reply->bytesAvailable()) return;                                // the socket drains the rest
-                reply->deleteLater(); s->disconnectFromHost();
-            });
-            connect(s, &QTcpSocket::bytesWritten, s, [s, reply] {
-                if (reply->isFinished() && !reply->bytesAvailable() && !s->bytesToWrite()) { reply->deleteLater(); s->disconnectFromHost(); }
-            });
-            connect(s, &QTcpSocket::disconnected, reply, [reply] { reply->abort(); reply->deleteLater(); });
+            c->ranged = m.hasMatch();
+            c->from = c->next = c->ranged ? m.captured(1).toLongLong() : 0;
+            c->last = c->ranged && !m.captured(2).isEmpty() ? m.captured(2).toLongLong() : -1;
+            c->head = request->startsWith("HEAD");
+            c->session = m_session;
+            c->parser = std::make_shared<MkvSubs>(m_shared);
+            wire(*c->parser, c->session);
+            fetch(c);
+        });
+    }
+    // asks for the next piece when the player has room for it
+    void more(const std::shared_ptr<Conn> &c) {
+        if (c->done) return;
+        if (c->headerSent && (c->head || (c->last >= 0 && c->next > c->last))) {     // all sent
+            if (!c->socket->bytesToWrite()) { c->done = true; c->socket->disconnectFromHost(); }
+            return;
+        }
+        if (!c->reply && c->socket->bytesToWrite() < kReadAhead / 2) fetch(c);
+    }
+    void fetch(const std::shared_ptr<Conn> &c) {
+        QNetworkRequest up { QUrl(m_url) };
+        up.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
+        up.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        const qint64 end = c->last >= 0 ? qMin(c->last, c->next + kChunk - 1) : c->next + kChunk - 1;
+        up.setRawHeader("Range", "bytes=" + QByteArray::number(c->next) + "-" + QByteArray::number(end));
+        QNetworkReply *r = c->head ? m_net.head(up) : m_net.get(up);
+        c->reply = r;
+        connect(r, &QNetworkReply::metaDataChanged, this, [this, c, r] {
+            if (c->headerSent || r->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid()) return;
+            const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            static const QRegularExpression total("/(\\d+)\\s*$");
+            const auto t = total.match(QString::fromLatin1(r->rawHeader("Content-Range")));
+            c->total = t.hasMatch() ? t.captured(1).toLongLong() : r->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+            QByteArray h;
+            if (status == 206 || status == 200) {
+                if (c->last < 0 || c->last >= c->total) c->last = c->total - 1;
+                h = c->ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + QByteArray::number(c->from) + "-" + QByteArray::number(c->last) + "/" + QByteArray::number(c->total) + "\r\n"
+                              : QByteArray("HTTP/1.1 200 OK\r\n");
+                h += "Content-Length: " + QByteArray::number(c->last - c->from + 1) + "\r\nAccept-Ranges: bytes\r\n";
+                if (r->hasRawHeader("Content-Type")) h += "Content-Type: " + r->rawHeader("Content-Type") + "\r\n";
+            } else {
+                h = "HTTP/1.1 " + QByteArray::number(status ? status : 502) + " Upstream\r\nContent-Length: 0\r\n";
+                c->head = true;                                                      // nothing more to send
+            }
+            c->headerSent = true;
+            c->socket->write(h + "Connection: close\r\n\r\n");
+        });
+        connect(r, &QNetworkReply::readyRead, this, [this, c, r] {
+            if (!c->headerSent || c->head) return;
+            const QByteArray chunk = r->readAll();
+            c->socket->write(chunk);
+            if (c->session == m_session) c->parser->pushAt(c->next, chunk);
+            c->next += chunk.size();
+            if (c->session == m_session && !m_sent && m_shared->matroska == 0) { m_sent = true; emit tracks(c->session, {}, false); }
+        });
+        connect(r, &QNetworkReply::finished, this, [this, c, r] {
+            if (c->reply == r) c->reply = nullptr;
+            r->deleteLater();
+            if (c->done) return;
+            if (r->error() != QNetworkReply::NoError && r->error() != QNetworkReply::OperationCanceledError) { c->done = true; c->socket->disconnectFromHost(); return; }
+            more(c);
         });
     }
     void wire(MkvSubs &p, int session) {
@@ -305,13 +340,21 @@ private:
         p.onChapter = [this, session](qint64 s, qint64 e, const QString &title) { emit chapter(session, s, e, title); };
         p.onBlock = [this, session](int tn, qint64 s, qint64 d, const QByteArray &payload) { emit subtitleBlock(session, tn, s, d, payload); };
     }
-    QTcpServer m_server;
-    QNetworkAccessManager m_net;
+    // children of the worker, so they move to its thread with it
+    QTcpServer m_server { this };
+    QNetworkAccessManager m_net { this };
     std::shared_ptr<MkvSubs::Shared> m_shared = std::make_shared<MkvSubs::Shared>();
     QVariantList m_tracks;
     QString m_url;
-    int m_session = 0;
+    int m_session = 0, m_served = 0;
+    QSet<QTcpSocket *> m_sockets;
     bool m_sent = false;
+public:
+    // for the lab: connections served and open, and what they hold unsent
+    Q_INVOKABLE QString stats() const {
+        qint64 held = 0; for (auto s : m_sockets) held += s->bytesToWrite();
+        return QString("served %1 open %2 heldMB %3").arg(m_served).arg(m_sockets.size()).arg(held / 1048576);
+    }
 };
 
 // The QML side: `open(url)` returns the local URL for the player and starts reading that stream;
@@ -336,6 +379,7 @@ public:
     }
     ~Tee() override { m_thread.quit(); m_thread.wait(); }
     int port() const { return m_port; }
+    Q_INVOKABLE QString stats() { QString r; QMetaObject::invokeMethod(m_worker, "stats", Qt::BlockingQueuedConnection, Q_RETURN_ARG(QString, r)); return r; }
     Q_INVOKABLE QString open(const QString &url) {
         if (!m_port) return url;                                                    // not listening: play directly
         ++m_session;

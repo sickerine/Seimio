@@ -1,9 +1,11 @@
 // The player. prepare(item, label) shows the title over its art with what's happening under it: finding
 // streams, asking the AI to pick, getting the link (all from `streams`), then starting playback, with the
-// chosen stream's chips once there is one. start(url, stream, fraction) loads the link into LG's media
-// server (NativePlayer picks the audio track and seeks to `fraction` of the way in); once the video plays
-// the app clears its scene and window so the video, under the window, shows. OK pauses and resumes, Left
-// and Right seek 10 s, Back stops (App).
+// chosen stream's chips once there is one. start(url, stream, fraction) loads the link through the Tee
+// into LG's media server, which seeks to `fraction` of the way in; once the video plays the app clears
+// its scene and window so the video, under the window, shows. Tracks chooses the audio and subtitles
+// (the user's choices per group), SubtitleLayer draws the subtitles. The overlay (`zone`) has the
+// transport with seeking, Audio, Subtitles and Streams, the episode row, and Skip Intro/Credits. Back
+// closes what's open, then stops (App).
 import QtQuick 2.12
 import Seimio.UI 1.0
 import Seimio.Native 1.0
@@ -18,6 +20,7 @@ FocusScope {
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
     property var choice: ({})            // what Tracks chose for this file
     property var chapters: []            // { start, end, title } from the file
+    property bool useTee: true           // the lab turns it off to compare
     property var item: null
     property string label: ""
     property var stream: null            // the stream being played, once chosen
@@ -28,7 +31,7 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
-    function subtitleInfo() { return subs.info() + " choice " + JSON.stringify(choice) }
+    function subtitleInfo() { return subs.info() + " tee " + tee.stats() }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
@@ -55,7 +58,7 @@ FocusScope {
     function load() {
         if (!pendingUrl) return;
         subs.reset(); trackList = []; choice = ({}); chapters = [];
-        media.load(tee.open(pendingUrl), JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
+        media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
     }
@@ -109,16 +112,131 @@ FocusScope {
         playing: media.playing && !media.paused
     }
 
+    // ---- the overlay -------------------------------------------------------------------------------------
+    // `zone` is what shows and who has the remote: "none" (the video), "bar" (the transport: seeking),
+    // "row" (Audio, Subtitles, Streams), "audio" or "subs" (a list), "streams" (the sheet), "episodes"
+    // (the row below). Everything exists from the start and moves or fades in, so opening costs nothing.
+    property string zone: "none"
+    property var episodes: []            // the season's episodes and their cards, for the row below
+    property var episodeCards: []
+    property string episodeId: ""        // the one playing
+    signal playEpisode(var episode)
+    signal switchStream(int row)
+    onZoneChanged: { hide.restart(); if (zone === "audio" || zone === "subs") buildMenu() }
+    onTrackListChanged: if (zone === "audio" || zone === "subs") buildMenu()
+    onActiveChanged: if (!active) zone = "none"
+
+    // seeking: each press moves a target at once and the seek happens when the presses stop (or on OK),
+    // in steps that grow while a direction is held
+    property real seekTarget: -1
+    property int seekPresses: 0
+    readonly property real shownPosition: seekTarget >= 0 ? seekTarget : media.position
+    function nudge(dir) {
+        if (seekTarget < 0) seekTarget = media.position;
+        seekPresses++;
+        var step = seekPresses < 5 ? 10000 : seekPresses < 12 ? 30000 : 60000;
+        seekTarget = Math.max(0, Math.min(media.duration - 2000, seekTarget + dir * step));
+        commitSeek.restart();
+    }
+    function seekNow() { commitSeek.stop(); if (seekTarget >= 0) media.seek(seekTarget); seekTarget = -1; seekPresses = 0 }
+    Timer { id: commitSeek; interval: 650; onTriggered: page.seekNow() }
+    function togglePause() { if (media.paused) media.play(); else media.pause() }
+
+    // the transport hides on its own after a while, unless paused or seeking
+    Timer { id: hide; interval: 4000; onTriggered: if (page.zone === "bar" && !media.paused && page.seekTarget < 0) page.zone = "none"; else if (page.zone === "bar") restart() }
+
+    // intro and outro, from the file's chapters (named as stremio-webos skip-timestamps.js reads them)
+    readonly property var segments: {
+        var out = [], c = chapters.slice().sort(function (a, b) { return a.start - b.start });
+        for (var i = 0; i < c.length; i++) {
+            var t = c[i].title.trim().toLowerCase(), end = c[i].end > 0 ? c[i].end : (i + 1 < c.length ? c[i + 1].start : media.duration);
+            var kind = /^(?:intro|ncop|op(?:ening)?)(?:\s*[-_:]?\s*\d+)?(?:\s+(?:theme|credits|song))?$/.test(t) ? "intro"
+                     : /^(?:outro|credits|nced|ed|ending)(?:\s*[-_:]?\s*\d+)?(?:\s+(?:theme|credits|song))?$|^end credits$/.test(t) ? "outro" : "";
+            if (kind && end > c[i].start + 5000) out.push({ kind: kind, start: c[i].start, end: end });
+        }
+        return out;
+    }
+    readonly property var segmentNow: {
+        for (var i = 0; i < segments.length; i++) if (media.position >= segments[i].start && media.position < segments[i].end - 1500) return segments[i];
+        return null;
+    }
+    function skip() { if (segmentNow) { media.seek(segmentNow.end); zone = "none" } }
+
     Keys.onPressed: {
         if (!media.loaded) return;
-        if (Remote.isOk(event.key)) { if (media.paused) media.play(); else media.pause(); poke() }
-        else if (event.key === Qt.Key_Left) { media.seek(Math.max(0, media.position - 10000)); poke() }
-        else if (event.key === Qt.Key_Right) { media.seek(media.position + 10000); poke() }
-        else return;
+        var k = event.key, back = Remote.isBack(k), ok = Remote.isOk(k);
+        if (back) {
+            if (zone === "audio" || zone === "subs" || zone === "streams") zone = "row";
+            else if (zone !== "none") { seekNow(); zone = "none" }
+            else return;                                        // the app stops the player
+        } else if (zone === "none") {
+            if (ok && segmentNow) skip();
+            else if (ok) { togglePause(); zone = "bar" }
+            else if (k === Qt.Key_Left || k === Qt.Key_Right) { zone = "bar"; nudge(k === Qt.Key_Left ? -1 : 1) }
+            else zone = "bar";
+        } else if (zone === "bar") {
+            if (ok) { if (seekTarget >= 0) seekNow(); else togglePause() }
+            else if (k === Qt.Key_Left || k === Qt.Key_Right) nudge(k === Qt.Key_Left ? -1 : 1);
+            else if (k === Qt.Key_Up) zone = "row";
+            else if (k === Qt.Key_Down && episodes.length) zone = "episodes";
+            else return;
+        } else if (zone === "row") {
+            if (k === Qt.Key_Down) zone = "bar"; else return;
+        } else if (zone === "subs" && (k === Qt.Key_Left || k === Qt.Key_Right) && menu.currentIndex === menu.model.length - 1) {
+            setDelay(subs.delay + (k === Qt.Key_Left ? -100 : 100));
+        } else if (zone === "episodes") {
+            if (k === Qt.Key_Up) zone = "bar"; else return;
+        } else return;
         event.accepted = true;
+        hide.restart();
     }
-    function poke() { controls.shown = true; hide.restart() }
-    Timer { id: hide; interval: 3000; onTriggered: if (!media.paused) controls.shown = false }
+
+    // ---- audio and subtitles ----------------------------------------------------------------------------
+    // A choice here is the default for the group (anime, other) from now on; Off too.
+    function codecName(c) {
+        var n = { "A_FLAC": "FLAC", "A_AC3": "Dolby Digital", "A_EAC3": "Dolby Digital Plus", "A_DTS": "DTS", "A_TRUEHD": "TrueHD", "A_OPUS": "Opus", "A_VORBIS": "Vorbis",
+                  "S_TEXT/ASS": "ASS", "S_TEXT/SSA": "SSA", "S_TEXT/UTF8": "SRT", "S_HDMV/PGS": "PGS", "S_VOBSUB": "VobSub",
+                  "ac3": "Dolby Digital", "eac3": "Dolby Digital Plus", "aac": "AAC", "flac": "FLAC", "mp3": "MP3", "dts": "DTS", "truehd": "TrueHD", "opus": "Opus" }[c];
+        return n || (/^A_AAC/.test(c) ? "AAC" : /^A_PCM/.test(c) ? "PCM" : c || "");
+    }
+    property var menuTracks: []                                  // the tracks the open list shows, in order
+    function buildMenu() {
+        var type = zone === "audio" ? "audio" : "sub", rows = [], list = [];
+        var current = type === "audio" ? (choice.audioOff ? -2 : media.audioTrack) : subs.track;
+        for (var i = 0; i < trackList.length; i++) {
+            var t = trackList[i];
+            if (t.type !== type) continue;
+            var name = tracks.languageName(tracks.languageOf(t.lang, t.title)), extra = [];
+            if (t.title && t.title !== name) extra.push(t.title);
+            extra.push(codecName(t.codec));
+            if (t.forced) extra.push("Forced");
+            if (!t.playable) extra.push("won't play");
+            rows.push({ label: name || t.title || ("Track " + (rows.length + 1)), detail: extra.join("   "), checked: t.id === current });
+            list.push(t);
+        }
+        rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) });
+        list.push(null);
+        if (type === "sub") { rows.push({ label: "Delay", value: (subs.delay > 0 ? "+" : "") + (subs.delay / 1000).toFixed(1) + " s" }); list.push("delay") }
+        menuTracks = list; menu.model = rows;
+        for (var r = 0; r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
+    }
+    function pickFromMenu(row) {
+        var t = menuTracks[row];
+        if (t === "delay") return;
+        if (zone === "audio") {
+            if (t && !t.playable) return;
+            if (t) { media.selectAudio(t.id); media.mute(false) } else media.mute(true);
+            tracks.prefer(group, "audio", t ? t.lang : "off", t ? t.title : "");
+            choice = tracks.choose(trackList, group);
+        } else {
+            if (t && !t.playable) return;
+            subs.track = t ? t.id : -1;
+            tracks.prefer(group, "sub", t ? t.lang : "off", t ? t.title : "");
+            choice = tracks.choose(trackList, group);
+        }
+        buildMenu();
+    }
+    function setDelay(ms) { subs.delay = ms; if (fileKey) tracks.setDelay(fileKey, ms); buildMenu() }
 
     // what's happening, while the video isn't up yet
     readonly property string status: media.failure ? "Couldn't play this stream: " + media.failure
@@ -174,31 +292,177 @@ FocusScope {
         }
     }
 
-    // transport: shown for a moment after a key, and while paused
-    Item {
-        id: controls
-        property bool shown: false
+    // ---- what's on screen -------------------------------------------------------------------------------
+    // shade under the transport and the row below
+    Rectangle {
         anchors.fill: parent
-        opacity: media.playing && (shown || media.paused) ? 1 : 0
+        opacity: page.zone !== "none" && media.playing ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient { GradientStop { position: 0.55; color: "#00000000" } GradientStop { position: 1; color: "#b3000000" } }
-        }
+        gradient: Gradient { GradientStop { position: 0.45; color: "#00000000" } GradientStop { position: 1; color: "#d9000000" } }
+    }
+    function clock(ms) {
+        var s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;
+        return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+    Item {
+        id: transport
+        width: parent.width; height: parent.height
+        // the whole transport rises out of the row below when it opens, and steps up when the row is open
+        property real lift: page.zone === "episodes" ? -270 : 0
+        opacity: media.playing && page.zone !== "none" && page.zone !== "streams" ? 1 : 0
+        transform: Translate { y: transport.lift + (transport.opacity < 1 ? 24 * (1 - transport.opacity) : 0) }
+        Behavior on opacity { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }
+        Behavior on lift { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
+
         TitleArt {
-            x: Theme.margin; y: 760; width: 420; height: 120
+            x: Theme.margin; y: 700; width: 420; height: 140
             logo: page.item && page.item.logo ? page.item.logo : ""; name: page.item ? page.item.name : ""; nameSize: 48
         }
-        Rectangle {
-            id: track
-            x: Theme.margin; y: 940; width: parent.width - 2 * Theme.margin; height: 8; radius: 4; color: "#40ffffff"
-            Rectangle { width: media.duration ? track.width * Math.min(1, media.position / media.duration) : 0; height: 8; radius: 4; color: "white" }
+        Chip { x: Theme.margin; y: 858; visible: page.label !== ""; kind: "solid"; icon: "play"; text: page.label }
+
+        // Audio, Subtitles, Streams
+        ButtonRow {
+            id: buttons
+            focus: page.zone === "row"
+            anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 852
+            model: [{ label: "Audio" }, { label: "Subtitles" }, { label: "Streams", icon: "list" }]
+            onTriggered: page.zone = ["audio", "subs", "streams"][buttonIndex]
         }
-        function clock(ms) {
-            var s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;
-            return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s;
+
+        // the progress bar: chapters as gaps, intro and outro as brighter spans, the seek target as a head
+        Item {
+            id: bar
+            x: Theme.margin; y: 950; width: parent.width - 2 * Theme.margin; height: 10
+            readonly property bool focused: page.zone === "bar"
+            Rectangle { anchors.fill: parent; radius: 5; color: "#40ffffff" }
+            Repeater {
+                model: page.segments
+                Rectangle {
+                    x: media.duration ? bar.width * modelData.start / media.duration : 0
+                    width: media.duration ? bar.width * (modelData.end - modelData.start) / media.duration : 0
+                    height: bar.height; radius: 5; color: "#26ffffff"
+                }
+            }
+            Rectangle { width: media.duration ? bar.width * Math.min(1, media.position / media.duration) : 0; height: bar.height; radius: 5; color: "white" }
+            Repeater {
+                model: page.chapters
+                Rectangle { x: media.duration ? bar.width * modelData.start / media.duration - 2 : 0; visible: modelData.start > 0; width: 4; height: bar.height; color: "#99000000" }
+            }
+            // the head and the time it points at
+            Rectangle {
+                id: head
+                width: 24; height: 24; radius: 12; color: "white"
+                anchors.verticalCenter: parent.verticalCenter
+                x: (media.duration ? bar.width * Math.min(1, page.shownPosition / media.duration) : 0) - 12
+                scale: bar.focused ? 1 : 0
+                Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Theme.spring } }
+                Behavior on x { enabled: page.seekTarget >= 0; NumberAnimation { duration: 140; easing.type: Theme.ease } }
+            }
+            Chip {
+                kind: "solid"; size: 22
+                text: page.clock(page.shownPosition)
+                x: Math.max(0, Math.min(bar.width - width, head.x + 12 - width / 2)); y: -58
+                opacity: page.seekTarget >= 0 ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: Theme.fast } }
+            }
         }
-        Text { x: Theme.margin; y: 966; text: controls.clock(media.position); color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
-        Text { anchors.right: track.right; y: 966; text: "-" + controls.clock(Math.max(0, media.duration - media.position)); color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
+        Text { x: Theme.margin; y: 978; text: page.clock(page.shownPosition); color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
+        Text { anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 978; text: "-" + page.clock(Math.max(0, media.duration - page.shownPosition)); color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
+    }
+
+    // the episode row: its top peeks out under the transport; Down brings it up
+    Item {
+        id: episodeRow
+        width: parent.width; height: 300
+        y: page.zone === "episodes" ? 790 : page.zone === "bar" || page.zone === "row" ? 1040 : 1120
+        opacity: media.playing && page.episodes.length && page.zone !== "none" && page.zone !== "streams" ? 1 : 0
+        Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
+        Behavior on opacity { NumberAnimation { duration: Theme.base } }
+        Text { x: Theme.margin; y: 0; text: "Episodes"; color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 26; font.weight: Font.DemiBold }
+        CardStrip {
+            id: episodeStrip
+            y: 46; width: parent.width
+            focus: page.zone === "episodes"
+            model: page.episodeCards
+            cardWidth: 352; cardHeight: 198; spacing: 28
+            showTitles: false; nextLabels: false
+            onActivated: if (page.episodes[cardIndex] && page.episodes[cardIndex].id !== page.episodeId) page.playEpisode(page.episodes[cardIndex])
+        }
+        Connections { target: page; onZoneChanged: if (page.zone === "episodes") { for (var i = 0; i < page.episodes.length; i++) if (page.episodes[i].id === page.episodeId) { episodeStrip.jumpTo(i); break } } }
+    }
+
+    // Audio and Subtitles: a list above the buttons, at the right
+    Rectangle {
+        id: menuPanel
+        readonly property bool open: page.zone === "audio" || page.zone === "subs"
+        width: 760; height: menu.implicitHeight + 32; radius: 32
+        anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 830 - height
+        color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
+        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.BottomRight
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on scale { NumberAnimation { duration: 340; easing.type: Theme.spring; easing.overshoot: 1.3 } }
+        MenuList {
+            id: menu
+            x: 16; y: 16; width: parent.width - 32
+            focus: menuPanel.open
+            shown: menuPanel.open
+            onTriggered: page.pickFromMenu(rowIndex)
+        }
+    }
+
+    // Streams: a sheet from the right, on the streams of what's playing; OK switches and keeps the place
+    Rectangle {
+        id: sheet
+        readonly property bool open: page.zone === "streams"
+        width: 1020; height: parent.height
+        x: open ? parent.width - width : parent.width
+        color: "#f2101014"
+        Behavior on x { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
+        Text { x: 56; y: 64; text: "Streams"; color: Theme.ink; font.family: Theme.face; font.pixelSize: 40; font.weight: Font.Bold }
+        ListView {
+            id: streamList
+            x: 32; y: 170; width: parent.width - 64; height: parent.height - 200
+            clip: true; spacing: 10
+            focus: sheet.open
+            model: sheet.open || sheet.x < page.width ? page.streams : null
+            highlightMoveDuration: 260
+            highlight: Rectangle { radius: 24; color: "#3dffffff" }
+            preferredHighlightBegin: 0; preferredHighlightEnd: 400; highlightRangeMode: ListView.ApplyRange
+            Keys.onReturnPressed: page.switchStream(currentIndex)
+            Keys.onEnterPressed: page.switchStream(currentIndex)
+            delegate: Item {
+                id: streamRow
+                readonly property var chips: model.chips || []
+                width: streamList.width; height: 100
+                Text {
+                    x: 24; y: 20; width: 96
+                    text: model.res || "SD"; color: model.res === "4K" ? Theme.rating : Theme.ink
+                    font.family: Theme.face; font.pixelSize: model.res === "4K" ? 34 : 26; font.weight: Font.Bold
+                }
+                Text {
+                    x: 130; y: 16; width: parent.width - 150; elide: Text.ElideRight
+                    text: model.shortName; color: Theme.ink; textFormat: Text.PlainText
+                    font.family: Theme.face; font.pixelSize: 24; font.weight: Font.DemiBold
+                }
+                Row {
+                    x: 130; y: 56; spacing: 6
+                    Chip { visible: !!(page.stream && page.stream.url === model.url); size: 16; kind: "solid"; icon: "play"; text: "Playing" }
+                    Chip { visible: !!model.hdr; size: 16; kind: "tint"; tint: model.hdr === "DV" ? "#8b5cf6" : "#e8590c"; text: model.hdr || "" }
+                    Repeater { model: streamRow.chips.slice(0, 5); Chip { size: 16; text: modelData.text; icon: modelData.icon; kind: modelData.tag ? "tint" : "glass"; tint: modelData.tag === "bd" ? "#0f766e" : "#7c3aed" } }
+                }
+            }
+        }
+    }
+
+    // Skip Intro / Skip Credits, while one plays; OK presses it
+    Chip {
+        id: skipButton
+        anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 780
+        size: 28; kind: "solid"; icon: "play"
+        text: page.segmentNow ? (page.segmentNow.kind === "intro" ? "Skip Intro" : "Skip Credits") : ""
+        opacity: page.segmentNow && media.playing && (page.zone === "none" || page.zone === "bar") ? 1 : 0
+        transform: Translate { x: (1 - skipButton.opacity) * 40 }
+        Behavior on opacity { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }
     }
 }
