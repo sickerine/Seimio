@@ -2,7 +2,7 @@
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
 # phase (render-thread stamps from LabProbe). Routes: home (Continue Watching, tabs, a movie's title
 # page), calendar (entering it, moving, scrolling into the next month, a day opening and turning,
-# leaving), show (a show page), menu (quick actions opening and closing on a timer), play (an SDR episode
+# leaving), show (a show page: it opens resting on an episode; the episodes, a season change, the actions), menu (quick actions opening and closing on a timer), play (an SDR episode
 # from a show page: the loading screen, then the video with the controls over it; an HDR or Dolby Vision
 # video would leave the panel at 48 Hz after it, which LG keeps until an SDR video plays), streams (a show's stream
 # list, opened by the lab 12 s after launch: scrolling, filtering, leaving), player (an SDR episode's
@@ -27,11 +27,11 @@ case $route in
         p RIGHT 2 600; p ENTER 1 1500; p RIGHT 2 400; p BACK 1 1500 ;;
   calendar) p DOWN 1 1500; p RIGHT 4 300; p LEFT 3 300; p ENTER 1 1800; p RIGHT 4 400; p RIGHT 6 300; p RIGHT 1 1500
         p BACK 1 1500; p DOWN 2 500; p DOWN 1 1500; p LEFT 3 300; p UP 6 500; p UP 1 1500 ;;
-  show) p RIGHT 1 600; p ENTER 1 1500; p RIGHT 2 400; p DOWN 1 600; p LEFT 1 900; p RIGHT 1 900; p DOWN 1 600
-        p RIGHT 4 350; p LEFT 2 350; p UP 1 600; p UP 1 600; p BACK 1 1500 ;;
+  show) p RIGHT 1 600; p ENTER 1 1500; p RIGHT 4 350; p LEFT 2 350; p UP 1 600; p LEFT 1 900; p RIGHT 1 900
+        p DOWN 1 600; p UP 2 600; p RIGHT 2 400; p DOWN 2 600; p BACK 1 1500 ;;
   menu) sleep 15 ;;
-  play) p RIGHT 3 1500; p ENTER 1 2500; p DOWN 2 900; p LEFT 1 900; p ENTER 1 14000; p RIGHT 1 1500; p LEFT 1 3000; p BACK 1 2500 ;;
-  player) p RIGHT 3 1500; p ENTER 1 2500; p DOWN 2 900; p LEFT 1 900; p ENTER 1 14000
+  play) p RIGHT 3 1500; p ENTER 1 2500; p LEFT 1 900; p ENTER 1 14000; p RIGHT 1 1500; p LEFT 1 3000; p BACK 1 2500 ;;
+  player) p RIGHT 3 1500; p ENTER 1 2500; p LEFT 1 900; p ENTER 1 14000
           p DOWN 1 900; p RIGHT 3 250; p LEFT 2 1300; p UP 1 900; p ENTER 1 1200; p DOWN 1 400; p BACK 1 900
           p RIGHT 1 400; p ENTER 1 1200; p DOWN 3 300; p BACK 1 900; p RIGHT 1 400; p ENTER 1 1500; p DOWN 4 300; p BACK 1 900
           p DOWN 1 900; p DOWN 1 1200; p RIGHT 2 500; p UP 1 900; p BACK 1 900; p BACK 1 2500 ;;

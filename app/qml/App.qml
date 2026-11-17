@@ -38,13 +38,19 @@ WebOSWindow {
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
-    // the show page for the selected Continue Watching title is built once Home has been still for a
+    // the show page for the selected Continue Watching or Anime title is built once Home has been still for a
     // moment (after the backdrop and info have changed), so opening it costs nothing. Not from the
     // calendar: resting on its days would build a page each time (~25 ms) for an open that's rarer there
     onDisplayItemChanged: prepareShow.restart()
     Timer {
         id: prepareShow; interval: 1200
-        onTriggered: { if (app.displayItem && app.onHome && home.row === 0 && app.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id)) }
+        onTriggered: {
+            if (!app.displayItem || !app.onHome) return;
+            // an Anime chart show is made playable ahead too (ARM, then Kitsu), so OK opens it at once
+            if (app.animeTab && app.displayItem.id.indexOf("anilist:") === 0) { app.loadAnime(app.displayItem); return }
+            // and its page is built
+            if ((app.animeTab || home.row === 0) && app.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id));
+        }
     }
 
     function open() {
@@ -158,17 +164,30 @@ WebOSWindow {
         for (var s = 0; sh && sh.seasons && s < sh.seasons.length; s++) n += sh.seasons[s].episodes.length;
         return n;
     }
+    // an Anime chart show: made playable once (fetched ahead while the selection rests on it, or on OK),
+    // and opened when it's ready if OK asked for it (`animeOpening`)
     property string animeOpening: ""
+    property var animeLoading: ({})
+    function loadAnime(item) {
+        if (anime.resolved[item.id] || animeLoading[item.id]) return;
+        animeLoading[item.id] = true;
+        catalog.loadAnime(item);
+    }
+    function openAnime(item) {
+        if (anime.resolved[item.id]) { open(); return }
+        animeOpening = item.id; loadAnime(item);
+    }
     Connections {
         target: catalog
         onAnimeReady: {
-            if (sourceId !== app.animeOpening) return;
-            app.animeOpening = "";
-            app.shows[item.id] = show;
-            anime.resolve(sourceId, item);
-            app.commit(); app.open();
+            delete app.animeLoading[sourceId];
+            if (!anime.resolved[sourceId]) { app.shows[item.id] = show; anime.resolve(sourceId, item) }
+            if (sourceId === app.animeOpening) { app.animeOpening = ""; app.open() }
         }
-        onAnimeFailed: if (sourceId === app.animeOpening) { app.animeOpening = ""; anime.say(reason) }
+        onAnimeFailed: {
+            delete app.animeLoading[sourceId];
+            if (sourceId === app.animeOpening) { app.animeOpening = ""; anime.say(reason) }
+        }
     }
     WindowTools { id: tools }
     // keys out of git: app/qml/Secrets.qml (gitignored)
@@ -303,7 +322,7 @@ WebOSWindow {
                 onExitTop: app.layer = "tabs"
                 onRowChanged: probe.act("anime row")
                 // a show from the chart opens once it's made playable (Catalog.loadAnime)
-                onActivated: { if (item.id.indexOf("anilist:") === 0) { app.animeOpening = item.id; catalog.loadAnime(item) } else app.open() }
+                onActivated: if (item.id.indexOf("anilist:") === 0) app.openAnime(item); else app.open()
             }
         }
 

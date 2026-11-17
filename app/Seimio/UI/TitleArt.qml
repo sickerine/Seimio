@@ -1,6 +1,7 @@
 // A title's logo, or its name in large type when it has none (or it fails to load). A new title is
 // committed whole: the logo is preloaded, and the name and logo on screen change together once it has
-// loaded (`ready` turns true), so a name never shows while its logo is on the way.
+// loaded (`ready` turns true), so a name never shows while its logo is on the way. A title appearing
+// where there was none fades in (a page's entrance may finish before its logo has loaded).
 import QtQuick 2.12
 
 Item {
@@ -18,7 +19,12 @@ Item {
 
     // a cached logo can be Ready at once without a status change, so check right after setting it too
     function load() { preload.source = logo; apply() }
-    function apply() { if (preload.status !== Image.Loading) { hasLogo = preload.status === Image.Ready && logo !== ""; shownLogo = logo; shownName = name } }
+    function apply() {
+        if (preload.status === Image.Loading) return;
+        if (!shownLogo && !shownName && (logo || name)) appear.restart();
+        hasLogo = preload.status === Image.Ready && logo !== ""; shownLogo = logo; shownName = name;
+    }
+    NumberAnimation { id: appear; target: content; property: "opacity"; from: 0; to: 1; duration: 260; easing.type: Theme.ease }
     onLogoChanged: load()
     onNameChanged: apply()
     Component.onCompleted: load()
@@ -27,19 +33,23 @@ Item {
         visible: false; asynchronous: true; sourceSize.width: 780
         onStatusChanged: art.apply()
     }
-    Image {
+    Item {
+        id: content
         anchors.fill: parent
-        fillMode: Image.PreserveAspectFit; horizontalAlignment: art.centered ? Image.AlignHCenter : Image.AlignLeft; verticalAlignment: Image.AlignBottom
-        asynchronous: true; sourceSize.width: 780
-        source: art.hasLogo ? art.shownLogo : ""
-        visible: art.hasLogo
-    }
-    Text {
-        visible: !art.hasLogo
-        anchors.bottom: parent.bottom; width: art.centered ? parent.width : parent.width * 1.3
-        horizontalAlignment: art.centered ? Text.AlignHCenter : Text.AlignLeft
-        wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
-        text: art.shownName; color: Theme.ink
-        font.family: Theme.face; font.pixelSize: art.nameSize; font.weight: Font.Bold; lineHeight: 0.95
+        Image {
+            anchors.fill: parent
+            fillMode: Image.PreserveAspectFit; horizontalAlignment: art.centered ? Image.AlignHCenter : Image.AlignLeft; verticalAlignment: Image.AlignBottom
+            asynchronous: true; sourceSize.width: 780
+            source: art.hasLogo ? art.shownLogo : ""
+            visible: art.hasLogo
+        }
+        Text {
+            visible: !art.hasLogo
+            anchors.bottom: parent.bottom; width: art.centered ? parent.width : parent.width * 1.3
+            horizontalAlignment: art.centered ? Text.AlignHCenter : Text.AlignLeft
+            wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+            text: art.shownName; color: Theme.ink
+            font.family: Theme.face; font.pixelSize: art.nameSize; font.weight: Font.Bold; lineHeight: 0.95
+        }
     }
 }
