@@ -6,6 +6,7 @@
 // `startFraction` of the way through, and plays. Every event is also emitted raw (`event`), and the
 // latest of each kind is kept in `seen`, for the lab.
 #include <QtQml>
+#include <QElapsedTimer>
 #include <QWindow>
 #include <QRegion>
 #include <QTimer>
@@ -94,7 +95,12 @@ public:
     // their own thread, in order; the GUI thread never waits on them
     Q_INVOKABLE void play() { command([](Client *c) { c->play(); }); }
     Q_INVOKABLE void pause() { command([](Client *c) { c->pause(); }); }
-    Q_INVOKABLE void seek(double ms) { command([ms](Client *c) { c->seek((long long)ms); }); }
+    // the position moves to the target at once: LG goes on reporting the old time while it seeks, which
+    // drew the bar back to where it was before it jumped forward
+    Q_INVOKABLE void seek(double ms) {
+        m_position = ms; m_seekTo = ms; m_seeking = true; m_seekLanded = false; m_seekClock.restart(); emit positionChanged();
+        command([ms](Client *c) { c->seek((long long)ms); });
+    }
     Q_INVOKABLE void selectAudio(int index) { command([index](Client *c) { std::string a("audio"); c->selectTrack(a, index); }); m_audioTrack = index; emit stateChanged(); }
     Q_INVOKABLE void mute(bool on) { command([on](Client *c) { c->setAudioMute(on); }); }
     Q_INVOKABLE void unload() { m_playing = m_loaded = false; emit stateChanged(); command([](Client *c) { c->unload(); }); }
@@ -110,7 +116,14 @@ public:
         if (e.isEmpty()) return;
         const QString kind = e.begin().key();
         const QJsonObject v = e.begin().value().toObject();
-        if (kind == "currentTime") { m_position = v.value("currentTime").toDouble(); emit positionChanged(); return; }
+        if (kind == "currentTime") {
+            const double t = v.value("currentTime").toDouble();
+            // until LG says the seek is done (or 10 s pass), a time far from the target is the old one
+            if (m_seeking && !m_seekLanded && qAbs(t - m_seekTo) > 3000 && m_seekClock.elapsed() < 10000) return;
+            m_seeking = false; m_seekLanded = false;
+            m_position = t; emit positionChanged(); return;
+        }
+        if (kind == "seekDone") m_seekLanded = true;
         if (kind == "bufferRange") return;
         m_seen[kind] = kind == "sourceInfo" ? json : json.left(600);
         emit seenChanged();
@@ -194,7 +207,9 @@ private:
     }
     bool m_loaded = false, m_playing = false, m_paused = false, m_buffering = false;
     QString m_failure;
-    double m_duration = 0, m_position = 0, m_startFraction = 0, m_startAt = -1;
+    double m_duration = 0, m_position = 0, m_startFraction = 0, m_startAt = -1, m_seekTo = 0;
+    bool m_seeking = false, m_seekLanded = false;
+    QElapsedTimer m_seekClock;
     int m_audioTrack = -1;
     QStringList m_languages { "en" };
     QJsonArray m_tracks;

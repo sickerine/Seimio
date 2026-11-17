@@ -40,7 +40,7 @@ FocusScope {
     readonly property string failure: media.failure
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
-        + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
+        + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
         + " audio " + trackList.filter(function (t) { return t.type === "audio" }).map(function (t) { return t.id + ":" + t.lang + (t.playable ? "" : "x") }).join(",")
         + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
@@ -163,7 +163,11 @@ FocusScope {
         seekTarget = Math.max(0, Math.min(media.duration - 2000, seekTarget + dir * step));
         commitSeek.restart();
     }
-    function seekNow() { commitSeek.stop(); if (seekTarget >= 0) media.seek(seekTarget); seekTarget = -1; seekPresses = 0 }
+    function seekNow() { commitSeek.stop(); if (seekTarget >= 0) { seekLog = [[0, Math.round(seekTarget)]]; seekAt = Date.now(); media.seek(seekTarget) } seekTarget = -1; seekPresses = 0 }
+    // lab: the position the player shows for 6 s after a seek, [ms since the seek, position]
+    property var seekLog: []
+    property double seekAt: 0
+    Connections { target: media; onPositionChanged: if (page.seekAt && Date.now() - page.seekAt < 6000) page.seekLog.push([Date.now() - page.seekAt, Math.round(media.position)]) }
     Timer { id: commitSeek; interval: 650; onTriggered: page.seekNow() }
     function togglePause() { if (media.paused) media.play(); else media.pause() }
 
@@ -212,7 +216,7 @@ FocusScope {
             else return;
         } else if (zone === "row") {
             if (k === Qt.Key_Down) zone = "bar"; else return;
-        } else if (zone === "subs" && (k === Qt.Key_Left || k === Qt.Key_Right) && menu.currentIndex === menu.model.length - 1) {
+        } else if (zone === "subs" && (k === Qt.Key_Left || k === Qt.Key_Right)) {
             setDelay(subs.delay + (k === Qt.Key_Left ? -100 : 100));
         } else if (zone === "episodes") {
             if (k === Qt.Key_Up) zone = "bar"; else return;
@@ -230,31 +234,46 @@ FocusScope {
         return n || (/^A_AAC/.test(c) ? "AAC" : /^A_PCM/.test(c) ? "PCM" : c || "");
     }
     property var menuTracks: []                                  // the tracks the open list shows, in order
-    // `keep`: stay on the row (the delay changing), rather than go to the checked one
+    // The Audio and Subtitles lists: Off first, one Up from whatever plays near the top; then the file's
+    // own tracks; then, for subtitles, one row per language found online (its first match: the addon
+    // lists the best first), the chosen language before the rest. The delay isn't a row: it's the
+    // panel's foot, and Left/Right set it from any row.
+    // `keep`: stay on the row (the list changing under it), rather than go to the checked one
     function buildMenu(keep) {
-        var type = zone === "audio" ? "audio" : "sub", rows = [], list = [];
+        var type = zone === "audio" ? "audio" : "sub", rows = [], list = [], online = [], seen = ({});
         var current = type === "audio" ? (choice.audioOff ? -2 : media.audioTrack) : subs.track;
+        rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) });
+        list.push(null);
+        var chosen = tracks.preferences(group).sub || "";
         for (var i = 0; i < trackList.length; i++) {
             var t = trackList[i];
             if (t.type !== type) continue;
-            var name = tracks.languageName(tracks.languageOf(t.lang, t.title)), extra = [];
+            var code = tracks.languageOf(t.lang, t.title), name = tracks.languageName(code), extra = [];
+            if (t.external) {
+                // one row a language; it's checked when any of that language's matches plays
+                if (seen[code] !== undefined) { if (t.id === current) online[seen[code]].row.checked = true; continue }
+                seen[code] = online.length;
+                online.push({ code: code, track: t, row: { label: name || t.lang, detail: "Online", checked: t.id === current } });
+                continue;
+            }
             if (t.title && t.title !== name) extra.push(t.title);
             extra.push(codecName(t.codec));
             if (t.forced) extra.push("Forced");
             if (!t.playable) extra.push("won't play");
-            rows.push({ label: name || t.title || ("Track " + (rows.length + 1)), detail: extra.join("   "), checked: t.id === current });
+            rows.push({ label: name || t.title || ("Track " + rows.length), detail: extra.join("   "), checked: t.id === current });
             list.push(t);
         }
-        rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) });
-        list.push(null);
-        if (type === "sub") { rows.push({ label: "Delay", value: (subs.delay > 0 ? "+" : "") + (subs.delay / 1000).toFixed(1) + " s" }); list.push("delay") }
+        online.sort(function (a, b) {
+            var ca = chosen && a.code.indexOf(chosen) === 0, cb = chosen && b.code.indexOf(chosen) === 0;
+            return ca !== cb ? (ca ? -1 : 1) : a.row.label.localeCompare(b.row.label);
+        });
+        for (var o = 0; o < online.length; o++) { rows.push(online[o].row); list.push(online[o].track) }
         menuTracks = list; menu.model = rows;
         for (var r = 0; !keep && r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
         if (!keep) menu.follow(true);
     }
     function pickFromMenu(row) {
         var t = menuTracks[row];
-        if (t === "delay") return;
         if (zone === "audio") {
             if (t && !t.playable) return;
             if (t) { media.selectAudio(t.id); media.mute(false) } else media.mute(true);
@@ -268,7 +287,7 @@ FocusScope {
         }
         buildMenu();
     }
-    function setDelay(ms) { subs.delay = ms; if (fileKey) tracks.setDelay(fileKey, ms); buildMenu(true) }
+    function setDelay(ms) { subs.delay = ms; if (fileKey) tracks.setDelay(fileKey, ms) }
 
     // what's happening, while the video isn't up yet
     readonly property string status: media.failure ? "Couldn't play this stream: " + media.failure
@@ -451,7 +470,8 @@ FocusScope {
     Rectangle {
         id: menuPanel
         readonly property bool open: page.zone === "audio" || page.zone === "subs"
-        width: 760; height: menu.implicitHeight + 32; radius: 32
+        readonly property bool delayFoot: page.zone === "subs"
+        width: 760; height: menu.implicitHeight + 32 + (delayFoot ? 84 : 0); radius: 32
         anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 830 - height
         color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
         opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.BottomRight
@@ -465,6 +485,30 @@ FocusScope {
             focus: menuPanel.open
             shown: menuPanel.open
             onTriggered: page.pickFromMenu(rowIndex)
+        }
+        // the delay, set with Left/Right from any row
+        Item {
+            visible: menuPanel.delayFoot
+            x: 16; width: parent.width - 32; height: 70
+            y: menu.y + menu.height + 6
+            Rectangle { anchors.fill: parent; radius: 22; color: "#14ffffff" }
+            Text {
+                x: 24; anchors.verticalCenter: parent.verticalCenter
+                text: "Delay"; color: Theme.ink
+                font.family: Theme.face; font.pixelSize: 27; font.weight: Font.Medium
+            }
+            Row {
+                anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
+                Icon { name: "up"; rotation: -90; width: 26; height: 26; anchors.verticalCenter: parent.verticalCenter; color: Theme.inkDim }
+                Text {
+                    width: 110; horizontalAlignment: Text.AlignHCenter; anchors.verticalCenter: parent.verticalCenter
+                    text: (subs.delay > 0 ? "+" : "") + (subs.delay / 1000).toFixed(1) + " s"
+                    color: subs.delay ? Theme.ink : Theme.inkDim
+                    font.family: Theme.face; font.pixelSize: 27; font.weight: Font.DemiBold
+                }
+                Icon { name: "up"; rotation: 90; width: 26; height: 26; anchors.verticalCenter: parent.verticalCenter; color: Theme.inkDim }
+            }
         }
     }
 
