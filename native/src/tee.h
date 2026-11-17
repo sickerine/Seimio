@@ -227,7 +227,7 @@ public:
 public slots:
     void start() { m_server.listen(QHostAddress::LocalHost, 0); emit listening(m_server.serverPort()); }
     void open(int session, const QString &url) {
-        m_session = session; m_url = url; m_shared = std::make_shared<MkvSubs::Shared>(); m_tracks.clear(); m_sent = false;
+        m_session = session; m_url = url; m_shared = std::make_shared<MkvSubs::Shared>(); m_tracks.clear(); m_sent = false; m_once.clear();
     }
 signals:
     void listening(int port);
@@ -248,6 +248,7 @@ private:
         std::shared_ptr<MkvSubs> parser;
         qint64 from = 0, last = -1, next = 0, total = -1;   // last: the last byte to send (-1: to the end)
         int session = 0;
+        QString url;                                        // the stream as it was when the player asked
         bool ranged = false, head = false, headerSent = false, done = false;
     };
     void serve(QTcpSocket *s) {
@@ -257,21 +258,27 @@ private:
         auto request = std::make_shared<QByteArray>();
         connect(s, &QTcpSocket::disconnected, this, [this, s, c] {
             m_sockets.remove(s); m_open = m_sockets.size();
-            if (c->reply) { c->reply->abort(); c->reply->deleteLater(); c->reply = nullptr; }
-            c->done = true; s->deleteLater();
+            c->done = true;
+            // abort() emits finished at once, and that handler lets go of the reply
+            if (QNetworkReply *r = c->reply) { c->reply = nullptr; r->abort(); }
+            s->deleteLater();
         });
         connect(s, &QTcpSocket::bytesWritten, this, [this, c] { more(c); });
         connect(s, &QTcpSocket::readyRead, this, [this, s, c, request] {
             *request += s->readAll();
             if (!request->contains("\r\n\r\n")) return;
             disconnect(s, &QTcpSocket::readyRead, this, nullptr);
-            static const QRegularExpression range("\\r\\n[Rr]ange:\\s*bytes=(\\d+)-(\\d*)");
+            static const QRegularExpression range("\\r\\n[Rr]ange:\\s*bytes=(\\d+)-(\\d*)"), path("^[A-Z]+ /s/(\\d+) ");
+            // a player still reading a stream that has been replaced gets nothing
+            if (path.match(QString::fromLatin1(*request)).captured(1).toInt() != m_session) {
+                c->done = true; s->write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"); s->disconnectFromHost(); return;
+            }
             const auto m = range.match(QString::fromLatin1(*request));
             c->ranged = m.hasMatch();
             c->from = c->next = c->ranged ? m.captured(1).toLongLong() : 0;
             c->last = c->ranged && !m.captured(2).isEmpty() ? m.captured(2).toLongLong() : -1;
             c->head = request->startsWith("HEAD");
-            c->session = m_session;
+            c->session = m_session; c->url = m_url;
             c->parser = std::make_shared<MkvSubs>(m_shared);
             wire(*c->parser, c->session);
             fetch(c);
@@ -287,7 +294,7 @@ private:
         if (!c->reply && c->socket->bytesToWrite() < kReadAhead / 2) fetch(c);
     }
     void fetch(const std::shared_ptr<Conn> &c) {
-        QNetworkRequest up { QUrl(m_url) };
+        QNetworkRequest up { QUrl(c->url) };
         up.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
         up.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         const qint64 end = c->last >= 0 ? qMin(c->last, c->next + kChunk - 1) : c->next + kChunk - 1;
@@ -295,13 +302,17 @@ private:
         QNetworkReply *r = c->head ? m_net.head(up) : m_net.get(up);
         c->reply = r;
         connect(r, &QNetworkReply::metaDataChanged, this, [this, c, r] {
-            if (c->headerSent || r->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid()) return;
+            if (r->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid()) return;
             const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            // every piece must be the range asked for: a server that ignores Range would send the whole
+            // file at once (unbounded memory) or the wrong bytes
+            if (c->headerSent) { if (status != 206) { c->done = true; r->abort(); c->socket->disconnectFromHost(); } return; }
             static const QRegularExpression total("/(\\d+)\\s*$");
             const auto t = total.match(QString::fromLatin1(r->rawHeader("Content-Range")));
             c->total = t.hasMatch() ? t.captured(1).toLongLong() : r->header(QNetworkRequest::ContentLengthHeader).toLongLong();
             QByteArray h;
-            if (status == 206 || status == 200) {
+            const bool ok = status == 206 || (c->head && status == 200);             // HEAD may ignore Range
+            if (ok) {
                 if (c->last < 0 || c->last >= c->total) c->last = c->total - 1;
                 h = c->ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + QByteArray::number(c->from) + "-" + QByteArray::number(c->last) + "/" + QByteArray::number(c->total) + "\r\n"
                               : QByteArray("HTTP/1.1 200 OK\r\n");
@@ -313,6 +324,7 @@ private:
             }
             c->headerSent = true;
             c->socket->write(h + "Connection: close\r\n\r\n");
+            if (!ok) r->abort();                                                      // and not its body
         });
         connect(r, &QNetworkReply::readyRead, this, [this, c, r] {
             if (!c->headerSent || c->head) return;
@@ -330,15 +342,19 @@ private:
             more(c);
         });
     }
+    // every connection that reads the file's start parses its header again: each track, font and
+    // chapter goes out once per stream
+    bool first(const QString &key) { if (m_once.contains(key)) return false; m_once.insert(key); return true; }
     void wire(MkvSubs &p, int session) {
         p.onTrack = [this, session](const MkvSubs::Track &t) {
+            if (!first("t" + QString::number(t.number))) return;
             m_tracks << QVariantMap { { "number", t.number }, { "type", t.type }, { "codec", t.codec }, { "lang", t.lang }, { "title", t.name },
                                       { "default", t.def }, { "forced", t.forced }, { "hi", t.hi }, { "commentary", t.commentary } };
             if (t.type == 0x11) emit subtitleHeader(session, t.number, t.codec, t.priv);
         };
         p.onTracksDone = [this, session] { if (!m_sent) { m_sent = true; emit tracks(session, m_tracks, true); } };
-        p.onFont = [this, session](const QString &name, const QByteArray &data) { emit font(session, name, data); };
-        p.onChapter = [this, session](qint64 s, qint64 e, const QString &title) { emit chapter(session, s, e, title); };
+        p.onFont = [this, session](const QString &name, const QByteArray &data) { if (first("f" + name)) emit font(session, name, data); };
+        p.onChapter = [this, session](qint64 s, qint64 e, const QString &title) { if (first("c" + QString::number(s) + title)) emit chapter(session, s, e, title); };
         p.onBlock = [this, session](int tn, qint64 s, qint64 d, const QByteArray &payload) { emit subtitleBlock(session, tn, s, d, payload); };
     }
     // children of the worker, so they move to its thread with it
@@ -349,6 +365,7 @@ private:
     QString m_url;
     int m_session = 0;
     QSet<QTcpSocket *> m_sockets;
+    QSet<QString> m_once;
     bool m_sent = false;
 public:
     // for the lab, read from the GUI thread without waiting on this one

@@ -71,6 +71,8 @@ public:
         }
         if (!state->pending) done(state);
     }
+    // a new video: an answer still on its way is for the last one
+    Q_INVOKABLE void cancel() { ++m_ticket; }
 signals:
     void resolved(const QVariantMap &segments);
 private:

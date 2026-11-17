@@ -20,6 +20,7 @@ FocusScope {
     property string group: "other"       // whose track choices apply: "anime" or "other"
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
     property var addonSubs: []           // subtitles from the OpenSubtitles addon, after the file's own
+    property bool pickedSub: false       // a subtitle was picked in the menu for this file
     property var choice: ({})            // what Tracks chose for this file
     property var chapters: []            // { start, end, title } from the file
     property bool useTee: true           // the lab turns these off to compare
@@ -51,7 +52,7 @@ FocusScope {
         if (s.size) out.push({ text: s.size });
         return out;
     }
-    function prepare(title, episodeLabel) { item = title; label = episodeLabel; stream = null; pendingUrl = ""; media.unload(); subs.reset(); trackList = []; choice = ({}); chapters = [] }
+    function prepare(title, episodeLabel) { item = title; label = episodeLabel; stream = null; pendingUrl = ""; media.unload(); subs.reset(); trackList = []; choice = ({}); chapters = []; skipLookup.cancel(); askSkip.stop(); skipTimes = ({}) }
     // the file, as subtitle delays are kept: the stream's own link, which names the torrent and the file
     readonly property string fileKey: stream && stream.url ? stream.url : ""
     function start(url, s, fraction) {
@@ -60,13 +61,14 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
-        subs.reset(); trackList = []; addonSubs = []; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
+        subs.reset(); trackList = []; addonSubs = []; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
+        skipLookup.cancel(); askSkip.stop();
         if (/^tt\d+/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
     }
-    function stop() { media.unload(); stream = null; pendingUrl = "" }
+    function stop() { media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop() }
 
     NativePlayer {
         id: media
@@ -118,7 +120,7 @@ FocusScope {
         anchors.fill: parent
         source: tee
         position: media.position
-        playing: media.playing && !media.paused
+        playing: media.playing && !media.paused && !media.buffering            // the clock stops while the video waits
         // no default flag: one plays only when its language is the one chosen, and the file's own wins a tie
         onAddonListed: {
             var out = [];
@@ -127,7 +129,7 @@ FocusScope {
             page.addonSubs = out;
             if (!page.trackList.length) return;                  // the file's tracks aren't in yet; chooseTracks adds these
             page.trackList = page.trackList.concat(out); page.choice = tracks.choose(page.trackList, page.group);
-            subs.track = page.subtitlesShown ? page.choice.sub : -1;
+            if (!page.pickedSub) subs.track = page.subtitlesShown ? page.choice.sub : -1;   // a pick in the menu stays
         }
     }
 
@@ -248,6 +250,7 @@ FocusScope {
         if (type === "sub") { rows.push({ label: "Delay", value: (subs.delay > 0 ? "+" : "") + (subs.delay / 1000).toFixed(1) + " s" }); list.push("delay") }
         menuTracks = list; menu.model = rows;
         for (var r = 0; !keep && r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
+        if (!keep) menu.follow(true);
     }
     function pickFromMenu(row) {
         var t = menuTracks[row];
@@ -259,7 +262,7 @@ FocusScope {
             choice = tracks.choose(trackList, group);
         } else {
             if (t && !t.playable) return;
-            subs.track = t ? t.id : -1;
+            subs.track = t ? t.id : -1; pickedSub = true;
             tracks.prefer(group, "sub", t ? t.lang : "off", t ? t.title : "");
             choice = tracks.choose(trackList, group);
         }
@@ -438,6 +441,7 @@ FocusScope {
         MenuList {
             id: menu
             x: 16; y: 16; width: parent.width - 32
+            maxRows: 8                                          // a file's tracks and the addon's run long
             focus: menuPanel.open
             shown: menuPanel.open
             onTriggered: page.pickFromMenu(rowIndex)

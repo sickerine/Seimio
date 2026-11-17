@@ -69,6 +69,8 @@ WebOSWindow {
         commit(); playMenu = false;
         playTarget = target(episode);
         if (layer !== "player") playerBack = layer === "menu" ? "home" : layer;     // an episode from the player goes back where it came from
+        // the episode row under the player shows the show page's season: load the show if it isn't there
+        if (playTarget.type === "series" && showPage.item !== displayItem && catalog.episodeCount(displayItem.id) > 1) showPage.load(displayItem, showData(displayItem.id));
         player.prepare(displayItem, playTarget.label); layer = "player";
         streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""));
     }
@@ -83,8 +85,9 @@ WebOSWindow {
             if (app.layer === "streams") { app.playerBack = "streams"; player.prepare(app.displayItem, streamPage.label); app.layer = "player" }
             if (app.layer !== "player") return;
             // resume where it was left, unless it was nearly done
-            var p = app.playTarget ? app.playTarget.progress || 0 : 0;
-            player.start(url, stream, p > 0 && p < 95 ? p / 100 : 0);
+            // a stream switch keeps the place exactly (`resumeAt`)
+            var t = app.playTarget, p = t ? t.progress || 0 : 0;
+            player.start(url, stream, t && t.resumeAt !== undefined ? t.resumeAt : p > 0 && p < 95 ? p / 100 : 0);
         }
         onFailed: {
             if (app.layer !== "player") return;
@@ -303,7 +306,7 @@ WebOSWindow {
             onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
             // another stream of the same video, from where it is now
-            onSwitchStream: { app.playTarget.progress = player.duration ? player.position / player.duration * 100 : 0; streams.playRow(row) }
+            onSwitchStream: { app.playTarget.resumeAt = player.duration ? player.position / player.duration : 0; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
             group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"
             focus: app.layer === "player"

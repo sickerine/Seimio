@@ -81,23 +81,19 @@ public:
         return QString();
     }
     Q_INVOKABLE void setEventSlot(int n) { ensure(); m_client->eventSlot = n; }
-    Q_INVOKABLE bool load(const QString &uri, const QString &payload) {
+    // queued with the other calls, so an unload or seek for the last stream can't land after it
+    Q_INVOKABLE void load(const QString &uri, const QString &payload) {
         ensure();
         m_loaded = m_playing = m_paused = m_buffering = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
         m_tracks = QJsonArray(); m_seen.clear(); m_audioTracks.clear(); m_preferredAudio = -1;
         emit stateChanged(); emit positionChanged();
-        return m_client->loadAsync(uri.toStdString(), "media", payload.toStdString());
+        command([u = uri.toStdString(), p = payload.toStdString()](Client *c) { c->loadAsync(u, "media", p); });
     }
     // LG's client calls are synchronous calls to the media server (50-150 ms on the TV), so they run on
     // their own thread, in order; the GUI thread never waits on them
     Q_INVOKABLE void play() { command([](Client *c) { c->play(); }); }
     Q_INVOKABLE void pause() { command([](Client *c) { c->pause(); }); }
     Q_INVOKABLE void seek(double ms) { command([ms](Client *c) { c->seek((long long)ms); }); }
-    Q_INVOKABLE bool selectTrack(const QString &type, int index) {
-        if (!m_client) return false;
-        std::string t = type.toStdString();
-        return m_client->selectTrack(t, index);
-    }
     Q_INVOKABLE void selectAudio(int index) { command([index](Client *c) { std::string a("audio"); c->selectTrack(a, index); }); m_audioTrack = index; emit stateChanged(); }
     Q_INVOKABLE void mute(bool on) { command([on](Client *c) { c->setAudioMute(on); }); }
     Q_INVOKABLE void unload() { m_playing = m_loaded = false; emit stateChanged(); command([](Client *c) { c->unload(); }); }

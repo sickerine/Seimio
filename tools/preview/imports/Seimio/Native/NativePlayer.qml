@@ -25,6 +25,5 @@ QtObject {
     function play() { paused = false; return true }
     function pause() { paused = true; return true }
     function seek(ms) { position = ms; return true }
-    function selectTrack(t, i) { return true }
     function unload() { playing = false; return true }
 }
