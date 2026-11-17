@@ -172,7 +172,7 @@ WebOSWindow {
     function loadAnime(item) {
         if (anime.resolved[item.id] || animeLoading[item.id]) return;
         animeLoading[item.id] = true;
-        catalog.loadAnime(item);
+        catalog.loadFranchise(item);
     }
     function openAnime(item) {
         if (anime.resolved[item.id]) { open(); return }
@@ -180,7 +180,7 @@ WebOSWindow {
     }
     Connections {
         target: catalog
-        onAnimeReady: {
+        onFranchiseReady: {
             delete app.animeLoading[sourceId];
             if (!anime.resolved[sourceId]) { app.shows[item.id] = show; anime.resolve(sourceId, item) }
             // it opens only if OK's show is still the one selected on the Anime tab
@@ -188,7 +188,7 @@ WebOSWindow {
             app.animeOpening = "";
             if (app.layer === "home" && app.animeTab && anime.focusItem === anime.resolved[sourceId]) app.open();
         }
-        onAnimeFailed: {
+        onFranchiseFailed: {
             delete app.animeLoading[sourceId];
             if (sourceId === app.animeOpening) { app.animeOpening = ""; anime.say(reason) }
         }
@@ -328,7 +328,7 @@ WebOSWindow {
                 shownItem: app.displayItem
                 onExitTop: app.layer = "tabs"
                 onRowChanged: probe.act("anime row")
-                // a show from the chart opens once it's made playable (Catalog.loadAnime)
+                // a show from the chart opens once its franchise is in (Catalog.loadFranchise)
                 onActivated: if (item.id.indexOf("anilist:") === 0) app.openAnime(item); else app.open()
             }
         }

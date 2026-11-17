@@ -34,7 +34,9 @@
 class Live : public QObject {
     Q_OBJECT
 public:
-    struct Docs { QJsonArray cw, rows, airing; QJsonObject series, season; };
+    // `library`: every Stremio library item's state by id (where you are, the watched bitfield, when last
+    // watched), for anything that needs watch state beyond Continue Watching (a franchise's other seasons)
+    struct Docs { QJsonArray cw, rows, airing; QJsonObject series, season, library; };
     explicit Live(QObject *parent = nullptr) : QObject(parent) {}
 
     // Home's documents (rows, cw, series, and the calendar's anime from the season pages), then `home`; the
@@ -125,6 +127,7 @@ private:
         const QJsonValue items = lib.isObject() && lib.object().contains("items") ? lib.object().value("items") : (lib.isArray() ? QJsonValue(lib.array()) : QJsonValue(lib.object()));
         auto add = [&library](const QJsonValue &v) { const QJsonObject i = v.toObject(); library[i.value("_id").toString()] = i.value("state").toObject(); };
         if (items.isArray()) for (const QJsonValue &v : items.toArray()) add(v); else for (const QJsonValue &v : items.toObject()) add(v);
+        for (auto it = library.begin(); it != library.end(); ++it) docs->library[it.key()] = it.value();
         if (list.isEmpty()) { done(); return; }
         auto left = std::make_shared<int>(list.size());
         auto out = std::make_shared<QVector<QJsonObject>>(list.size());
@@ -150,6 +153,7 @@ private:
             });
         }
     }
+public:
     // a show's seasons from its meta: watched episodes from Stremio's bitfield, progress on the current one
     static QJsonObject show(const QJsonObject &meta, const QJsonObject &state) {
         QVector<QJsonObject> videos;
@@ -182,7 +186,6 @@ private:
                              { "genres", firstN(meta.value("genres").toArray(), 2) }, { "year", year },
                              { "rating", meta.value("imdbRating").toVariant().toString() }, { "seasons", list } };
     }
-public:
     // Stremio's watched bitfield, "anchorId:anchorLength:base64(zlib(bits))": bit i is the i-th video in
     // season-then-episode order, shifted so the anchor video sits at anchorLength - 1
     static QSet<QString> watched(const QString &field, const QStringList &ids) {
