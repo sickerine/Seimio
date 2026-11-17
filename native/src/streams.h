@@ -121,6 +121,21 @@ inline QString version(const QString &t) {
     return r.hasMatch() ? "REPACK" + r.captured(1) : QString();
 }
 
+// The release group: "[Group] Title …" (fansub style) or "Title.….-Group" (scene style), or "".
+inline QString group(const QString &name) {
+    static const RE bracket("^\\[([^\\]]+)\\]"), scene("-([A-Za-z0-9][A-Za-z0-9.]*?)(?:\\.(?:mkv|mp4|avi))?\\s*$");
+    const QString first = name.section('\n', 0, 0).trimmed();
+    const auto b = bracket.match(first);
+    if (b.hasMatch()) return b.captured(1).trimmed().toLower();
+    const auto sc = scene.match(first);
+    return sc.hasMatch() ? sc.captured(1).toLower() : QString();
+}
+// a dub alone ("English Dub", "Dubbed"), with no original-language track beside it ("Dual Audio", "Multi-Audio")
+inline bool dubOnly(const QString &text) {
+    static const RE dub = re("(^|[^a-z])dub(bed)?([^a-z]|$)"), both = re("dual[ ._-]?audio|multi[ ._-]?audio|(^|[^a-z])dual([^a-z]|$)");
+    return dub.match(text).hasMatch() && !both.match(text).hasMatch();
+}
+
 // A release name without the title in front: its group, then what follows the episode tag or year, when
 // that leaves enough to tell releases apart.
 inline QString shortName(const QString &name) {
@@ -189,6 +204,8 @@ inline QVariantMap read(const QString &name, const QString &title, const QString
         { "langs", langs },
         { "cached", nameLines.value(0).startsWith("[TB+]") },
         { "url", url },
+        { "group", group(lines.value(0)) },
+        { "dubOnly", dubOnly(blob) },
     };
 }
 
@@ -294,6 +311,18 @@ public:
     Q_INVOKABLE void cancel() { ++m_ticket; m_auto = false; setStage(""); }
     // the listed row of the stream with this addon link, or -1
     Q_INVOKABLE int rowOf(const QString &url) const { for (int r = 0; r < m_rows.size(); r++) if (m_all[m_rows[r]].url == url) return r; return -1; }
+    // tests: the anime rule's pick from an addon response (Torrentio's JSON), as play() would make it
+    Q_INVOKABLE QVariantMap ruledPick(const QString &json) const {
+        QVector<QVariantMap> all; QVector<int> c;
+        for (const QJsonValue &v : QJsonDocument::fromJson(json.toUtf8()).object().value("streams").toArray()) {
+            const QJsonObject o = v.toObject();
+            QVariantMap f = releases::read(o.value("name").toString(), o.value("title").toString(), o.value("url").toString(), true);
+            if (f["support"] != "unsupported" && f["cached"].toBool()) c << all.size();
+            all << f;
+        }
+        const int i = animeRule(all, c);
+        return i >= 0 ? all[i] : QVariantMap();
+    }
     // reads one stream's text, for tests
     Q_INVOKABLE QVariantMap read(const QString &name, const QString &title, bool anime) const { return releases::read(name, title, QString(), anime); }
 
@@ -314,7 +343,7 @@ private:
     static QString rules() {
         return QStringLiteral(
             "Pick one stream to play on an LG C5 OLED TV. Every option plays on it and is cached. Rules, in order:\n"
-            "1. Anime: 1080p, not 4K. The most promising 1080p Blu-ray (BD, BDRip, BDRemux) release; with no Blu-ray, the best 1080p from a known group (SubsPlease, Erai-raws, ToonsHub, VARYG). Prefer single-episode files to whole-series packs when quality is equal.\n"
+            "1. Anime (it comes to you only when there is a Blu-ray): 1080p, not 4K. The most promising 1080p Blu-ray (BD, BDRip, BDRemux) release. Prefer single-episode files to whole-series packs when quality is equal.\n"
             "2. Not anime: the best 4K HDR (Dolby Vision or HDR10), preferably Blu-ray; else the best 1080p.\n"
             "3. The first audio track must be the original language in Dolby Digital, Dolby Digital Plus, AAC or LPCM. Skip foreign-market releases whose names are mainly another language or list dubs (DUB, MVO, AVO, Cyrillic titles): their first track is the dub. Prefer releases that name a supported codec over ones that name none.\n"
             "4. A re-release (v2, v3, REPACK, PROPER) fixes its original: prefer it to the same release without it.\n"
@@ -436,6 +465,12 @@ private:
     void choose(int ticket, int attempt = 1) {
         const QVector<int> c = candidates();
         if (c.isEmpty()) { fail(m_all.isEmpty() ? (m_failure.isEmpty() ? "No streams yet" : m_failure) : "Nothing cached plays on this TV"); return; }
+        // Anime with no Blu-ray here leaves nothing to judge: picked directly, without the AI (animeRule)
+        if (m_anime && m_binge.isEmpty() && attempt == 1) {
+            QVector<QVariantMap> fields; for (const Item &it : m_all) fields << it.fields;
+            const int i = animeRule(fields, c);
+            if (i >= 0) { pick(i, ticket); return; }
+        }
         // the same release as the episode before: the first in the addon's order with its binge group
         if (!m_binge.isEmpty() && attempt == 1)
             for (int i = 0; i < m_all.size(); i++)
@@ -467,6 +502,26 @@ private:
             remember(i);
             pick(i, ticket);
         });
+    }
+    // The user's rule for anime with no Blu-ray among the candidates `c`: the most seeded, dub-only
+    // releases left out, unless a v2 or REPACK of one of the three most seeded exists (the same group
+    // and resolution), then the best seeded of those. -1 when there's a Blu-ray (the AI judges).
+    static int animeRule(const QVector<QVariantMap> &all, const QVector<int> &c) {
+        for (int i : c) if (all[i]["bd"].toBool()) return -1;
+        QVector<int> bySeed;
+        for (int i : c) if (!all[i]["dubOnly"].toBool()) bySeed << i;
+        std::stable_sort(bySeed.begin(), bySeed.end(), [&all](int a, int b) { return all[a]["seeders"].toInt() > all[b]["seeders"].toInt(); });
+        if (bySeed.isEmpty()) return -1;
+        for (int t = 0; t < bySeed.size() && t < 3; t++) {
+            const QVariantMap &top = all[bySeed[t]];
+            if (!top["version"].toString().isEmpty()) return bySeed[t];             // a re-release among the top
+            if (top["group"].toString().isEmpty()) continue;
+            for (int v : bySeed) {
+                const QVariantMap &f = all[v];
+                if (!f["version"].toString().isEmpty() && f["group"] == top["group"] && f["res"] == top["res"]) return v;
+            }
+        }
+        return bySeed[0];
     }
     void pick(int i, int ticket) { m_chosen = m_all[i].fields; resolve(m_all[i], ticket); }
 

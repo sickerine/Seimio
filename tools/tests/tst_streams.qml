@@ -20,4 +20,23 @@ TestCase {
         }
         compare(wrong.length, 0, wrong.slice(0, 15).join("\n"));
     }
+
+    // anime with no Blu-ray: the most seeded, dub-only releases left out, unless a v2/REPACK of one of the
+    // three most seeded exists; with a Blu-ray the AI judges (no pick here)
+    function stream(release, seeders, res) {
+        return { name: "[TB+] Torrentio\n" + res, title: release + "\n👤 " + seeders + " 💾 1 GB ⚙️ NyaaSi", url: "u" + seeders }
+    }
+    function pickOf(list) { return streams.ruledPick(JSON.stringify({ streams: list })).release || "" }
+    function test_animeRule() {
+        var x = new XMLHttpRequest();
+        x.open("GET", Qt.resolvedUrl("cyberpunk-streams.json"), false); x.send();
+        // the most seeded is VARYG's dual-audio, multi-subs batch (2702); ToonsHub's English dub prerelease
+        // (1664) would be next, and is left out
+        verify(streams.ruledPick(x.responseText).release.indexOf("H.264-VARYG") > 0, "Cyberpunk Edgerunners 2 E1: VARYG's batch");
+        compare(pickOf([stream("[SubsPlease] Show - 01 (1080p) [AAC]", 900, "1080p"), stream("[SubsPlease] Show - 01v2 (1080p) [AAC]", 300, "1080p"), stream("[Erai-raws] Show - 01 [1080p]", 500, "1080p")]),
+                "[SubsPlease] Show - 01v2 (1080p) [AAC]", "a v2 of the top release");
+        compare(pickOf([stream("[ToonsHub] Show S01E01 1080p WEB-DL (English Dub)", 2000, "1080p"), stream("[Judas] Show - S01E01 [1080p][Multi-Subs]", 300, "1080p")]),
+                "[Judas] Show - S01E01 [1080p][Multi-Subs]", "a dub alone is left out");
+        compare(pickOf([stream("[SubsPlease] Show - 01 (1080p)", 900, "1080p"), stream("[Beatrice-Raws] Show 01 [BDRip 1080p]", 50, "1080p")]), "", "a Blu-ray: the AI judges");
+    }
 }
