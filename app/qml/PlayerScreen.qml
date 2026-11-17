@@ -319,7 +319,7 @@ FocusScope {
     }
 
     // ---- audio and subtitles ----------------------------------------------------------------------------
-    // A choice here is the default for the group (anime, other) from now on; Off too.
+    // Choosing a track plays it; a default (per group: anime, other) is set only from the hold menu.
     function codecName(c) {
         var n = { "A_FLAC": "FLAC", "A_AC3": "Dolby Digital", "A_EAC3": "Dolby Digital Plus", "A_DTS": "DTS", "A_TRUEHD": "TrueHD", "A_OPUS": "Opus", "A_VORBIS": "Vorbis",
                   "S_TEXT/ASS": "ASS", "S_TEXT/SSA": "SSA", "S_TEXT/UTF8": "SRT", "S_HDMV/PGS": "PGS", "S_VOBSUB": "VobSub", "tx3g": "Text",
@@ -333,7 +333,7 @@ FocusScope {
     // favourite (Tracks.favorites, per list); with any, the list is Off, the favourites' tracks (or their
     // online match) in the order they were added, then Other languages, which opens the rest. The delay
     // isn't a row: it's the panel's foot, and Left/Right set it from any row.
-    // `keep`: stay on the row (the list changing under it), rather than go to the checked one
+    // `keep`: stay on the same track (the list changing under it), rather than go to the checked one
     function buildMenu(keep) {
         var type = zone === "audio" ? "audio" : "sub";
         var current = type === "audio" ? (audioMuted ? -2 : media.audioTrack) : subs.track;

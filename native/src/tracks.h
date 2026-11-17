@@ -131,8 +131,8 @@ public:
         return { { "audio", audio ? audio->id : -1 }, { "sub", sub ? sub->id : -1 },
                  { "audioOff", audioPref == "off" }, { "subsOff", subPref == "off" } };
     }
-    // An active choice in a menu: `type` "audio" or "sub", `language` the chosen track's (as passed to
-    // choose(): tag and title) or "off". It becomes the default for the group.
+    // "Set default" in a list's hold menu: `type` "audio" or "sub", the held track's tag and title (as
+    // passed to choose()) or "off". It becomes the default for the group.
     Q_INVOKABLE void prefer(const QString &group, const QString &type, const QString &tag, const QString &title) {
         const QString l = tag == "off" ? QString("off") : lang::canonical(lang::of(tag, title));
         QJsonObject prefs = m_store.data().value("prefs").toObject(), g = prefs.value(group).toObject();
