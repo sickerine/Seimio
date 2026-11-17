@@ -19,6 +19,7 @@ FocusScope {
     property var tracks                  // Seimio.Data Tracks: which audio and subtitles play, and the choices
     property string group: "other"       // whose track choices apply: "anime" or "other"
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
+    property var addonSubs: []           // subtitles from the OpenSubtitles addon, after the file's own
     property var choice: ({})            // what Tracks chose for this file
     property var chapters: []            // { start, end, title } from the file
     property bool useTee: true           // the lab turns these off to compare
@@ -33,7 +34,7 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
-    function subtitleInfo() { return subs.info() + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) }
+    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
@@ -59,7 +60,8 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
-        subs.reset(); trackList = []; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
+        subs.reset(); trackList = []; addonSubs = []; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
+        if (/^tt\d+/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
@@ -106,7 +108,7 @@ FocusScope {
         return out;
     }
     function chooseTracks(list) {
-        trackList = list; choice = tracks.choose(list, group);
+        trackList = list.concat(addonSubs); choice = tracks.choose(trackList, group);
         if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
         if (media.loaded) media.mute(!!choice.audioOff);
         subs.track = subtitlesShown ? choice.sub : -1;
@@ -117,6 +119,16 @@ FocusScope {
         source: tee
         position: media.position
         playing: media.playing && !media.paused
+        // no default flag: one plays only when its language is the one chosen, and the file's own wins a tie
+        onAddonListed: {
+            var out = [];
+            for (var i = 0; i < subtitles.length; i++)
+                out.push({ id: subtitles[i].number, type: "sub", lang: subtitles[i].lang, title: subtitles[i].title, codec: "OpenSubtitles", playable: true });
+            page.addonSubs = out;
+            if (!page.trackList.length) return;                  // the file's tracks aren't in yet; chooseTracks adds these
+            page.trackList = page.trackList.concat(out); page.choice = tracks.choose(page.trackList, page.group);
+            subs.track = page.subtitlesShown ? page.choice.sub : -1;
+        }
     }
 
     // ---- the overlay -------------------------------------------------------------------------------------
@@ -134,7 +146,7 @@ FocusScope {
         if (zone === "audio" || zone === "subs") buildMenu();
         if (zone === "streams") { var r = stream ? streams.rowOf(stream.url) : -1; streamList.currentIndex = Math.max(0, r); streamList.positionViewAtIndex(Math.max(0, r), ListView.Center) }
     }
-    onTrackListChanged: if (zone === "audio" || zone === "subs") buildMenu()
+    onTrackListChanged: if (zone === "audio" || zone === "subs") buildMenu(true)
     onActiveChanged: if (!active) zone = "none"
 
     // seeking: each press moves a target at once and the seek happens when the presses stop (or on OK),
@@ -216,7 +228,8 @@ FocusScope {
         return n || (/^A_AAC/.test(c) ? "AAC" : /^A_PCM/.test(c) ? "PCM" : c || "");
     }
     property var menuTracks: []                                  // the tracks the open list shows, in order
-    function buildMenu() {
+    // `keep`: stay on the row (the delay changing), rather than go to the checked one
+    function buildMenu(keep) {
         var type = zone === "audio" ? "audio" : "sub", rows = [], list = [];
         var current = type === "audio" ? (choice.audioOff ? -2 : media.audioTrack) : subs.track;
         for (var i = 0; i < trackList.length; i++) {
@@ -234,7 +247,7 @@ FocusScope {
         list.push(null);
         if (type === "sub") { rows.push({ label: "Delay", value: (subs.delay > 0 ? "+" : "") + (subs.delay / 1000).toFixed(1) + " s" }); list.push("delay") }
         menuTracks = list; menu.model = rows;
-        for (var r = 0; r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
+        for (var r = 0; !keep && r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
     }
     function pickFromMenu(row) {
         var t = menuTracks[row];
@@ -252,7 +265,7 @@ FocusScope {
         }
         buildMenu();
     }
-    function setDelay(ms) { subs.delay = ms; if (fileKey) tracks.setDelay(fileKey, ms); buildMenu() }
+    function setDelay(ms) { subs.delay = ms; if (fileKey) tracks.setDelay(fileKey, ms); buildMenu(true) }
 
     // what's happening, while the video isn't up yet
     readonly property string status: media.failure ? "Couldn't play this stream: " + media.failure
@@ -406,7 +419,7 @@ FocusScope {
             model: page.episodeCards
             cardWidth: 352; cardHeight: 198; spacing: 28
             showTitles: false; nextLabels: false
-            onActivated: if (page.episodes[cardIndex] && page.episodes[cardIndex].id !== page.episodeId) page.playEpisode(page.episodes[cardIndex])
+            onActivated: { page.zone = "none"; if (page.episodes[cardIndex] && page.episodes[cardIndex].id !== page.episodeId) page.playEpisode(page.episodes[cardIndex]) }
         }
         Connections { target: page; onZoneChanged: if (page.zone === "episodes") { for (var i = 0; i < page.episodes.length; i++) if (page.episodes[i].id === page.episodeId) { episodeStrip.jumpTo(i); break } } }
     }
@@ -452,8 +465,10 @@ FocusScope {
             highlightMoveDuration: 260
             highlight: Rectangle { radius: 24; color: "#3dffffff" }
             preferredHighlightBegin: 0; preferredHighlightEnd: 400; highlightRangeMode: ListView.ApplyRange
-            Keys.onReturnPressed: page.switchStream(currentIndex)
-            Keys.onEnterPressed: page.switchStream(currentIndex)
+            // the sheet slides away as the new stream loads behind it; the one playing just closes it
+            function choose() { page.zone = "none"; if (!(page.stream && page.streams.rowOf(page.stream.url) === currentIndex)) page.switchStream(currentIndex) }
+            Keys.onReturnPressed: choose()
+            Keys.onEnterPressed: choose()
             delegate: Item {
                 id: streamRow
                 readonly property var chips: model.chips || []

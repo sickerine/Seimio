@@ -6,6 +6,8 @@ Item {
     property real position: 0
     property bool playing: false
     property int delay: 0
+    signal addonListed(var subtitles)
+    function fetchAddon(type, videoId) {}
     function reset() {}
     function info() { return "mac" }
 }

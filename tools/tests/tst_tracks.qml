@@ -60,6 +60,17 @@ TestCase {
         compare(tracks.choose(badlyFlagged, "signs").sub, 0, "English audio: the signs, as for a dub");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "jpn" }, { id: 3, type: "sub", lang: "eng", title: "Signs" }], "signs").sub, 3, "signs only: better than nothing");
     }
+    // OpenSubtitles addon tracks come after the file's, numbered from 1000, with no flags
+    function test_addonSubtitlesPlayOnlyForTheChosenLanguage() {
+        var file = [{ id: 0, type: "audio", lang: "eng", default: true }, { id: 3, type: "sub", lang: "eng" }];
+        var addon = [{ id: 1000, type: "sub", lang: "pt-BR" }, { id: 1001, type: "sub", lang: "eng" }];
+        compare(tracks.choose(file.concat(addon), "addon").sub, -1, "no choice: none plays");
+        tracks.prefer("addon", "sub", "eng", "");
+        compare(tracks.choose(file.concat(addon), "addon").sub, 3, "the file's own wins a tie");
+        tracks.prefer("addon", "sub", "pt-BR", "");
+        compare(tracks.choose(file.concat(addon), "addon").sub, 1000, "Brazilian Portuguese from the addon");
+        compare(tracks.choose(file.concat([{ id: 1000, type: "sub", lang: "por" }]), "addon").sub, 1000, "a Portuguese choice takes Portuguese");
+    }
     function test_unplayableTracksAreNeverChosen() {
         tracks.prefer("other", "audio", "eng", "");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "eng", playable: false }, { id: 1, type: "audio", lang: "eng" }], "other").audio, 1);

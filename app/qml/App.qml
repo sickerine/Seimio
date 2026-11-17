@@ -156,7 +156,11 @@ WebOSWindow {
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
         onOpenStreams: app.openStreams(null)
-        onVariantChanged: if (variant.clearTrackChoices) trackChoice.clearPreferences()
+        onVariantChanged: {
+            if (variant.clearTrackChoices) trackChoice.clearPreferences(typeof variant.clearTrackChoices === "string" ? variant.clearTrackChoices : "");
+            // lab: { "playId": { "type": "series", "id": "tt…:2:3" } } plays that video's ranked pick
+            if (variant.playId) { app.playTarget = variant.playId; player.prepare({ name: variant.playId.id }, ""); app.layer = "player"; streams.play(variant.playId.type, variant.playId.id, variant.playId.id) }
+        }
     }
 
     FocusScope {
@@ -297,8 +301,8 @@ WebOSWindow {
             episodeId: app.playTarget ? app.playTarget.id : ""
             videoId: app.playTarget ? app.playTarget.id : ""
             onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
-            // another stream of the same video, from where it is now
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
+            // another stream of the same video, from where it is now
             onSwitchStream: { app.playTarget.progress = player.duration ? player.position / player.duration * 100 : 0; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
             group: app.playTarget && app.playTarget.id.indexOf("kitsu:") === 0 ? "anime" : "other"

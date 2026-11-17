@@ -47,6 +47,13 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
 - [x] 1 track engine (tracks.h, tools/tests/tst_tracks.qml)
 - [x] 2 tee (tee.h: server and Matroska parser; subtitle_layer.h: libass fed by the tee). Verified on
   the TV with [Salieri] Demon Slayer S3E9: 7 subtitle tracks, 35 fonts, chapters, ASS drawn. Not yet:
-  hiding Attachments from the player (mkv-cut), PGS, external subtitles.
-- [x] 3 UI (overlay, menus, sheet, episode row, skip from chapters). Not yet: online skip times (AniSkip, IntroDB, TheIntroDB), MP4 subtitles, PGS, external subtitles.
+  hiding Attachments from the player (mkv-cut), PGS, MP4 subtitle tracks.
+- [x] External subtitles: Stremio's OpenSubtitles addon (`opensubtitles-v3.strem.io`), up to three per
+  language, listed after the file's own and downloaded only when chosen. No default flag, so one plays
+  only when its language is the chosen one, and the file's own wins a tie. OpenSubtitles' four codes
+  outside ISO 639 (its `export_languages.php`) map to BCP 47. The addon knows only IMDb ids: Kitsu ids
+  (anime) get nothing, even with the file name.
+- [x] 3 UI (overlay, menus, sheet, episode row, skip from chapters and from AniSkip, IntroDB,
+  TheIntroDB). Verified on the TV: a stream switch resumes where it was, an episode from the row plays,
+  an addon subtitle downloads and draws, delay steps 0.1 s and comes back with the file, audio Off sticks.
 - [ ] 4 performance

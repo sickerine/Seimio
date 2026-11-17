@@ -12,6 +12,10 @@
 //
 // The clock is the player's `position`, moved on smoothly between its updates while `playing`, minus
 // `delay` (ms; positive shows subtitles later).
+//
+// Subtitles for files without them come from Stremio's OpenSubtitles addon: fetchAddon() lists them
+// (up to three per language) as external tracks numbered from 1000, and one is downloaded and read
+// (SRT) only when it's chosen.
 #include <QtQml>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -21,6 +25,8 @@
 #include <QImage>
 #include <QThread>
 #include <atomic>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <ass/ass.h>
 #include "tee.h"
 
@@ -40,9 +46,36 @@ public:
         ass_library_done(m_lib);
     }
 public slots:
-    void start() { m_tick = new QTimer(this); m_tick->setInterval(16); connect(m_tick, &QTimer::timeout, this, [this] { render(); }); }
+    void start() {
+        m_tick = new QTimer(this); m_tick->setInterval(16); connect(m_tick, &QTimer::timeout, this, [this] { render(); });
+        m_net = new QNetworkAccessManager(this);
+    }
+    // lists the addon's subtitles for a video: ("movie", "tt…") or ("series", "tt…:1:2"); it knows only IMDb ids
+    void fetchAddon(const QString &type, const QString &videoId) {
+        const int session = m_session;
+        QNetworkRequest r(QUrl("https://opensubtitles-v3.strem.io/subtitles/" + type + "/" + videoId + ".json"));
+        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
+        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = m_net->get(r);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, session] {
+            reply->deleteLater();
+            if (session != m_session) return;
+            QVariantList out; QHash<QString, int> perLang;
+            for (const QJsonValue &v : QJsonDocument::fromJson(reply->readAll()).object().value("subtitles").toArray()) {
+                const QJsonObject s = v.toObject();
+                // OpenSubtitles' own codes outside ISO 639 (its export_languages.php table), as BCP 47
+                static const QHash<QString, QString> own { { "pob", "pt-BR" }, { "zht", "zh-Hant" }, { "scc", "srp" } };
+                const QString lang = own.value(s.value("lang").toString(), s.value("lang").toString());
+                if (perLang[lang]++ >= 3) continue;
+                const int number = 1000 + m_external.size();
+                m_external.insert(number, s.value("url").toString());
+                out << QVariantMap { { "number", number }, { "lang", lang }, { "title", s.value("releaseGroup").toString() } };
+            }
+            emit addonListed(out);
+        });
+    }
     void reset() {
-        m_tracks.clear(); m_number = -1;
+        m_tracks.clear(); m_number = -1; m_external.clear(); m_session++;
         if (m_track) { ass_free_track(m_track); m_track = nullptr; }
         ass_clear_fonts(m_lib); m_fontsChanged = true; statTracks = 0; statBlocks = 0; statFonts = 0;
         emit frame(QImage(), QRect()); updateTick();
@@ -69,7 +102,12 @@ public slots:
         ass_add_font(m_lib, name.toUtf8().constData(), data.constData(), data.size());
         m_fontsChanged = true; statFonts++;
     }
-    void setTrack(int number) { if (number != m_number) { m_number = number; rebuild(); } }
+    void setTrack(int number) {
+        if (number == m_number) return;
+        m_number = number;
+        if (m_external.contains(number) && !m_tracks.contains(number)) download(number);
+        rebuild();
+    }
     // the player's clock: its position (ms) as of now, whether it's moving, and the delay
     void setClock(double position, bool playing, int delay) {
         m_position = position; m_playing = playing; m_delay = delay; m_since.restart();
@@ -81,10 +119,38 @@ public:
     std::atomic<int> statTracks { 0 }, statBlocks { 0 }, statFrames { 0 }, statFonts { 0 };
 signals:
     void frame(const QImage &image, const QRect &box);
+    void addonListed(const QVariantList &subtitles);
 private:
     struct Block { qint64 start, duration; QByteArray data; };
     struct Track { QByteArray header; bool srt = false; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; };
 
+    // an addon subtitle: SRT, read whole into a track like an embedded SRT one
+    void download(int number) {
+        const int session = m_session;
+        QNetworkRequest r { QUrl(m_external.value(number)) };
+        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
+        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = m_net->get(r);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, number, session] {
+            reply->deleteLater();
+            if (session != m_session) return;
+            static const QRegularExpression cue("(\\d+):(\\d\\d):(\\d\\d)[,.](\\d{1,3})\\s*-->\\s*(\\d+):(\\d\\d):(\\d\\d)[,.](\\d{1,3})");
+            auto ms = [](const QRegularExpressionMatch &m, int at) {
+                return ((m.captured(at).toLongLong() * 60 + m.captured(at + 1).toLongLong()) * 60 + m.captured(at + 2).toLongLong()) * 1000
+                       + QString(m.captured(at + 3) + "00").left(3).toLongLong(); };
+            Track &t = m_tracks[number]; t.srt = true; t.header = srtHeader(); statTracks = m_tracks.size();
+            const QStringList lines = QString::fromUtf8(reply->readAll()).remove('\r').split('\n');
+            for (int i = 0; i < lines.size(); i++) {
+                const auto m = cue.match(lines[i]);
+                if (!m.hasMatch()) continue;
+                QStringList text;
+                while (i + 1 < lines.size() && !lines[i + 1].trimmed().isEmpty()) text << lines[++i];
+                const QByteArray chunk = srtChunk(t.readOrder++, text.join('\n').toUtf8());
+                if (!chunk.isEmpty()) { const qint64 a = ms(m, 1), b = ms(m, 5); t.blocks.append({ a, qMax<qint64>(b - a, 60), chunk }); statBlocks++; }
+            }
+            if (number == m_number) rebuild();
+        });
+    }
     void rebuild() {
         if (m_track) { ass_free_track(m_track); m_track = nullptr; }
         auto it = m_tracks.find(m_number);
@@ -153,6 +219,9 @@ private:
     ASS_Track *m_track = nullptr;
     QHash<int, Track> m_tracks;
     QTimer *m_tick = nullptr;
+    QNetworkAccessManager *m_net = nullptr;
+    QHash<int, QString> m_external;
+    int m_session = 0;
     QElapsedTimer m_since;
     double m_position = 0;
     int m_number = -1, m_delay = 0;
@@ -173,6 +242,7 @@ public:
         m_worker->moveToThread(&m_thread);
         connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
         connect(m_worker, &SubtitleWorker::frame, this, [this](const QImage &image, const QRect &box) { m_image = image; m_box = box; m_dirty = true; update(); });
+        connect(m_worker, &SubtitleWorker::addonListed, this, &SubtitleLayer::addonListed);
         m_thread.start();
         QMetaObject::invokeMethod(m_worker, "start", Qt::QueuedConnection);
     }
@@ -197,6 +267,7 @@ public:
     void setPlaying(bool on) { if (on == m_playing) return; m_playing = on; clock(); }
     int delay() const { return m_delay; }
     void setDelay(int ms) { if (ms == m_delay) return; m_delay = ms; clock(); emit delayChanged(); }
+    Q_INVOKABLE void fetchAddon(const QString &type, const QString &videoId) { QMetaObject::invokeMethod(m_worker, "fetchAddon", Qt::QueuedConnection, Q_ARG(QString, type), Q_ARG(QString, videoId)); }
     // a new stream: forget its tracks and fonts
     Q_INVOKABLE void reset() { m_track = -1; QMetaObject::invokeMethod(m_worker, "reset", Qt::QueuedConnection); emit trackChanged(); }
     // for the lab: tracks, blocks, frames drawn
@@ -204,6 +275,7 @@ public:
         return QString("tracks %1 blocks %2 track %3 frames %4 fonts %5").arg(m_worker->statTracks).arg(m_worker->statBlocks).arg(m_track).arg(m_worker->statFrames).arg(m_worker->statFonts);
     }
 signals:
+    void addonListed(const QVariantList &subtitles);
     void sourceChanged();
     void trackChanged();
     void delayChanged();
