@@ -21,6 +21,10 @@ FocusScope {
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
     property var addonSubs: []           // subtitles from the OpenSubtitles addon, after the file's own
     property bool pickedSub: false       // a subtitle was picked in the menu for this file
+    // lab: ms from load to the first frame
+    property double loadedAt: 0
+    property int startMs: -1
+    Connections { target: media; onStateChanged: if (media.playing && page.startMs < 0 && page.loadedAt) page.startMs = Date.now() - page.loadedAt }
     property var choice: ({})            // what Tracks chose for this file
     property var chapters: []            // { start, end, title } from the file
     property bool useTee: true           // the lab turns these off to compare
@@ -36,7 +40,7 @@ FocusScope {
     readonly property string failure: media.failure
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
-        + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
+        + " start " + startMs + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
@@ -62,6 +66,7 @@ FocusScope {
     }
     function load() {
         if (!pendingUrl) return;
+        loadedAt = Date.now(); startMs = -1;
         subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
         if (/^tt\d+/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
@@ -104,7 +109,7 @@ FocusScope {
             var t = list[i];
             if (t.type === 2) out.push({ id: audio++, type: "audio", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced, playable: audioPlays(t.codec) });
             else if (t.type === 17) out.push({ id: t.number, type: "sub", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced,
-                                                 playable: /^(S_TEXT\/(ASS|SSA|UTF8)|S_HDMV\/PGS|tx3g)/.test(t.codec) });
+                                                 playable: /^(S_TEXT\/(ASS|SSA|UTF8)|S_HDMV\/PGS|S_VOBSUB|tx3g)/.test(t.codec) });
         }
         return out;
     }

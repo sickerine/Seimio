@@ -35,7 +35,7 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
      attachments/fonts, chapters, ASS/SRT events; zlib-inflated).
    - The player's view hides the Attachments element (LG reads fonts at ~5 MB/s before the first frame),
      rewriting Segment size, SeekHead and Cues.
-   - Read-ahead capped (16 MB) so memory stays bounded.
+   - Read-ahead capped (8 MB a connection, fetched 4 MB at a time) so memory stays bounded.
    - libass (`SubtitleLayer`) draws the chosen track over the video, with the delay.
 3. Player UI: transport, seeking that queues one seek, Audio and Subtitles menus (+ Off, delay),
    stream sheet (switch keeps the position), episode row (Down), skip intro/outro (stremio-webos
@@ -52,7 +52,10 @@ So track names, flags, fonts, chapters and the subtitle events come from the fil
   130 MB for the whole app with 18 tracks, steady over minutes and seeks.
 - [x] MP4 text subtitles (tx3g, `Mp4Subs` in tee.h): moov anywhere (an Apple WEB-DL keeps it at the
   end, behind a 3.8 MB free box). Verified on the TV with Dexter S2E3 MP4-BTM.
-- Not yet: VobSub, hiding Attachments from the player (mkv-cut).
+- [x] VobSub (vobsub.h, ffmpeg's dvdsubdec): verified on the Mac and the TV (Tigole's Shawshank).
+- [x] mkv-cut (`MkvCut` in tee.h): the player gets the file without its Attachments; the tee reads the
+  fonts on its own. An anime episode with 12 fonts went from 5.0 s to 1.4 s from load to the first
+  frame; seeking works on the rewritten Cues.
 - [x] External subtitles: Stremio's OpenSubtitles addon (`opensubtitles-v3.strem.io`), up to three per
   language, listed after the file's own and downloaded only when chosen. No default flag, so one plays
   only when its language is the chosen one, and the file's own wins a tie. OpenSubtitles' four codes

@@ -77,7 +77,9 @@ private:
 // them on the GUI thread, where its own work shows up as fake late frames), grouped by `phase`.
 // Frame gaps can't tell a long stall from a pause in drawing, so GUI stalls are measured apart: with
 // `heartbeat` on (the lab sets it during tours), a 16 ms timer on the GUI thread ticks whether or not
-// anything draws, and a tick more than 50 ms late is a stall of that length, however long.
+// anything draws, and a tick more than 50 ms late is a stall of that length, however long. One that ends
+// just after a slow swap (over 30 ms: the TV's compositor, over video) was the GUI thread waiting to
+// hand over the next frame, not our work: it's logged as such and not counted.
 class FrameStats : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString phase READ phase WRITE setPhase)
@@ -90,6 +92,7 @@ public:
             m_lastBeat = now;
             if (gap <= 50) return;
             QMutexLocker l(&m_mutex);
+            if (now - m_slowSwap < 15) { labLog(QString("gui waited on a slow swap %1 ms").arg(gap, 0, 'f', 1)); return; }
             m_stalls[m_phase].append(gap);
             labLog(QString("gui stall %1 ms").arg(gap, 0, 'f', 1));
         });
@@ -108,9 +111,11 @@ public:
     Q_INVOKABLE void attach(QObject *window) {
         auto w = qobject_cast<QQuickWindow *>(window);
         if (!w) return;
+        connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);   // render thread
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
             double now = monoMs();
             QMutexLocker l(&m_mutex);
+            if (now - m_rendered > 30) m_slowSwap = now;
             // Qt draws only when something changes. A frame is late when it breaks a run of frames (the one
             // before it came on time); one that follows a pause (nothing animating, a subtitle waiting for its
             // next line, a key press after a moment) only shows when something next changed
@@ -158,6 +163,8 @@ private:
     QMap<QString, QVector<double>> m_gaps, m_stalls;
     QTimer m_beat;
     double m_lastBeat = 0;
+    std::atomic<double> m_rendered { 0 };
+    double m_slowSwap = 0;                  // when the last slow swap ended (under m_mutex)
 };
 
 

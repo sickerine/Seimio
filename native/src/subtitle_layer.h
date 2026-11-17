@@ -3,8 +3,8 @@
 // which hands over every text subtitle track's header and blocks as the player's bytes pass through, and
 // the file's fonts; every track's blocks are kept, so switching tracks is instant and needs no download.
 // Matroska ASS blocks go to libass as they are (ass_process_chunk, as mpv feeds it); SRT text becomes the
-// same with a plain style (as stremio-webos service/srt-ass.js did). Blu-ray image subtitles (PGS) are
-// decoded by Pgs (pgs.h) and shown when the set on screen changes.
+// same with a plain style (as stremio-webos service/srt-ass.js did). Image subtitles, Blu-ray's PGS
+// (pgs.h) and DVD's VobSub (vobsub.h), are decoded when the picture on screen changes.
 //
 // All the subtitle work happens on its own thread (SubtitleWorker): the blocks and fonts come straight
 // from the Tee's thread, libass parses, lays out and draws there, and the GUI thread only receives the
@@ -31,6 +31,7 @@
 #include <ass/ass.h>
 #include "tee.h"
 #include "pgs.h"
+#include "vobsub.h"
 
 class SubtitleWorker : public QObject {
     Q_OBJECT
@@ -85,16 +86,17 @@ public slots:
     void addHeader(int number, const QString &codec, const QByteArray &header) {
         Track &t = m_tracks[number]; statTracks = m_tracks.size();
         t.srt = codec.startsWith("S_TEXT/UTF8") || codec == "tx3g";
-        t.image = codec == "S_HDMV/PGS";
+        t.image = codec == "S_HDMV/PGS" ? 1 : codec == "S_VOBSUB" ? 2 : 0;
+        if (t.image == 2) t.vob.setHeader(header);
         t.header = t.srt ? srtHeader() : header;
         if (number == m_number) rebuild();
     }
     void addBlock(int number, qint64 start, qint64 duration, const QByteArray &payload) {
         auto it = m_tracks.find(number);
         if (it != m_tracks.end() && it->image) {
-            // a window around where the player reads (see pgs.h); the set showing is picked up on the next tick
-            if (it->pgs.add(start, duration, payload)) statBlocks++;
-            it->pgs.keepNear(start);
+            // a window around where the player reads (see pgs.h); the picture showing is picked up on the next tick
+            if (it->image == 1 ? it->pgs.add(start, duration, payload) : it->vob.add(start, duration, payload)) statBlocks++;
+            if (it->image == 1) it->pgs.keepNear(start); else it->vob.keepNear(start);
             if (number == m_number && !m_playing) render();
             return;
         }
@@ -132,7 +134,8 @@ signals:
     void addonListed(const QVariantList &subtitles);
 private:
     struct Block { qint64 start, duration; QByteArray data; };
-    struct Track { QByteArray header; bool srt = false, image = false; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; Pgs pgs; };
+    // image: 1 PGS, 2 VobSub
+    struct Track { QByteArray header; bool srt = false; int image = 0; QVector<Block> blocks; QSet<QByteArray> seen; int readOrder = 0; Pgs pgs; VobSub vob; };
 
     // an addon subtitle: SRT, read whole into a track like an embedded SRT one
     void download(int number) {
@@ -165,7 +168,7 @@ private:
         if (m_track) { ass_free_track(m_track); m_track = nullptr; }
         m_shownSet = -2;
         auto it = m_tracks.find(m_number);
-        if (it != m_tracks.end() && !it->header.isEmpty()) {
+        if (it != m_tracks.end() && !it->image && !it->header.isEmpty()) {
             m_track = ass_new_track(m_lib);
             ass_process_codec_private(m_track, it->header.data(), it->header.size());
             for (Block &b : it->blocks) ass_process_chunk(m_track, b.data.data(), b.data.size(), b.start, b.duration);
@@ -176,12 +179,12 @@ private:
     void updateTick() { if (!m_tick) return; if (m_playing && (m_track || imageTrack())) { if (!m_tick->isActive()) m_tick->start(); } else m_tick->stop(); }
     qint64 now() const { return qint64(m_position) + (m_playing ? m_since.elapsed() : 0) - m_delay; }
     void render() {
-        if (imageTrack()) {                                                    // only when the set on screen changes
-            const Pgs &pgs = m_tracks[m_number].pgs;
-            const qint64 set = pgs.at(now());
+        if (imageTrack()) {                                                    // only when the picture on screen changes
+            const Track &t = m_tracks[m_number];
+            const qint64 set = t.image == 1 ? t.pgs.at(now()) : t.vob.at(now());
             if (set == m_shownSet) return;
             m_shownSet = set;
-            QRect box; QImage out = set < 0 ? QImage() : pgs.render(set, box);
+            QRect box; QImage out = set < 0 ? QImage() : t.image == 1 ? t.pgs.render(set, box) : t.vob.render(set, box);
             statFrames++;
             emit frame(out, box);
             return;
@@ -244,7 +247,7 @@ private:
     QNetworkAccessManager *m_net = nullptr;
     QHash<int, QString> m_external;
     int m_session = 0;
-    qint64 m_shownSet = -2;                 // the PGS set on screen (-1 none, -2 not drawn yet)
+    qint64 m_shownSet = -2;                 // the image subtitle on screen, by start (-1 none, -2 not drawn yet)
     QElapsedTimer m_since;
     double m_position = 0;
     int m_number = -1, m_delay = 0;

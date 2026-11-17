@@ -73,6 +73,7 @@ private:
     struct Open { quint32 id; qint64 end; };
 
     quint32 be32(int at) const { auto p = reinterpret_cast<const uchar *>(m_pending.constData()) + at; return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
+public:
     // an element ID (marker kept) at buf[pos]: its length, or 0 if not all there
     static int idAt(const uchar *b, qint64 n, qint64 pos, quint32 &id) {
         if (pos >= n) return 0;
@@ -93,6 +94,7 @@ private:
         return len;
     }
     static quint64 uintOf(const uchar *b, qint64 s, qint64 e) { quint64 v = 0; for (qint64 i = s; i < e; i++) v = (v << 8) | b[i]; return v; }
+private:
 
     void openMaster(quint32 id) {
         if (id == TRACKENTRY) m_track = Track();
@@ -374,9 +376,116 @@ private:
     Sample m_partialSample {};
 };
 
+// ---- the player's view without the fonts ---------------------------------------------------------------
+// A port of stremio-webos service/mkv-cut.js. LG's player reads a file from byte 0 in order and works
+// through attached fonts at about 5 MB a second before it shows a frame (measured here: an anime episode
+// with 12 fonts started in 5.0 s, a file without in 0.6 s). Only our subtitle renderer uses them, so the
+// player is served the file with its Attachments element cut out: every byte after it moves down by the
+// cut, and the three places that store positions (the Segment size, the SeekHead and the Cues) are
+// rewritten to match. Planned from the head of the file; nothing is cut from a layout it doesn't handle.
+struct MkvCut {
+    enum : quint32 { EBML = 0x1a45dfa3, SEGMENT = 0x18538067, SEEKHEAD = 0x114d9b74, SEEK = 0x4dbb, SEEKID = 0x53ab, SEEKPOSITION = 0x53ac,
+                     TRACKS = 0x1654ae6b, ATTACHMENTS = 0x1941a469, CLUSTER = 0x1f43b675, CUES = 0x1c53bb6b, CUEPOINT = 0xbb,
+                     CUETRACKPOSITIONS = 0xb7, CUECLUSTERPOSITION = 0xf1, CUECODECSTATE = 0xea, VOID = 0xec, CRC32 = 0xbf };
+    static constexpr qint64 kMinCut = 1 << 20;                  // less costs the player a fraction of a second
+    qint64 start = 0, end = 0, cut = 0, floor = 0, cuesAt = -1;  // Attachments spans real [start, end)
+    QByteArray head;                                            // the real [0, start), rewritten
+
+    struct El { quint32 id = 0; qint64 start = 0, sizeAt = 0, size = 0, data = 0, end = 0; int sizeLen = 0; bool unknown = false; };
+    static bool element(const QByteArray &b, qint64 pos, El &e) {
+        auto p = reinterpret_cast<const uchar *>(b.constData()); const qint64 n = b.size();
+        quint32 id; const int il = MkvSubs::idAt(p, n, pos, id); if (!il) return false;
+        qint64 size; bool unknown; const int sl = MkvSubs::sizeAt(p, n, pos + il, size, unknown); if (!sl) return false;
+        e = { id, pos, pos + il, size, pos + il + sl, pos + il + sl + size, sl, unknown };
+        return true;
+    }
+    // the children of a master we rewrite; a CRC-32 child would no longer match, so it becomes a Void of
+    // the same shape: the master stays valid, only unchecked
+    template <typename F> static void children(QByteArray &b, qint64 from, qint64 to, F visit) {
+        for (qint64 pos = from; pos < to;) {
+            El e; if (!element(b, pos, e) || e.unknown || e.end > to) return;
+            if (e.id == CRC32) b[int(e.start)] = char(VOID); else visit(e);
+            pos = e.end;
+        }
+    }
+    static quint64 readUint(const QByteArray &b, qint64 from, qint64 to) { return MkvSubs::uintOf(reinterpret_cast<const uchar *>(b.constData()), from, to); }
+    static void writeUint(QByteArray &b, qint64 from, qint64 to, quint64 v) { for (qint64 i = to - 1; i >= from; i--) { b[int(i)] = char(v & 255); v >>= 8; } }
+
+    // -1: not enough of the head yet; 0: nothing to cut; 1: planned
+    int plan(const QByteArray &h) {
+        El ebml, segment, attachments;
+        if (!element(h, 0, ebml)) return -1;
+        if (ebml.id != EBML || ebml.unknown) return 0;
+        if (!element(h, ebml.end, segment)) return -1;
+        if (segment.id != SEGMENT) return 0;
+        bool tracks = false, found = false; QVector<El> inHead;
+        for (qint64 pos = segment.data; !found;) {
+            El e; if (!element(h, pos, e)) return -1;
+            if (e.id == CLUSTER || e.unknown) return 0;
+            if (e.id == ATTACHMENTS) { attachments = e; found = true; break; }
+            if (e.id == TRACKS) tracks = true;
+            if (e.id == SEEKHEAD || e.id == CUES) { if (e.end > h.size()) return -1; inHead << e; }
+            pos = e.end;
+        }
+        cut = attachments.end - attachments.start;
+        if (cut < kMinCut || !tracks) return 0;
+        head = h.left(int(attachments.start));
+        floor = attachments.end - segment.data;                   // positions count from the Segment's data
+        start = attachments.start; end = attachments.end; cuesAt = -1;
+        bool cuesFound = false, chained = false;
+        for (const El &e : inHead) {
+            if (e.id == CUES) { cuesFound = true; cues(head, e.start); continue; }
+            children(head, e.data, e.end, [&](const El &seek) {
+                if (seek.id != SEEK) return;
+                quint64 target = 0; El at; bool hasAt = false;
+                children(head, seek.data, seek.end, [&](const El &c) {
+                    if (c.id == SEEKID) target = readUint(head, c.data, c.end);
+                    if (c.id == SEEKPOSITION) { at = c; hasAt = true; }
+                });
+                if (!hasAt) return;
+                const qint64 position = qint64(readUint(head, at.data, at.end));
+                if (target == SEEKHEAD) chained = true;
+                if (target == ATTACHMENTS) {                         // no longer in the file: blank the entry
+                    const qint64 length = seek.end - seek.start;
+                    if (length - 2 > 126) { chained = true; return; }
+                    for (qint64 i = seek.start; i < seek.end; i++) head[int(i)] = 0;
+                    head[int(seek.start)] = char(VOID); head[int(seek.start + 1)] = char(0x80 | (length - 2));
+                    return;
+                }
+                if (target == CUES) { cuesFound = true; if (position >= floor) cuesAt = segment.data + position; }
+                if (position >= floor) writeUint(head, at.data, at.end, quint64(position - cut));
+            });
+        }
+        if (chained || !cuesFound) return 0;                         // a second SeekHead, or Cues it doesn't list
+        if (!segment.unknown) {
+            writeUint(head, segment.sizeAt, segment.sizeAt + segment.sizeLen, quint64(segment.size - cut));
+            head[int(segment.sizeAt)] = char(uchar(head[int(segment.sizeAt)]) | (1 << (8 - segment.sizeLen)));
+        }
+        return 1;
+    }
+    // the cluster and codec-state positions of a Cues element held whole in `b` at `at`, moved down
+    bool cues(QByteArray &b, qint64 at) const {
+        El e; if (!element(b, at, e) || e.id != CUES || e.unknown || e.end > b.size()) return false;
+        children(b, e.data, e.end, [&](const El &point) {
+            if (point.id != CUEPOINT) return;
+            children(b, point.data, point.end, [&](const El &positions) {
+                if (positions.id != CUETRACKPOSITIONS) return;
+                children(b, positions.data, positions.end, [&](const El &c) {
+                    if (c.id != CUECLUSTERPOSITION && c.id != CUECODECSTATE) return;
+                    const quint64 v = readUint(b, c.data, c.end);
+                    if (v >= quint64(floor)) writeUint(b, c.data, c.end, v - quint64(cut));   // a codec state of 0 means none
+                });
+            });
+        });
+        return true;
+    }
+};
+
 // ---- the server ----------------------------------------------------------------------------------------
 // One stream at a time (`open` replaces the last). Each player connection fetches its range upstream
-// piece by piece (see serve()).
+// piece by piece (see serve()). Before the player gets an answer, a bootstrap fetch reads the file's head
+// and decides the player's view (MkvCut): the file as it is, or without its fonts, which the bootstrap
+// then reads on for our renderer while the picture starts.
 class TeeWorker : public QObject {
     Q_OBJECT
 public:
@@ -389,6 +498,16 @@ public slots:
     void open(int session, const QString &url) {
         m_session = session; m_url = url; m_shared = std::make_shared<MkvSubs::Shared>(); m_mp4 = std::make_shared<Mp4Subs::Shared>();
         m_tracks.clear(); m_sent = false; m_once.clear();
+        for (const auto &c : m_waiting) { c->done = true; c->socket->disconnectFromHost(); }
+        m_waiting.clear(); m_cuesWaiting.clear();
+        stopBoot(); stopCues();
+        m_view = Pending; m_cut = MkvCut(); m_size = -1; m_head.clear(); m_cues.clear(); m_cuesState = 0;
+        m_bootParser = std::make_shared<MkvSubs>(m_shared);
+        auto none = std::make_shared<Mp4Subs>(m_mp4);
+        wire(*m_bootParser, *none, session);
+        boot(0, kHeadMax - 1);
+        // a head that stalls must not hold the player
+        QTimer::singleShot(kViewWait, this, [this, session] { if (session == m_session && m_view == Pending) decide(Whole); });
     }
 signals:
     void listening(int port);
@@ -408,7 +527,8 @@ private:
         QNetworkReply *reply = nullptr;
         std::shared_ptr<MkvSubs> parser;
         std::shared_ptr<Mp4Subs> mp4;
-        qint64 from = 0, last = -1, next = 0, total = -1;   // last: the last byte to send (-1: to the end)
+        qint64 from = 0, last = -1, next = 0, total = -1;   // the player's offsets; last: the last byte to send (-1: to the end)
+        qint64 shift = 0;                                   // real offset - the player's, for the piece being fetched
         int session = 0;
         QString url;                                        // the stream as it was when the player asked
         bool ranged = false, head = false, headerSent = false, done = false;
@@ -444,8 +564,44 @@ private:
             c->parser = std::make_shared<MkvSubs>(m_shared);
             c->mp4 = std::make_shared<Mp4Subs>(m_mp4);
             wire(*c->parser, *c->mp4, c->session);
-            fetch(c);
+            begin(c);
         });
+    }
+    // answers once the view is decided
+    void begin(const std::shared_ptr<Conn> &c) {
+        if (m_view == Pending) { m_waiting << c; return; }
+        if (m_view == Whole) { fetch(c); return; }
+        const qint64 total = m_size - m_cut.cut;
+        if (c->last < 0 || c->last >= total) c->last = total - 1;
+        if (c->from > c->last) {
+            c->done = true;
+            c->socket->write("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + QByteArray::number(total) + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            c->socket->disconnectFromHost(); return;
+        }
+        QByteArray h = c->ranged ? "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + QByteArray::number(c->from) + "-" + QByteArray::number(c->last) + "/" + QByteArray::number(total) + "\r\n"
+                                 : QByteArray("HTTP/1.1 200 OK\r\n");
+        h += "Content-Length: " + QByteArray::number(c->last - c->from + 1) + "\r\nAccept-Ranges: bytes\r\nContent-Type: video/x-matroska\r\nConnection: close\r\n\r\n";
+        c->headerSent = true;
+        c->socket->write(h);
+        more(c);
+    }
+    // the next piece of a cut view: the rewritten head, the rewritten Cues, or real bytes past the cut
+    void pump(const std::shared_ptr<Conn> &c) {
+        if (c->next < m_cut.start) {
+            const QByteArray piece = m_cut.head.mid(int(c->next), int(qMin(m_cut.start, c->last + 1) - c->next));
+            c->next += piece.size(); c->socket->write(piece);
+            return;
+        }
+        const qint64 real = c->next + m_cut.cut, realLast = c->last + m_cut.cut;
+        if (m_cut.cuesAt >= 0 && real >= m_cut.cuesAt && m_cuesState == 0) { m_cuesWaiting << c; return; }  // being rewritten
+        if (m_cuesState == 1 && real >= m_cut.cuesAt && real < m_cut.cuesAt + m_cues.size()) {
+            const QByteArray piece = m_cues.mid(int(real - m_cut.cuesAt), int(qMin(m_cut.cuesAt + m_cues.size(), realLast + 1) - real));
+            c->next += piece.size(); c->socket->write(piece);
+            return;
+        }
+        qint64 to = qMin(real + kChunk - 1, realLast);
+        if (m_cuesState == 1 && real < m_cut.cuesAt) to = qMin(to, m_cut.cuesAt - 1);
+        fetch(c, real, to);
     }
     // asks for the next piece when the player has room for it
     void more(const std::shared_ptr<Conn> &c) {
@@ -454,15 +610,20 @@ private:
             if (!c->socket->bytesToWrite()) { c->done = true; c->socket->disconnectFromHost(); }
             return;
         }
-        if (!c->reply && c->socket->bytesToWrite() < kReadAhead / 2) fetch(c);
+        if (!c->reply && c->socket->bytesToWrite() < kReadAhead / 2) { if (m_view == Cut && c->session == m_session) pump(c); else fetch(c); }
     }
-    void fetch(const std::shared_ptr<Conn> &c) {
-        QNetworkRequest up { QUrl(c->url) };
+    static QNetworkRequest request(const QString &url, qint64 from, qint64 to) {
+        QNetworkRequest up { QUrl(url) };
         up.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
         up.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-        const qint64 end = c->last >= 0 ? qMin(c->last, c->next + kChunk - 1) : c->next + kChunk - 1;
-        up.setRawHeader("Range", "bytes=" + QByteArray::number(c->next) + "-" + QByteArray::number(end));
-        QNetworkReply *r = c->head ? m_net.head(up) : m_net.get(up);
+        up.setRawHeader("Range", "bytes=" + QByteArray::number(from) + "-" + QByteArray::number(to));
+        return up;
+    }
+    // real bytes [from, to] upstream (the whole view: the player's next piece)
+    void fetch(const std::shared_ptr<Conn> &c, qint64 from = -1, qint64 to = -1) {
+        if (from < 0) { from = c->next; to = c->last >= 0 ? qMin(c->last, c->next + kChunk - 1) : c->next + kChunk - 1; }
+        c->shift = from - c->next;
+        QNetworkReply *r = c->head ? m_net.head(request(c->url, from, to)) : m_net.get(request(c->url, from, to));
         c->reply = r;
         connect(r, &QNetworkReply::metaDataChanged, this, [this, c, r] {
             if (r->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid()) return;
@@ -493,7 +654,7 @@ private:
             if (!c->headerSent || c->head) return;
             const QByteArray chunk = r->readAll();
             c->socket->write(chunk);
-            if (c->session == m_session) { c->parser->pushAt(c->next, chunk); c->mp4->pushAt(c->next, chunk); }
+            if (c->session == m_session) { c->parser->pushAt(c->next + c->shift, chunk); c->mp4->pushAt(c->next + c->shift, chunk); }
             c->next += chunk.size();
             // neither Matroska nor MP4: no tracks of ours (an MP4 sends its own once moov is read)
             if (c->session == m_session && !m_sent && m_shared->matroska == 0 && m_mp4->mp4 == 0) { m_sent = true; emit tracks(c->session, {}, false); }
@@ -506,6 +667,82 @@ private:
             more(c);
         });
     }
+    // ---- the view ----
+    enum View { Pending, Whole, Cut };
+    static constexpr qint64 kHeadMax = 8 << 20, kCuesMax = 16 << 20;
+    static constexpr int kViewWait = 8000;
+    // the bootstrap: real [from, to] into its own parser (tracks, then fonts), planning while Pending
+    void boot(qint64 from, qint64 to) {
+        const int session = m_session;
+        m_bootAt = from;
+        QNetworkReply *r = m_net.get(request(m_url, from, to));
+        m_boot = r;
+        connect(r, &QNetworkReply::metaDataChanged, this, [this, r, session] {
+            if (session != m_session || r->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid()) return;
+            if (r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 206) { if (m_view == Pending) decide(Whole); stopBoot(); return; }
+            static const QRegularExpression total("/(\\d+)\\s*$");
+            const auto t = total.match(QString::fromLatin1(r->rawHeader("Content-Range")));
+            if (t.hasMatch()) m_size = t.captured(1).toLongLong();
+        });
+        connect(r, &QNetworkReply::readyRead, this, [this, r, session] {
+            if (session != m_session || m_boot != r) return;
+            const QByteArray data = r->readAll();
+            m_bootParser->pushAt(m_bootAt, data);
+            m_bootAt += data.size();
+            if (m_view == Pending) { m_head += data; plan(false); }
+            if (m_view == Whole || (m_view == Cut && m_bootAt >= m_cut.end)) stopBoot();   // the player reads the rest itself
+        });
+        connect(r, &QNetworkReply::finished, this, [this, r, session] {
+            r->deleteLater();
+            if (m_boot != r) return;
+            m_boot = nullptr;
+            if (session != m_session) return;
+            if (m_view == Pending) plan(true);
+            if (m_view == Cut && r->error() == QNetworkReply::NoError && m_bootAt < m_cut.end) boot(m_bootAt, m_cut.end - 1);   // the rest of the fonts
+        });
+    }
+    void stopBoot() { if (QNetworkReply *r = m_boot) { m_boot = nullptr; r->abort(); } }
+    void plan(bool ended) {
+        if (m_size < 0) { if (ended) decide(Whole); return; }
+        const int p = m_cut.plan(m_head);
+        if (p == 1) { decide(Cut); if (m_cut.cuesAt >= 0) loadCues(); }
+        else if (p == 0 || ended || m_head.size() >= kHeadMax) decide(Whole);
+    }
+    void decide(View v) {
+        m_view = v; m_head.clear();
+        if (v == Whole) m_cut = MkvCut();
+        const auto waiting = m_waiting; m_waiting.clear();
+        for (const auto &c : waiting) if (!c->done) begin(c);
+    }
+    // the Cues element of a cut view, rewritten; the player asks for it on its first seek
+    void loadCues() {
+        const int session = m_session;
+        auto data = std::make_shared<QByteArray>();
+        QNetworkReply *r = m_net.get(request(m_url, m_cut.cuesAt, m_cut.cuesAt + kCuesMax - 1));
+        m_cuesReply = r;
+        QTimer::singleShot(10000, r, [this, r] { if (m_cuesReply == r) cuesDone(false); });
+        connect(r, &QNetworkReply::readyRead, this, [this, r, data, session] {
+            if (session != m_session || m_cuesReply != r) return;
+            *data += r->readAll();
+            MkvCut::El e;
+            if (!MkvCut::element(*data, 0, e)) { if (data->size() > 16) cuesDone(false); return; }
+            if (e.id != MkvCut::CUES || e.unknown || e.end > kCuesMax) { cuesDone(false); return; }
+            if (data->size() < e.end) return;
+            data->truncate(int(e.end));
+            m_cuesState = m_cut.cues(*data, 0) ? 1 : -1; m_cues = *data;
+            cuesDone(m_cuesState == 1);
+        });
+        connect(r, &QNetworkReply::finished, this, [this, r] { r->deleteLater(); if (m_cuesReply == r) cuesDone(false); });
+    }
+    // a Cues element that can't be had is served as it is (seeking may land wrong, playing doesn't)
+    void cuesDone(bool ok) {
+        if (!ok) { m_cuesState = -1; m_cues.clear(); }
+        stopCues();
+        const auto waiting = m_cuesWaiting; m_cuesWaiting.clear();
+        for (const auto &c : waiting) if (!c->done) pump(c);
+    }
+    void stopCues() { if (QNetworkReply *r = m_cuesReply) { m_cuesReply = nullptr; r->abort(); } }
+
     // every connection that reads the file's start parses its header again: each track, font and
     // chapter goes out once per stream
     bool first(const QString &key) { if (m_once.contains(key)) return false; m_once.insert(key); return true; }
@@ -541,6 +778,14 @@ private:
     QSet<QTcpSocket *> m_sockets;
     QSet<QString> m_once;
     bool m_sent = false;
+    View m_view = Whole;
+    MkvCut m_cut;
+    qint64 m_size = -1, m_bootAt = 0;
+    QByteArray m_head, m_cues;                          // the head while planning; the rewritten Cues
+    int m_cuesState = 0;                                // 0 loading (or none needed), 1 rewritten, -1 as it is
+    QNetworkReply *m_boot = nullptr, *m_cuesReply = nullptr;
+    std::shared_ptr<MkvSubs> m_bootParser;
+    QVector<std::shared_ptr<Conn>> m_waiting, m_cuesWaiting;
 public:
     // for the lab, read from the GUI thread without waiting on this one
     std::atomic<int> m_served { 0 }, m_open { 0 };
