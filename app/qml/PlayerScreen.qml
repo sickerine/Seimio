@@ -326,7 +326,7 @@ FocusScope {
             var fav = tracks.favorites(type).indexOf(favoriteLanguage) >= 0;
             rows.push({ label: fav ? "Remove from favorites" : "Add to favorites", icon: "star" }); actions.push("favorite");
         }
-        rows.push({ label: isDefault ? "Remove default" : "Set as default", detail: group === "anime" ? "Anime" : "Movies & series", icon: "pin" }); actions.push(isDefault ? "undefault" : "default");
+        rows.push({ label: isDefault ? "Remove default" : "Set default", detail: group === "anime" ? "Anime" : "Movies & series", icon: "pin" }); actions.push(isDefault ? "undefault" : "default");
         holdActions = actions; favoriteList.model = rows; favoriteList.currentIndex = 0;
         favoriteMenu = true;
     }

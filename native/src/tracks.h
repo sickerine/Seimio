@@ -16,7 +16,7 @@
 //   subtitles' language (a dub), they count as forced, as its whitelist of "sign" and "song" does.
 //   Files often leave a "Signs & Songs" track unflagged, or flag it default.
 // Preferences: for each group ("anime", "other"), the audio and subtitle language, or "off": the default.
-// Only Set as default in a list's hold menu (prefer()) sets one; picking a track plays it for that file,
+// Only Set default in a list's hold menu (prefer()) sets one; picking a track plays it for that file,
 // and whatever choose() falls back to is never saved.
 // Subtitle delay is kept per file.
 #include <QtQml>
