@@ -16,6 +16,7 @@ Glass 1.0 Glass.qml
 Frost 1.0 Frost.qml
 Scrim 1.0 Scrim.qml
 SegmentedBar 1.0 SegmentedBar.qml
+BarRow 1.0 BarRow.qml
 MediaCard 1.0 MediaCard.qml
 MonthGrid 1.0 MonthGrid.qml
 CardStrip 1.0 CardStrip.qml

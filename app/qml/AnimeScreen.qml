@@ -174,17 +174,12 @@ FocusScope {
         width: bars.width; height: 64
         focus: anime.row < 0
         Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
-        readonly property var order: anime.view === "schedule" ? [viewBar, formatBar, genreBar] : [viewBar, formatBar, sortBar, genreBar]
-        property int at: 0
-        function go(step) {
-            var i = order.indexOf(order[at]) + step;
-            if (i < 0 || i >= order.length) return;
-            at = i; order[i].forceActiveFocus();
-        }
-        onActiveFocusChanged: if (activeFocus && !anime.genreMenu) order[Math.min(at, order.length - 1)].forceActiveFocus()
-        Row {
+        // one cursor across every option; OK picks (the schedule has no order, so its bar is passed over)
+        BarRow {
             id: bars
+            focus: true
             spacing: 22
+            bars: anime.view === "schedule" ? [viewBar, formatBar, genreBar] : [viewBar, formatBar, sortBar, genreBar]
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: anime.catalog ? anime.catalog.seasonName : ""
@@ -192,7 +187,7 @@ FocusScope {
                 color: Theme.ink; font.family: Theme.face; font.pixelSize: 34; font.weight: Font.Bold
             }
             SegmentedBar {
-                id: viewBar
+                id: viewBar; selectOnOk: true
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
@@ -200,7 +195,7 @@ FocusScope {
                 onCurrentIndexChanged: anime.view = anime.views[currentIndex][1]
             }
             SegmentedBar {
-                id: formatBar
+                id: formatBar; selectOnOk: true
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
@@ -208,7 +203,7 @@ FocusScope {
                 onCurrentIndexChanged: anime.format = anime.formats[currentIndex][1]
             }
             SegmentedBar {
-                id: sortBar
+                id: sortBar; selectOnOk: true
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
@@ -219,17 +214,14 @@ FocusScope {
                 onCurrentIndexChanged: anime.sort = anime.sorts[currentIndex][1]
             }
             SegmentedBar {
-                id: genreBar
+                id: genreBar; selectOnOk: true
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                 model: [{ label: anime.genre || "All genres", icon: "" }]
-                Keys.onReturnPressed: anime.genreMenu = true
-                Keys.onEnterPressed: anime.genreMenu = true
+                onTriggered: anime.genreMenu = true
             }
         }
-        Keys.onLeftPressed: go(-1)
-        Keys.onRightPressed: go(1)
         Keys.onUpPressed: anime.exitTop()
         Keys.onDownPressed: if (anime.rows.length) anime.row = 0
     }

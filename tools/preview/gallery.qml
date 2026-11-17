@@ -47,6 +47,8 @@ WebOSWindow {
             spacing: 32
             SegmentedBar { source: win.contentItem; sx: 80; sy: 0; model: ["Home", "Movies", "Series", { icon: "search" }]; showFocus: true; currentIndex: 1 }
             SegmentedBar { source: win.contentItem; barHeight: 64; fontSize: 24; segmentPad: 44; model: ["Season 1", "Season 2"] }
+            // selectOnOk: the cursor (white) on Movies, the selection (soft) still on All
+            SegmentedBar { source: win.contentItem; barHeight: 64; fontSize: 22; segmentPad: 38; model: ["All", "TV", "Movies"]; selectOnOk: true; showFocus: true; currentIndex: 0; cursor: 2 }
         }
         MenuList { width: 408; model: [{ label: "Play", icon: "play" }, { label: "Add to library", icon: "plus" }, { label: "Mark watched", icon: "check" }] }
     }
