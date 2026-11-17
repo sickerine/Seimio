@@ -71,7 +71,7 @@ WebOSWindow {
     property string pageLayer: "title"          // where the stream list goes back to
     property string playerBack: "title"         // where the player goes back to
     function target(episode) {
-        if (episode) return { type: "series", id: episode.id, label: episode.label, progress: episode.progress };
+        if (episode) return { type: episode.type || "series", id: episode.id, label: episode.label, progress: episode.progress };
         var t = showPage.resumeTarget(showData(displayItem.id));
         return t ? { type: "series", id: t.id, label: app.episodeCount(displayItem.id) > 1 ? t.label : "", progress: t.progress }
                  : { type: "movie", id: displayItem.id, label: "", progress: displayItem.progress || 0 };

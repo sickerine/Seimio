@@ -9,7 +9,8 @@
 
 function started(ep) { return ep.progress > 0 && ep.progress < 95 }
 function finished(ep) { return !started(ep) && (ep.watched || ep.progress >= 95) }
-function aired(ep, today) { return !!ep.released && ep.released <= today }
+// Kitsu dates what it doesn't know 1970-01-01: that isn't aired
+function aired(ep, today) { return !!ep.released && ep.released > "1970-01-01" && ep.released <= today }
 
 // every episode in order, with its indexes
 function flat(show) {
@@ -19,10 +20,15 @@ function flat(show) {
     return out;
 }
 
-// the episode after `id` in the show, into the next season, once it has aired; null on the last aired one
+// the episode after `id` in the show, into the next season, once it has aired; null on the last aired one,
+// and never on into Specials (season 0: films and extras)
 function after(show, id, today) {
     var all = flat(show);
-    for (var i = 0; i + 1 < all.length; i++) if (all[i].ep.id === id) return aired(all[i + 1].ep, today) ? all[i + 1].ep : null;
+    for (var i = 0; i + 1 < all.length; i++) {
+        if (all[i].ep.id !== id) continue;
+        var next = all[i + 1];
+        return aired(next.ep, today) && show.seasons[next.s].season !== 0 ? next.ep : null;
+    }
     return null;
 }
 

@@ -21,6 +21,7 @@
 #include <QVariant>
 #include <QVector>
 #include <algorithm>
+#include <climits>
 #include <memory>
 
 // One release on one day: an episode of a library show or of the airing schedule.
@@ -183,18 +184,37 @@ public:
     // (ARM: Fribb's anime-lists) and its episodes come from Stremio's Kitsu addon, the source Torrentio
     // plays anime from. Ends in `animeReady(sourceId, item, show)`: `item` the title as the pages show it
     // (id "kitsu:N"), `show` its seasons and episodes in series.json's shape; or `animeFailed`.
+    // An Anime chart show made playable, as one show with all its seasons (docs/anime-seasons.md):
+    //  1. ARM maps the AniList id to Kitsu and to the TVDB show; ARM then lists every entry of that show
+    //     with its TVDB season (0: specials and films; none: a long runner Kitsu keeps as one entry).
+    //  2. Seasons ARM can't place yet (new ones) come from AniList's SEQUEL links from the newest season.
+    //  3. Each entry's episodes come from the Kitsu addon, in parallel; Kitsu has every season as its own
+    //     anime, and each episode keeps its Kitsu id (what Torrentio answers).
+    // A show with no Kitsu entry at all comes from Cinemeta by its IMDb id. Emits animeReady(item, show),
+    // the item being the chart's own (nothing the tab showed loads again) with `video`, the picked
+    // season's first episode, where the page opens.
+    struct AnimeJob { QVariantMap source; QString sourceId; int picked = 0; QJsonArray entries; int tail = 0; QHash<int, QByteArray> metas; int pending = 0; };
     Q_INVOKABLE void loadAnime(const QVariantMap &source) {
-        const QString sourceId = source["id"].toString(), anilist = sourceId.section(':', 1);
-        get(QUrl("https://arm.haglund.dev/api/v2/ids?source=anilist&id=" + anilist + "&include=kitsu"), [this, source, sourceId](const QByteArray &body, bool ok) {
-            const int kitsu = QJsonDocument::fromJson(body).object().value("kitsu").toInt();
-            if (!ok || !kitsu) { emit animeFailed(sourceId, "Not on Kitsu yet"); return; }
-            get(QUrl("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(kitsu) + ".json"), [this, source, sourceId, kitsu](const QByteArray &body, bool ok) {
-                if (!ok) { emit animeFailed(sourceId, "Couldn't load its episodes"); return; }
-                auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
-                QThread *worker = QThread::create([out, body, source, kitsu] { *out = animeShow(body, source, kitsu); });
-                connect(worker, &QThread::finished, this, [this, out, sourceId] { emit animeReady(sourceId, out->first, out->second); });
-                connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-                worker->start();
+        auto job = std::make_shared<AnimeJob>(); job->source = source; job->sourceId = source["id"].toString();
+        get(QUrl("https://arm.haglund.dev/api/v2/ids?source=anilist&id=" + job->sourceId.section(':', 1)), [this, job](const QByteArray &body, bool ok) {
+            const QJsonObject ids = QJsonDocument::fromJson(body).object();
+            job->picked = ids.value("kitsu").toInt();
+            if (!ok || ids.isEmpty()) { emit animeFailed(job->sourceId, "Not on Kitsu yet"); return; }
+            if (!job->picked) { cinemetaAnime(job, ids.value("imdb").toString()); return; }
+            const int tvdb = ids.value("thetvdb").toInt();
+            if (!tvdb) { job->entries = QJsonArray { ids }; job->tail = ids.value("anilist").toInt(); sequels(job, 0); return; }
+            get(QUrl("https://arm.haglund.dev/api/v2/thetvdb?id=" + QString::number(tvdb)), [this, job, ids](const QByteArray &body, bool ok) {
+                job->entries = ok ? QJsonDocument::fromJson(body).array() : QJsonArray();
+                bool has = false; int best = -1;
+                for (const QJsonValue &v : job->entries) {
+                    const QJsonObject e = v.toObject();
+                    has = has || e.value("kitsu").toInt() == job->picked;
+                    const int season = e.value("thetvdb-season").toInt(-1);
+                    if (season > best && e.value("anilist").toInt()) { best = season; job->tail = e.value("anilist").toInt(); }
+                }
+                if (!has) job->entries.append(ids);
+                if (!job->tail) job->tail = ids.value("anilist").toInt();
+                sequels(job, 0);
             });
         });
     }
@@ -394,26 +414,125 @@ private:
         QTimer::singleShot(15000, reply, &QNetworkReply::abort);
         connect(reply, &QNetworkReply::finished, this, [reply, done] { reply->deleteLater(); done(reply->readAll(), reply->error() == QNetworkReply::NoError); });
     }
-    // the Kitsu addon's meta as a title and a show: the item is the chart's own, unchanged but for its id,
-    // so nothing the tab showed (backdrop, logo, name) loads again as a second version; only the episodes
-    // come from the addon
-    static QPair<QVariantMap, QVariantMap> animeShow(const QByteArray &body, const QVariantMap &source, int kitsu) {
-        const QJsonObject meta = QJsonDocument::fromJson(body).object().value("meta").toObject();
-        QVariantMap item = source;
-        item["id"] = "kitsu:" + QString::number(kitsu);
-        QMap<int, QVariantList> bySeason;
-        for (const QJsonValue &v : meta.value("videos").toArray()) {
+    // AniList's next season after `job->tail` that ARM's TVDB show doesn't have (up to 3 in a row), mapped to
+    // Kitsu by ARM; then the episodes
+    void sequels(std::shared_ptr<AnimeJob> job, int hop) {
+        if (!job->tail || hop >= 3) { metas(job); return; }
+        QNetworkRequest r(QUrl("https://graphql.anilist.co"));
+        r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        r.setRawHeader("Accept", "application/json");
+        const QByteArray q = "{\"query\":\"{ Media(id:" + QByteArray::number(job->tail) + "){ relations{ edges{ relationType node{ id type format } } } } }\"}";
+        QNetworkReply *reply = m_net.post(r, q);
+        QTimer::singleShot(8000, reply, &QNetworkReply::abort);
+        connect(reply, &QNetworkReply::finished, this, [this, job, hop, reply] {
+            reply->deleteLater();
+            int next = 0;
+            for (const QJsonValue &v : QJsonDocument::fromJson(reply->readAll()).object().value("data").toObject().value("Media").toObject().value("relations").toObject().value("edges").toArray()) {
+                const QJsonObject e = v.toObject(), n = e.value("node").toObject();
+                const QString f = n.value("format").toString();
+                if (e.value("relationType").toString() == "SEQUEL" && n.value("type").toString() == "ANIME" && (f == "TV" || f == "TV_SHORT" || f == "ONA")) { next = n.value("id").toInt(); break; }
+            }
+            for (const QJsonValue &v : job->entries) if (next && v.toObject().value("anilist").toInt() == next) next = 0;   // ARM has it
+            if (!next) { metas(job); return; }
+            get(QUrl("https://arm.haglund.dev/api/v2/ids?source=anilist&id=" + QString::number(next)), [this, job, hop, next](const QByteArray &body, bool ok) {
+                QJsonObject ids = QJsonDocument::fromJson(body).object();
+                if (!ok || !ids.value("kitsu").toInt()) { metas(job); return; }
+                ids["appended"] = true;
+                job->entries.append(ids); job->tail = next;
+                sequels(job, hop + 1);
+            });
+        });
+    }
+    void metas(std::shared_ptr<AnimeJob> job) {
+        QVector<int> kitsu;
+        for (const QJsonValue &v : job->entries) { const int k = v.toObject().value("kitsu").toInt(); if (k && !kitsu.contains(k)) kitsu << k; }
+        job->pending = kitsu.size();
+        for (int k : kitsu)
+            get(QUrl("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(k) + ".json"), [this, job, k](const QByteArray &body, bool ok) {
+                if (ok) job->metas[k] = body;
+                if (--job->pending) return;
+                if (!job->metas.contains(job->picked)) { emit animeFailed(job->sourceId, "Couldn't load its episodes"); return; }
+                auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
+                QThread *worker = QThread::create([out, job] { *out = animeShow(*job); });
+                connect(worker, &QThread::finished, this, [this, out, job] { emit animeReady(job->sourceId, out->first, out->second); });
+                connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+                worker->start();
+            });
+    }
+    // The seasons, in order: long runners (by first air date), the TVDB seasons (their parts joined, by air
+    // date, numbered on), AniList's unplaced sequels, then Specials (season 0: films play as films).
+    static QPair<QVariantMap, QVariantMap> animeShow(const AnimeJob &job) {
+        struct Part { int kitsu, tvdb; bool appended, film; QJsonObject meta; QString first; };
+        QVector<Part> parts;
+        for (const QJsonValue &v : job.entries) {
             const QJsonObject e = v.toObject();
-            bySeason[e.value("season").toInt(1)] << QVariantMap {
-                { "id", e.value("id").toString() }, { "episode", e.value("episode").toInt() }, { "title", e.value("title").toString() },
-                { "overview", e.value("overview").toString() }, { "released", e.value("released").toString().left(10) },
-                { "runtime", e.value("runtime").toString() }, { "thumb", e.value("thumbnail").toString() } };
+            const int k = e.value("kitsu").toInt();
+            if (!k || !job.metas.contains(k)) continue;
+            const QJsonObject meta = QJsonDocument::fromJson(job.metas[k]).object().value("meta").toObject();
+            QString first;
+            for (const QJsonValue &x : meta.value("videos").toArray()) { const QString r = x.toObject().value("released").toString().left(10); if (r > "1970-01-01" && (first.isEmpty() || r < first)) first = r; }
+            parts.append({ k, e.value("thetvdb-season").toInt(-1), e.value("appended").toBool(), e.value("media").toString() == "MOVIE" || meta.value("type").toString() == "movie", meta, first.isEmpty() ? QString("9999") : first });
         }
-        QVariantList seasons;
-        for (auto it = bySeason.begin(); it != bySeason.end(); ++it) seasons << QVariantMap { { "season", it.key() }, { "episodes", it.value() } };
-        const QVariantMap show { { "name", item["name"] }, { "description", item["description"] }, { "genres", source["genres"] },
-                                 { "year", meta.value("year").toString().left(4) }, { "rating", item["rating"] }, { "seasons", seasons } };
+        // the order: long runners (-1, not appended), numbered seasons, appended ones, specials (0)
+        auto rank = [](const Part &p) { return p.tvdb == 0 ? 3 : p.appended ? 2 : p.tvdb < 0 ? 0 : 1; };
+        std::stable_sort(parts.begin(), parts.end(), [&rank](const Part &a, const Part &b) {
+            if (rank(a) != rank(b)) return rank(a) < rank(b);
+            if (rank(a) == 1 && a.tvdb != b.tvdb) return a.tvdb < b.tvdb;
+            return a.first < b.first;
+        });
+        QVariantList seasons, specials; QVariantList episodes;
+        int number = 0, offset = 0, lastKey = INT_MIN; QString pickedFirst;
+        auto close = [&] { if (!episodes.isEmpty()) seasons << QVariantMap { { "season", ++number }, { "episodes", episodes } }; episodes.clear(); offset = 0; };
+        for (const Part &p : parts) {
+            const QString id = "kitsu:" + QString::number(p.kitsu);
+            QVariantList mine;
+            for (const QJsonValue &x : p.meta.value("videos").toArray()) {
+                const QJsonObject e = x.toObject();
+                const QString released = e.value("released").toString().left(10);
+                mine << QVariantMap { { "id", p.film ? id : e.value("id").toString() }, { "episode", e.value("episode").toInt() }, { "title", p.film ? p.meta.value("name").toString() : e.value("title").toString() },
+                                      { "overview", e.value("overview").toString() }, { "released", released == "1970-01-01" ? QString() : released },
+                                      { "runtime", e.value("runtime").toString() }, { "thumb", e.value("thumbnail").toString() }, { "type", p.film ? "movie" : "series" } };
+                if (p.film) break;                                                    // a film is one item
+            }
+            if (mine.isEmpty()) continue;
+            if (p.kitsu == job.picked) pickedFirst = mine.first().toMap().value("id").toString();
+            if (rank(p) == 3) { for (const QVariant &m : mine) { QVariantMap e = m.toMap(); e["episode"] = specials.size() + 1; specials << e; } continue; }
+            // a new season unless this part continues the last one's TVDB season
+            const int key = rank(p) == 1 ? p.tvdb : -1000 - p.kitsu;
+            if (key != lastKey) close();
+            lastKey = key;
+            for (const QVariant &m : mine) { QVariantMap e = m.toMap(); e["episode"] = offset + e["episode"].toInt(); episodes << e; }
+            offset += mine.size();
+        }
+        close();
+        if (!specials.isEmpty()) seasons << QVariantMap { { "season", 0 }, { "label", "Specials" }, { "episodes", specials } };
+        QVariantMap item = job.source;
+        item["id"] = "kitsu:" + QString::number(job.picked);
+        item["video"] = pickedFirst;
+        const QVariantMap show { { "name", item["name"] }, { "description", item["description"] }, { "genres", job.source["genres"] },
+                                 { "year", job.source["start"].toString().left(4) }, { "rating", item["rating"] }, { "seasons", seasons } };
         return qMakePair(item, show);
+    }
+    // a show Kitsu doesn't have, from Cinemeta by its IMDb id (Torrentio answers IMDb seasons too)
+    void cinemetaAnime(std::shared_ptr<AnimeJob> job, const QString &imdb) {
+        if (imdb.isEmpty()) { emit animeFailed(job->sourceId, "Not on Kitsu yet"); return; }
+        get(QUrl("https://v3-cinemeta.strem.io/meta/series/" + imdb + ".json"), [this, job, imdb](const QByteArray &body, bool ok) {
+            const QJsonObject meta = QJsonDocument::fromJson(body).object().value("meta").toObject();
+            QMap<int, QVariantList> bySeason;
+            for (const QJsonValue &x : meta.value("videos").toArray()) {
+                const QJsonObject e = x.toObject();
+                bySeason[e.value("season").toInt()] << QVariantMap { { "id", e.value("id").toString() }, { "episode", e.value("episode").toInt() }, { "title", e.value("name").toString() },
+                                                                     { "overview", e.value("overview").toString() }, { "released", e.value("released").toString().left(10) },
+                                                                     { "thumb", e.value("thumbnail").toString() }, { "type", "series" } };
+            }
+            if (!ok || bySeason.isEmpty()) { emit animeFailed(job->sourceId, "Couldn't load its episodes"); return; }
+            QVariantList seasons;
+            for (auto it = bySeason.begin(); it != bySeason.end(); ++it) if (it.key() > 0) seasons << QVariantMap { { "season", it.key() }, { "episodes", it.value() } };
+            if (bySeason.contains(0)) seasons << QVariantMap { { "season", 0 }, { "label", "Specials" }, { "episodes", bySeason[0] } };
+            QVariantMap item = job->source; item["id"] = imdb;
+            emit animeReady(job->sourceId, item, QVariantMap { { "name", item["name"] }, { "description", item["description"] }, { "genres", job->source["genres"] },
+                                                                { "rating", item["rating"] }, { "seasons", seasons } });
+        });
     }
     static bool fits(const QVariantMap &m, const QString &format, const QString &genre) {
         const QString f = m["format"].toString();

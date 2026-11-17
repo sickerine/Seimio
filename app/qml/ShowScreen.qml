@@ -25,9 +25,14 @@ FocusScope {
     // OK on Play or on an episode plays it (the AI pick); a long OK asks how, from a menu beside `rect`
     signal play(var episode)
     signal playHeld(var episode, rect rect)
-    // { id, label, progress } of an episode, for playing it
+    // { id, label, progress, type } of an episode, for playing it; a film among the Specials plays as a film
     function target(sh, season, ep) {
-        return { id: ep.id, label: (sh.seasons.length > 1 ? "S" + sh.seasons[season].season + " " : "") + "E" + ep.episode, progress: ep.progress || 0 };
+        return { id: ep.id, label: episodeLabel(sh, season, ep), progress: ep.progress || 0, type: ep.type || "series" };
+    }
+    function episodeLabel(sh, season, ep) {
+        var n = sh.seasons[season].season;
+        if (n === 0) return ep.type === "movie" ? ep.title : "Special " + ep.episode;
+        return (sh.seasons.length > 1 ? "S" + n + " " : "") + "E" + ep.episode;
     }
     function resumeTarget(sh) {
         var p = Episodes.resting(sh, today);
@@ -48,7 +53,7 @@ FocusScope {
         episodes = seasons.length ? seasons[s].episodes : [];
         episodeData = episodes.map(function (ep) {
             return {
-                art: ep.thumb, fallback: item ? item.backdrop : "", episode: "E" + ep.episode,
+                art: ep.thumb, fallback: item ? item.backdrop : "", episode: ep.type === "movie" ? "Film" : "E" + ep.episode,
                 progress: ep.progress > 0 ? ep.progress : -1,
                 watched: ep.watched && !(ep.progress > 0),
                 upcoming: ep.released > today ? new Date(ep.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM") : ""
@@ -62,7 +67,7 @@ FocusScope {
     readonly property var resumeSeason: seasons[resumePos.s] || null
     readonly property var resumeEp: resumeSeason ? resumeSeason.episodes[resumePos.e] || null : null
     readonly property string resumeLabel: resumeEp
-        ? (resumeEp.progress > 0 ? "Resume " : "Play ") + (seasons.length > 1 ? "S" + resumeSeason.season + " " : "") + "E" + resumeEp.episode
+        ? (resumeEp.progress > 0 ? "Resume " : "Play ") + episodeLabel(show, resumePos.s, resumeEp)
         : "Play"
 
     function load(title, seasonsAndEpisodes) {
@@ -159,7 +164,7 @@ FocusScope {
             source: page.source
             sx: Theme.margin; sy: 548
             barHeight: 64; fontSize: 24; segmentPad: 44
-            model: page.seasons.map(function (s) { return "Season " + s.season })
+            model: page.seasons.map(function (s) { return s.label || "Season " + s.season })
         }
     }
 

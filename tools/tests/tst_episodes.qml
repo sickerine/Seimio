@@ -46,6 +46,15 @@ TestCase {
         compare(Episodes.after(sh, "b1", today), null, "the next one hasn't aired");
         compare(Episodes.after(sh, "b2", today), null, "the last one has nothing after it");
     }
+    function test_kitsuUnknownDateIsNotAired() {
+        var sh = show("a1", [{ season: 1, episodes: [ep("a1", true), ep("a2", false, 0, "1970-01-01")] }]);
+        compare(Episodes.after(sh, "a1", today), null, "1970-01-01 is Kitsu's unknown date");
+        compare(Episodes.resting(sh, today), { s: 0, e: 0 });
+    }
+    function test_nextEpisodeStopsBeforeSpecials() {
+        var sh = show("", [{ season: 1, episodes: [ep("a1", true), ep("a2", false)] }, { season: 0, episodes: [ep("film", false)] }]);
+        compare(Episodes.after(sh, "a2", today), null);
+    }
     function test_findsAnEpisode() {
         var sh = show("", [{ season: 1, episodes: [ep("a1", false)] }, { season: 2, episodes: [ep("b1", false), ep("b2", false)] }]);
         compare(Episodes.find(sh, "b2"), { s: 1, e: 1 });
