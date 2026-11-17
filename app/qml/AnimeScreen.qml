@@ -41,8 +41,10 @@ FocusScope {
     signal activated(var item)
     signal exitTop()
 
+    // asked only while the tab is up (a hidden screen builds nothing: its covers decoding at launch
+    // slowed Home)
     function refresh() {
-        if (!catalog || !catalog.ready) return;
+        if (!catalog || !catalog.ready || !shown) return;
         var out = [];
         if (view === "chart") {
             var items = catalog.seasonChart(format, genre, sort, now);
@@ -61,7 +63,7 @@ FocusScope {
     property var pending: null
     function apply() { rows = pending; pending = null; if (row >= rows.length) row = rows.length - 1 }
     Connections { target: anime.catalog; onLoaded: anime.refresh() }
-    Component.onCompleted: refresh()
+    onShownChanged: if (shown && !rows.length) refresh()
     // a control's choice is asked for once the selection rests (moving along a bar selects)
     Timer { id: requery; interval: 260; onTriggered: anime.refresh() }
     onViewChanged: requery.restart()
