@@ -35,6 +35,22 @@ scale, and checked against its current source:
   community mapping Kometa and Jellyfin plugins use, served by ARM).
 - Image subtitles: ffmpeg's `pgssubdec.c` and `dvdsubdec.c`; MP4 text and edit lists: ffmpeg's `mov.c`.
 
+How the players that handle every format match a chosen language to a track (current source, read
+2026-11-17), and what we took:
+
+| Player | Codes made equal | Regional tags | Undetermined tracks | From names |
+|---|---|---|---|---|
+| mpv (`misc/language.c`) | 639-1, 639-2 B and T | scored: exact > fewer extra subtags | no match | no |
+| Media3/ExoPlayer (`DefaultTrackSelector.getFormatLanguageScore`, `Util.normalizeLanguageCode`) | 639-1, 639-2, legacy tags | scored: exact 4, subset 3, main language 2 | 1 when allowed | no |
+| VLC (`src/input/es_out.c`, `vlc_find_iso639`) | 639-1, 639-2 B and T | ignored | no match | English names ("Japanese") |
+| Kodi (`StreamUtils::CompareAudioPreference`, `CLanguageTag`) | 639-1, 639-2 | matched by tag | no match | no |
+| Jellyfin (`MediaStreamSelector`) | 639-2 strings | ignored | ordered after matches | no |
+
+All agree on the core: every form of a language's code is the same language, and a match outranks
+the file's default flag. We port mpv's scoring, which Media3's equals in effect, and add what files in
+the wild need and no single one does: a track tagged `und` takes its language from its title, by code
+in capitals or by name, as VLC reads names, extended to native names ("日本語") through CLDR.
+
 ## Design
 
 1. Track engine (C++, Seimio.Data `tracks.h`)
