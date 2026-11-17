@@ -75,6 +75,11 @@ TestCase {
         tracks.prefer("addon", "sub", "eng", "");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "eng" }, { id: 3, type: "sub", lang: "en-US" }, { id: 1001, type: "sub", lang: "eng", external: true }], "addon").sub, 3, "the file's en-US over the addon's eng");
     }
+    // mpv's compare_track: text before image subtitles (PGS, VobSub) when nothing else decides
+    function test_textBeforeImageSubtitles() {
+        tracks.prefer("image", "sub", "eng", "");
+        compare(tracks.choose([{ id: 0, type: "audio", lang: "jpn" }, { id: 3, type: "sub", lang: "eng", codec: "S_HDMV/PGS" }, { id: 4, type: "sub", lang: "eng", codec: "S_TEXT/UTF8" }], "image").sub, 4);
+    }
     function test_unplayableTracksAreNeverChosen() {
         tracks.prefer("other", "audio", "eng", "");
         compare(tracks.choose([{ id: 0, type: "audio", lang: "eng", playable: false }, { id: 1, type: "audio", lang: "eng" }], "other").audio, 1);

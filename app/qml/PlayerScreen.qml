@@ -40,7 +40,9 @@ FocusScope {
     readonly property string failure: media.failure
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
-        + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes) + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
+        + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
+        + " audio " + trackList.filter(function (t) { return t.type === "audio" }).map(function (t) { return t.id + ":" + t.lang + (t.playable ? "" : "x") }).join(",")
+        + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
     opacity: active ? 1 : 0
     visible: opacity > 0
@@ -105,11 +107,15 @@ FocusScope {
     }
     // what LG's player decodes: Dolby Digital (Plus), AAC, MP3, FLAC, PCM, Vorbis; not DTS, TrueHD or Opus
     function audioPlays(codec) { return !/dts|truehd|mlp|opus/i.test(codec) }
+    // An audio track's id is LG's index for it: LG's player lists only the tracks it can decode (a remux
+    // with 11 AC3 and 12 DTS tracks lists the 11), in file order, so a playable track's index is its place
+    // among the playable ones. One that won't play gets an id no selection uses.
     function fileTracks(list) {
         var out = [], audio = 0;
         for (var i = 0; i < list.length; i++) {
             var t = list[i];
-            if (t.type === 2) out.push({ id: audio++, type: "audio", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced, playable: audioPlays(t.codec) });
+            if (t.type === 2) { var plays = audioPlays(t.codec);
+                out.push({ id: plays ? audio++ : -100 - i, type: "audio", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced, playable: plays }) }
             else if (t.type === 17) out.push({ id: t.number, type: "sub", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced,
                                                  playable: /^(S_TEXT\/(ASS|SSA|UTF8)|S_HDMV\/PGS|S_VOBSUB|tx3g)/.test(t.codec) });
         }

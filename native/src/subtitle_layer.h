@@ -228,7 +228,10 @@ private:
             return;
         }
         if (!m_track) return;
-        if (m_fontsChanged) { ass_set_fonts(m_renderer, "/usr/share/fonts/DroidSans.ttf", "sans-serif", ASS_FONTPROVIDER_NONE, nullptr, 0); m_fontsChanged = false; }
+        // the default font is the one libass falls back to for any glyph a style's font lacks (there's no
+        // font provider on the TV to find another): LG's UI face covers Latin, Cyrillic, CJK, Hangul,
+        // Arabic and symbols (DroidSans drew ♪ and Japanese as boxes); FreeType reads it from the file
+        if (m_fontsChanged) { ass_set_fonts(m_renderer, "/usr/share/fonts/LG_Display-Regular.ttf", "sans-serif", ASS_FONTPROVIDER_NONE, nullptr, 0); m_fontsChanged = false; }
         int changed = 0;
         ASS_Image *img = ass_render_frame(m_renderer, m_track, now(), &changed);
         if (!changed) return;

@@ -121,7 +121,7 @@ public:
                          lang::of(m.value("lang").toString(), title),
                          m.value("default").toBool(), m.value("forced").toBool(), m.value("playable", true).toBool(),
                          title.contains(QRegularExpression("sign", QRegularExpression::CaseInsensitiveOption)), sign.match(title).hasMatch(),
-                         m.value("external").toBool() });
+                         m.value("external").toBool(), QRegularExpression("^(S_HDMV/PGS|S_VOBSUB)").match(m.value("codec").toString()).hasMatch() });
         }
         const QStringList alang = audioPref.isEmpty() || audioPref == "off" ? QStringList() : QStringList { audioPref };
         const T *audio = pick(all, false, alang, QString());
@@ -161,7 +161,8 @@ signals:
 private:
     // signs: the title names signs (sub-select's blacklist); signsOrSongs: signs or songs (its whitelist)
     // external: loaded for the file (mpv's auto_loaded)
-    struct T { int id; bool sub; QString lang; bool def, forced, playable, signs, signsOrSongs, external; bool forcedSelect = false; };
+    // image: a picture subtitle (PGS, VobSub)
+    struct T { int id; bool sub; QString lang; bool def, forced, playable, signs, signsOrSongs, external, image; bool forcedSelect = false; };
     // mpv's compare_track for tracks of one file: is a preferred over b? mpv ranks auto-loaded tracks
     // after the file's own before it looks at languages; here a track in the chosen language comes first
     // (choose() only sees tracks that qualify), then the file's own, then how closely the tag matches
@@ -173,6 +174,7 @@ private:
         if (a.forcedSelect != b.forcedSelect) return a.forcedSelect;
         if (a.def != b.def) return a.def;
         if (a.sub && (a.forced || a.signsOrSongs) != (b.forced || b.signsOrSongs)) return !(a.forced || a.signsOrSongs);
+        if (a.image != b.image) return !a.image;                    // text before pictures
         return a.id <= b.id;
     }
     // mpv's select_default_track, with mpv's default options; for subtitles, a first pass that passes over
