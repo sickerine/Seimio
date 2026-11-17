@@ -137,12 +137,36 @@ public:
         QJsonObject prefs = m_store.data().value("prefs").toObject(), g = prefs.value(group).toObject();
         if (l.isEmpty()) g.remove(type); else g[type] = l;     // a track with no language clears it
         prefs[group] = g; m_store.data()["prefs"] = prefs;
+        // how often each language is picked, for the lists' order (topLanguages)
+        if (!l.isEmpty() && l != "off") {
+            QJsonObject picks = m_store.data().value("picks").toObject(), counts = picks.value(type).toObject();
+            const QString base = lang::canonical(l.section('-', 0, 0));
+            counts[base] = counts.value(base).toInt() + 1;
+            picks[type] = counts; m_store.data()["picks"] = picks;
+        }
         m_status = m_store.save(); emit changed();
     }
+    // The three languages a list shows before "Other languages": the most picked for that type
+    // ("audio", "sub"), then English, Japanese and Arabic to make up three
+    Q_INVOKABLE QStringList topLanguages(const QString &type) {
+        static const QStringList defaults { "eng", "jpn", "ara" };
+        const QJsonObject counts = m_store.data().value("picks").toObject().value(type).toObject();
+        QStringList codes = counts.keys();
+        std::sort(codes.begin(), codes.end(), [&](const QString &a, const QString &b) {
+            const int ca = counts.value(a).toInt(), cb = counts.value(b).toInt();
+            if (ca != cb) return ca > cb;
+            const int da = defaults.indexOf(a), db = defaults.indexOf(b);
+            return (da < 0 ? 99 : da) < (db < 0 ? 99 : db);
+        });
+        for (const QString &d : defaults) if (!codes.contains(d)) codes << d;
+        return codes.mid(0, 3);
+    }
+    // a track's language without its region, as topLanguages() names it ("pt-BR" -> "por")
+    Q_INVOKABLE QString baseLanguage(const QString &tag, const QString &title) const { return lang::canonical(lang::of(tag, title).section('-', 0, 0)); }
     // the lab: forget a group's choices, or every one (test runs make choices of their own)
     Q_INVOKABLE void clearPreferences(const QString &group = QString()) {
         QJsonObject prefs = m_store.data().value("prefs").toObject();
-        if (group.isEmpty()) prefs = {}; else prefs.remove(group);
+        if (group.isEmpty()) { prefs = {}; m_store.data().remove("picks"); } else prefs.remove(group);
         m_store.data()["prefs"] = prefs; m_status = m_store.save(); emit changed();
     }
     Q_INVOKABLE QVariantMap preferences(const QString &group) { return m_store.data().value("prefs").toObject().value(group).toObject().toVariantMap(); }

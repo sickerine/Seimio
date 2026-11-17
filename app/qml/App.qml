@@ -323,6 +323,7 @@ WebOSWindow {
             videoId: app.playTarget ? app.playTarget.id : ""
             onPlayEpisode: app.playAi(showPage.target(showPage.show, showPage.shownSeason, episode))
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
+            onMenuLevelChanged: probe.captures()
             // another stream of the same video, from where it is now
             onSwitchStream: { app.playTarget.resumeMs = player.position; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices

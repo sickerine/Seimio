@@ -145,7 +145,7 @@ FocusScope {
     signal switchStream(int row)
     onZoneChanged: {
         hide.restart();
-        if (zone === "audio" || zone === "subs") buildMenu();
+        if (zone === "audio" || zone === "subs") { levelSwap.stop(); menu.opacity = 1; menuShift.x = 0; menuLevel = "main"; buildMenu() }
         if (zone === "streams") { var r = stream ? streams.rowOf(stream.url) : -1; streamList.currentIndex = Math.max(0, r); streamList.positionViewAtIndex(Math.max(0, r), ListView.Center) }
     }
     onTrackListChanged: if (zone === "audio" || zone === "subs") buildMenu(true)
@@ -200,7 +200,8 @@ FocusScope {
         if (!media.loaded) return;
         var k = event.key, back = Remote.isBack(k), ok = Remote.isOk(k);
         if (back) {
-            if (zone === "audio" || zone === "subs" || zone === "streams") zone = "row";
+            if ((zone === "audio" || zone === "subs") && menuLevel === "other") openLevel("main");
+            else if (zone === "audio" || zone === "subs" || zone === "streams") zone = "row";
             else if (zone !== "none") { seekNow(); zone = "none" }
             else return;                                        // the app stops the player
         } else if (zone === "none") {
@@ -234,46 +235,87 @@ FocusScope {
         return n || (/^A_AAC/.test(c) ? "AAC" : /^A_PCM/.test(c) ? "PCM" : c || "");
     }
     property var menuTracks: []                                  // the tracks the open list shows, in order
-    // The Audio and Subtitles lists: Off first, one Up from whatever plays near the top; then the file's
-    // own tracks; then, for subtitles, one row per language found online (its first match: the addon
-    // lists the best first), the chosen language before the rest. The delay isn't a row: it's the
-    // panel's foot, and Left/Right set it from any row.
+    property string menuLevel: "main"                           // "main", or "other" (Other languages)
+    // The Audio and Subtitles lists. The first level: Off, then the three languages picked most
+    // (Tracks.topLanguages: English, Japanese and Arabic until picks say otherwise), each with the
+    // file's own tracks in it, or the one found online when the file has none, then Other languages.
+    // Other languages lists the rest by name: the file's tracks, and one row a language found online
+    // (the addon lists its best match first). The delay isn't a row: it's the panel's foot, and
+    // Left/Right set it from any row.
     // `keep`: stay on the row (the list changing under it), rather than go to the checked one
     function buildMenu(keep) {
-        var type = zone === "audio" ? "audio" : "sub", rows = [], list = [], online = [], seen = ({});
+        var type = zone === "audio" ? "audio" : "sub";
         var current = type === "audio" ? (choice.audioOff ? -2 : media.audioTrack) : subs.track;
-        rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) });
-        list.push(null);
-        var chosen = tracks.preferences(group).sub || "";
+        var top = tracks.topLanguages(type), groups = ({}), order = [];
         for (var i = 0; i < trackList.length; i++) {
             var t = trackList[i];
             if (t.type !== type) continue;
-            var code = tracks.languageOf(t.lang, t.title), name = tracks.languageName(code), extra = [];
-            if (t.external) {
-                // one row a language; it's checked when any of that language's matches plays
-                if (seen[code] !== undefined) { if (t.id === current) online[seen[code]].row.checked = true; continue }
-                seen[code] = online.length;
-                online.push({ code: code, track: t, row: { label: name || t.lang, detail: "Online", checked: t.id === current } });
-                continue;
-            }
-            if (t.title && t.title !== name) extra.push(t.title);
-            extra.push(codecName(t.codec));
-            if (t.forced) extra.push("Forced");
-            if (!t.playable) extra.push("won't play");
-            rows.push({ label: name || t.title || ("Track " + rows.length), detail: extra.join("   "), checked: t.id === current });
-            list.push(t);
+            var base = tracks.baseLanguage(t.lang, t.title), code = tracks.languageOf(t.lang, t.title);
+            if (!groups[base]) { groups[base] = { name: tracks.languageName(code) || t.lang || t.title || "Unknown", own: [], online: null }; order.push(base) }
+            var g = groups[base];
+            if (t.external) { if (!g.online) g.online = t; else if (t.id === current) g.online = t; continue }
+            g.own.push(t);
         }
-        online.sort(function (a, b) {
-            var ca = chosen && a.code.indexOf(chosen) === 0, cb = chosen && b.code.indexOf(chosen) === 0;
-            return ca !== cb ? (ca ? -1 : 1) : a.row.label.localeCompare(b.row.label);
-        });
-        for (var o = 0; o < online.length; o++) { rows.push(online[o].row); list.push(online[o].track) }
+        function rowOf(t) {
+            var name = tracks.languageName(tracks.languageOf(t.lang, t.title)), extra = [];
+            if (t.external) extra.push("Online");
+            else {
+                if (t.title && t.title !== name) extra.push(t.title);
+                extra.push(codecName(t.codec));
+                if (t.forced) extra.push("Forced");
+                if (!t.playable) extra.push("won't play");
+            }
+            return { label: name || t.title || "Unknown", detail: extra.join("   "), checked: t.id === current };
+        }
+        function tracksOf(g) { return g.own.length ? g.own : g.online ? [g.online] : [] }
+        var rows = [], list = [], others = [];
+        for (var b = 0; b < order.length; b++) if (top.indexOf(order[b]) < 0) others.push(order[b]);
+        others.sort(function (x, y) { return groups[x].name.localeCompare(groups[y].name) });
+        if (menuLevel === "other") {
+            for (var o = 0; o < others.length; o++) tracksOf(groups[others[o]]).forEach(function (t) { rows.push(rowOf(t)); list.push(t) });
+        } else {
+            rows.push({ label: "Off", checked: current === (type === "audio" ? -2 : -1) }); list.push(null);
+            for (var k = 0; k < top.length; k++) if (groups[top[k]]) tracksOf(groups[top[k]]).forEach(function (t) { rows.push(rowOf(t)); list.push(t) });
+            if (others.length) {
+                // checked, and named, when what plays is in there
+                var inside = null;
+                for (var q = 0; q < others.length && !inside; q++) tracksOf(groups[others[q]]).forEach(function (t) { if (t.id === current) inside = groups[others[q]].name });
+                rows.push({ label: "Other languages", detail: inside || (others.length + " more"), value: "", checked: !!inside }); list.push("other");
+            }
+        }
         menuTracks = list; menu.model = rows;
         for (var r = 0; !keep && r < rows.length; r++) if (rows[r].checked) { menu.currentIndex = r; break }
+        if (!keep && r === rows.length) menu.currentIndex = 0;
         if (!keep) menu.follow(true);
+    }
+    // between the levels the list slides across, the way it goes
+    function openLevel(level) {
+        levelSwap.dir = level === "other" ? 1 : -1;
+        levelSwap.level = level;
+        levelSwap.restart();
+    }
+    SequentialAnimation {
+        id: levelSwap
+        property int dir: 1
+        property string level: "main"
+        ParallelAnimation {
+            NumberAnimation { target: menu; property: "opacity"; to: 0; duration: 110; easing.type: Easing.InQuad }
+            NumberAnimation { target: menuShift; property: "x"; to: -28 * levelSwap.dir; duration: 110; easing.type: Easing.InQuad }
+        }
+        ScriptAction { script: {
+            page.menuLevel = levelSwap.level; page.buildMenu(false);
+            // back at the first level, the cursor returns to Other languages
+            if (levelSwap.level === "main") { menu.currentIndex = page.menuTracks.indexOf("other"); menu.follow(true) }
+            menuShift.x = 28 * levelSwap.dir
+        } }
+        ParallelAnimation {
+            NumberAnimation { target: menu; property: "opacity"; to: 1; duration: 240; easing.type: Theme.ease }
+            NumberAnimation { target: menuShift; property: "x"; to: 0; duration: 300; easing.type: Theme.ease }
+        }
     }
     function pickFromMenu(row) {
         var t = menuTracks[row];
+        if (t === "other") { openLevel("other"); return }
         if (zone === "audio") {
             if (t && !t.playable) return;
             if (t) { media.selectAudio(t.id); media.mute(false) } else media.mute(true);
@@ -481,6 +523,7 @@ FocusScope {
         MenuList {
             id: menu
             x: 16; y: 16; width: parent.width - 32
+            transform: Translate { id: menuShift }
             maxRows: 8                                          // a file's tracks and the addon's run long
             focus: menuPanel.open
             shown: menuPanel.open
