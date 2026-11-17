@@ -257,8 +257,8 @@ FocusScope {
     }
 
     // ---- covers kept decoded -------------------------------------------------------------------------------
-    // Every cover of the rows on screen, held by a hidden image at the size the cards decode it (MediaCard's
-    // sourceSize), so they share one cached decode. Qt keeps only ~2 MB of images nothing shows, so a row
+    // Every cover of the rows on screen, held by a hidden image decoded as the cards decode it (MediaCard's
+    // sourceSize and crop), so they share one cached decode. Qt keeps only ~2 MB of images nothing shows, so a row
     // scrolled away and back decoded its covers again: cards came back empty and faded in. A fixed pool,
     // made once; ~25 MB for the chart's covers, ~40 MB for the schedule's stills.
     readonly property var covers: {
@@ -272,7 +272,9 @@ FocusScope {
     readonly property size coverSize: { var c = rowsView === "schedule" ? scheduleCard : chartCard; return Qt.size(c.width * Theme.cardDecode, c.height * Theme.cardDecode) }
     Repeater {
         model: anime.shown || anime.covers.length ? 128 : 0
-        Image { visible: false; asynchronous: true; source: index < anime.covers.length ? anime.covers[index] : ""; sourceSize: anime.coverSize }
+        // the cache keys an image by its size and its fill mode too: without the cards' crop the pool held
+        // other entries and shared nothing (a card after it still loaded; measured on the Mac)
+        Image { visible: false; asynchronous: true; fillMode: Image.PreserveAspectCrop; source: index < anime.covers.length ? anime.covers[index] : ""; sourceSize: anime.coverSize }
     }
 
     // ---- the rows --------------------------------------------------------------------------------------------

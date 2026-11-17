@@ -16,7 +16,7 @@ QtObject {
     readonly property int screenWidth: 1920
     readonly property int screenHeight: 1080
     // a card's art is decoded this much larger than the card, so its focus lift stays sharp; anything
-    // keeping a card's image decoded (a cover pool) asks for the same size, to share the decode
+    // keeping a card's image decoded (a cover pool) asks for the same size and crop, to share the decode
     readonly property real cardDecode: 1.15
 
     // colours
