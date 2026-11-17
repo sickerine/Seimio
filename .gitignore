@@ -13,3 +13,6 @@ app/art/
 app/native/
 .lab/
 tools/preview/imports/Seimio/Data/libseimiodata.dylib
+
+# keys
+app/qml/Secrets.qml

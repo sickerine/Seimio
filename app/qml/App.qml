@@ -138,13 +138,15 @@ WebOSWindow {
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     WindowTools { id: tools }
+    // keys out of git: app/qml/Secrets.qml (gitignored)
+    Loader { id: secrets; source: "Secrets.qml" }
     Tracks { id: trackChoice }
     Streams {
         id: streams
-        addon: "https://torrentio.strem.fun/torbox=TORBOX_KEY/"
-        torbox: "TORBOX_KEY"
+        addon: "https://torrentio.strem.fun/torbox=" + torbox + "/"
+        torbox: secrets.item ? secrets.item.torbox : ""
         // the lab's tours run without the AI pick (LabProbe "noAi")
-        openrouter: probe.variant.noAi ? "" : "OPENROUTER_KEY"
+        openrouter: probe.variant.noAi || !secrets.item ? "" : secrets.item.openrouter
     }
     LabProbe {
         id: probe; window: app
