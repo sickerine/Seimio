@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -151,6 +152,8 @@ class Catalog : public QObject {
     Q_PROPERTY(QVariantList continueWatching READ continueWatching NOTIFY loaded)
     Q_PROPERTY(QVariantList popular READ popular NOTIFY loaded)
     Q_PROPERTY(CalendarModel *calendar READ calendar CONSTANT)
+    Q_PROPERTY(QString seasonName READ seasonName NOTIFY loaded)            // "Fall 2026"
+    Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY loaded)    // most common first
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {}
     QString base() const { return m_base; }
@@ -158,6 +161,46 @@ public:
     QVariantList continueWatching() const { return m_data ? m_data->continueWatching : QVariantList(); }
     QVariantList popular() const { return m_data ? m_data->popular : QVariantList(); }
     CalendarModel *calendar() const { return m_model; }
+    QString seasonName() const { return m_data ? m_data->seasonName : QString(); }
+    QStringList seasonGenres() const { return m_data ? m_data->seasonGenres : QStringList(); }
+
+    // The season's chart, as AniChart lists it. `format` "all", "tv" (TV, TV short), "movie", "other"
+    // (ONA, OVA, specials); `genre` "" for all; `sort` "popular", "score", "airing" (next episode
+    // soonest), "title". Each item's `label` counts down to its next episode from `now` (epoch s).
+    Q_INVOKABLE QVariantList seasonChart(const QString &format, const QString &genre, const QString &sort, qint64 now) const {
+        QVector<QVariantMap> out;
+        if (m_data) for (const QVariantMap &m : m_data->season) if (fits(m, format, genre)) out << withCountdown(m, now);
+        auto key = [&](const QVariantMap &m) { return m["nextAt"].toLongLong() > now ? m["nextAt"].toLongLong() : LLONG_MAX; };
+        if (sort == "score") std::stable_sort(out.begin(), out.end(), [](const QVariantMap &a, const QVariantMap &b) { return a["score"].toInt() > b["score"].toInt(); });
+        else if (sort == "title") std::stable_sort(out.begin(), out.end(), [](const QVariantMap &a, const QVariantMap &b) { return QString::localeAwareCompare(a["name"].toString(), b["name"].toString()) < 0; });
+        else if (sort == "airing") std::stable_sort(out.begin(), out.end(), [&](const QVariantMap &a, const QVariantMap &b) { return key(a) < key(b); });
+        QVariantList list; for (const QVariantMap &m : out) list << m;
+        return list;
+    }
+    // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
+    // items }], each item's `label` its local air time
+    Q_INVOKABLE QVariantList seasonSchedule(const QString &format, const QString &genre, qint64 now) const {
+        QVariantList days;
+        const QDate today = QDateTime::fromSecsSinceEpoch(now).date();
+        for (int d = 0; d < 7; d++) {
+            const QDate day = today.addDays(d);
+            QVector<QVariantMap> items;
+            if (m_data) for (const QVariantMap &m : m_data->season) {
+                const qint64 at = m["nextAt"].toLongLong();
+                if (at < now || !fits(m, format, genre) || QDateTime::fromSecsSinceEpoch(at).date() != day) continue;
+                QVariantMap i = m;
+                i["label"] = QDateTime::fromSecsSinceEpoch(at).toString("HH:mm");
+                i["episode"] = "E" + QString::number(m["nextEpisode"].toInt());
+                i["art"] = m["backdrop"];                                    // the wide banner suits a row
+                items << i;
+            }
+            std::sort(items.begin(), items.end(), [](const QVariantMap &a, const QVariantMap &b) { return a["nextAt"].toLongLong() < b["nextAt"].toLongLong(); });
+            QVariantList list; for (const QVariantMap &m : items) list << m;
+            days << QVariantMap { { "title", d == 0 ? QStringLiteral("Today") : d == 1 ? QStringLiteral("Tomorrow") : QLocale().dayName(day.dayOfWeek()) },
+                                  { "date", day.toString("d MMMM") }, { "items", list } };
+        }
+        return days;
+    }
 
     void setBase(const QString &b) {
         if (b == m_base) return;
@@ -194,6 +237,9 @@ private:
         QHash<QString, QVariant> shows;
         QHash<QString, int> episodeCounts;
         Calendar calendar;
+        QVector<QVariantMap> season;            // the season's shows, most popular first (season.json)
+        QString seasonName;
+        QStringList seasonGenres;
 
         static QJsonDocument read(const QString &dir, const QString &name) {
             QFile f(dir + "/" + name);
@@ -267,6 +313,41 @@ private:
                 d.shows[it.key()] = m;
                 d.episodeCounts[it.key()] = count;
             }
+            const QJsonObject season = read(dir, "season.json").object();
+            if (!season.isEmpty()) {
+                QString name = season["season"].toString().toLower();
+                if (!name.isEmpty()) name[0] = name[0].toUpper();
+                d.seasonName = name + " " + QString::number(season["year"].toInt());
+                QHash<QString, int> genreCount;
+                static const QHash<QString, QString> formats { { "TV", "TV" }, { "TV_SHORT", "TV short" }, { "MOVIE", "Movie" }, { "ONA", "ONA" }, { "OVA", "OVA" }, { "SPECIAL", "Special" } };
+                for (const QJsonValue &v : season["shows"].toArray()) {
+                    const QJsonObject a = v.toObject();
+                    const QString cover = art(a["cover"].toString()), banner = art(a["banner"].toString());
+                    const QString format = formats.value(a["format"].toString(), a["format"].toString());
+                    const int episodes = a["episodes"].toInt();
+                    QStringList chips { format };
+                    if (episodes > 1) chips << QString::number(episodes) + " episodes";
+                    else if (a["duration"].toInt() > 0 && a["format"].toString() == "MOVIE") chips << QString::number(a["duration"].toInt()) + " min";
+                    if (!a["studio"].toString().isEmpty()) chips << a["studio"].toString();
+                    const QStringList genres = strings(a["genres"]);
+                    chips += genres.mid(0, 2);
+                    for (const QString &g : genres) genreCount[g]++;
+                    const QJsonObject next = a["next"].toObject();
+                    d.season.append(QVariantMap{
+                        { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
+                        { "art", cover }, { "cover", cover }, { "backdrop", banner.isEmpty() ? cover : banner }, { "logo", QString() },
+                        { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
+                        { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },
+                        { "format", a["format"].toString() }, { "studio", a["studio"].toString() }, { "color", a["color"].toString() },
+                        { "leftover", a["leftover"].toBool() }, { "start", a["start"].toString() },
+                        { "nextEpisode", next["episode"].toInt() }, { "nextAt", qint64(next["at"].toDouble()) },
+                        { "episodes", episodes }, { "episode", QString() }, { "progress", -1 } });
+                }
+                QList<QPair<int, QString>> ranked;
+                for (auto it = genreCount.begin(); it != genreCount.end(); ++it) ranked << qMakePair(-it.value(), it.key());
+                std::sort(ranked.begin(), ranked.end());
+                for (const auto &g : ranked) d.seasonGenres << g.second;
+            }
             for (const QJsonValue &v : read(dir, "airing.json").array()) {
                 QJsonObject a = v.toObject();
                 QString artUrl = art(a["art"].toString());
@@ -281,6 +362,25 @@ private:
             return d;
         }
     };
+    static bool fits(const QVariantMap &m, const QString &format, const QString &genre) {
+        const QString f = m["format"].toString();
+        if (format == "tv" && f != "TV" && f != "TV_SHORT") return false;
+        if (format == "movie" && f != "MOVIE") return false;
+        if (format == "other" && f != "ONA" && f != "OVA" && f != "SPECIAL") return false;
+        return genre.isEmpty() || m["genres"].toStringList().contains(genre);
+    }
+    // "E8 in 2d 4h", "E8 in 3h", "E8 in 12m"; a film or a finished show has no countdown
+    static QVariantMap withCountdown(QVariantMap m, qint64 now) {
+        const qint64 at = m["nextAt"].toLongLong(), left = at - now;
+        QString label;
+        if (at > 0 && left > 0) {
+            const qint64 days = left / 86400, hours = left % 86400 / 3600, minutes = left % 3600 / 60;
+            label = "E" + QString::number(m["nextEpisode"].toInt()) + " in "
+                  + (days ? QString::number(days) + "d " + QString::number(hours) + "h" : hours ? QString::number(hours) + "h " + QString::number(minutes) + "m" : QString::number(qMax<qint64>(1, minutes)) + "m");
+        }
+        m["label"] = label;
+        return m;
+    }
     void take(std::shared_ptr<Data> data) {
         m_data = data;
         m_ready = true;

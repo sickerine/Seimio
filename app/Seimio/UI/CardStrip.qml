@@ -9,6 +9,7 @@
 // or destroys a card, so it costs no item creation and no new scene graph nodes on the TV.
 //
 // `model` is a JS array of card data: { art, title, caption, label, episode, progress, watched, upcoming }.
+// With `slides` off the row stays put and the focus moves along it (a row of a grid that fits the screen).
 import QtQuick 2.12
 
 FocusScope {
@@ -27,6 +28,7 @@ FocusScope {
     // has the remote
     property bool showFocus: activeFocus
     property int moveDir: 1
+    property bool slides: true
     signal activated(int cardIndex)
     signal held(int cardIndex)
     height: cardHeight + (showTitles ? 70 : 0)
@@ -39,8 +41,8 @@ FocusScope {
     readonly property int first: Math.max(0, Math.floor((scroll - inset) / stride))
 
     // move without animating (a new model, or restoring a position)
-    function jumpTo(i) { currentIndex = i; slide.stop(); scroll = i * stride }
-    onCurrentIndexChanged: { slide.to = currentIndex * stride; slide.restart() }
+    function jumpTo(i) { currentIndex = i; slide.stop(); scroll = slides ? i * stride : 0 }
+    onCurrentIndexChanged: if (slides) { slide.to = currentIndex * stride; slide.restart() }
     onCountChanged: if (currentIndex >= count) jumpTo(Math.max(0, count - 1))
     onStrideChanged: jumpTo(currentIndex)
     NumberAnimation { id: slide; target: strip; property: "scroll"; duration: 400; easing.type: Theme.ease }

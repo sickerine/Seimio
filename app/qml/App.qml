@@ -28,7 +28,10 @@ WebOSWindow {
     property string today: Qt.formatDate(new Date(), "yyyy-MM-dd")
     Timer { interval: 60000; running: true; repeat: true; onTriggered: { var t = Qt.formatDate(new Date(), "yyyy-MM-dd"); if (t !== app.today) app.today = t } }
     readonly property bool onHome: layer === "home" || layer === "tabs" || layer === "menu"
-    readonly property var focusItem: home.focusItem
+    // the Anime tab has its own screen; Home's rows, selection and scroll belong to whichever is up
+    readonly property bool animeTab: tabs.currentIndex === 1
+    readonly property bool scrolled: animeTab ? anime.scrolled : home.scrolled
+    readonly property var focusItem: animeTab ? anime.focusItem : home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
     onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
@@ -143,7 +146,7 @@ WebOSWindow {
     Tracks { id: trackChoice }
     Streams {
         id: streams
-        addon: "https://torrentio.strem.fun/torbox=" + torbox + "/"
+        addon: "https://torrentio.strem.fun/torbox=" + (secrets.item ? secrets.item.torbox : "") + "/"
         torbox: secrets.item ? secrets.item.torbox : ""
         // the lab's tours run without the AI pick (LabProbe "noAi")
         openrouter: probe.variant.noAi || !secrets.item ? "" : secrets.item.openrouter
@@ -201,7 +204,7 @@ WebOSWindow {
                 anchors.fill: parent
                 source: hero
                 frozen: true; sourceBusy: hero.busy || panning.running
-                opacity: (app.onHome && home.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)
+                opacity: (app.onHome && app.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
@@ -215,13 +218,13 @@ WebOSWindow {
                 id: info
                 x: Theme.margin
                 // hidden on the calendar, so it doesn't swap to every day there (logo loads, text layout)
-                item: home.scrolled && app.onHome && !home.dayOpen ? null : app.displayItem
+                item: app.scrolled && app.onHome && !home.dayOpen ? null : app.displayItem
                 // on the title page it moves down to sit just above the actions
-                y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (home.scrolled ? 90 : 150)
+                y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (app.scrolled ? 90 : 150)
                 // it only glides while on screen; hidden, it takes its new place at once and fades in there
                 Behavior on y { enabled: info.visible; NumberAnimation { duration: 460; easing.type: Theme.ease } }
                 // below Home's first row, and on the show page, the info steps aside
-                property real away: (home.scrolled && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
+                property real away: (app.scrolled && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
                 Behavior on away { NumberAnimation { duration: 380; easing.type: Theme.ease } }
                 opacity: 1 - away
                 visible: away < 1
@@ -246,8 +249,8 @@ WebOSWindow {
             HomeScreen {
                 id: home
                 width: parent.width; height: parent.height
-                focus: app.layer === "home"
-                shown: app.onHome
+                focus: app.layer === "home" && !app.animeTab
+                shown: app.onHome && !app.animeTab
                 holdFocus: app.layer === "menu"
                 continueWatching: catalog.continueWatching
                 catalog: catalog
@@ -258,6 +261,17 @@ WebOSWindow {
                 onExitTop: app.layer = "tabs"
                 onColumnChanged: probe.act("row move")
                 onRowChanged: probe.act("row change")
+            }
+            AnimeScreen {
+                id: anime
+                width: parent.width; height: parent.height
+                focus: app.layer === "home" && app.animeTab
+                shown: app.onHome && app.animeTab
+                catalog: catalog
+                glassSource: backdropFrost
+                shownItem: app.displayItem
+                onExitTop: app.layer = "tabs"
+                onRowChanged: probe.act("anime row")
             }
         }
 
@@ -279,7 +293,7 @@ WebOSWindow {
             source: scene
             model: ["Home", "Anime", "Movies", "Series", "Library", { icon: "search" }]
             // the tab bar belongs to the top of Home; pages and the calendar move it away
-            readonly property bool shown: app.onHome && !home.scrolled
+            readonly property bool shown: app.onHome && !app.scrolled
             shadow: shown ? 0.8 : 0
             x: (parent.width - width) / 2; y: shown ? 44 : -100
             opacity: app.layer === "menu" ? 0.3 : 1

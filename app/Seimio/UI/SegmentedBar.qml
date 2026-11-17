@@ -1,7 +1,7 @@
 // A glass bar of segments (tabs, seasons) walked with Left/Right. The highlight stretches like liquid:
 // its leading edge moves first and the trailing edge follows. It's white while the bar has focus.
 // `model` entries are strings, or { label, icon } for icon-only segments; a new model of the same
-// length relabels the segments in place. Other keys pass on to the
+// length relabels the segments in place. Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 import QtQuick 2.12
 
@@ -67,6 +67,6 @@ FocusScope {
             }
         }
     }
-    Keys.onLeftPressed: if (currentIndex > 0) { moveDir = -1; currentIndex-- }
-    Keys.onRightPressed: if (currentIndex < model.length - 1) { moveDir = 1; currentIndex++ }
+    Keys.onLeftPressed: if (currentIndex > 0) { moveDir = -1; currentIndex-- } else event.accepted = false
+    Keys.onRightPressed: if (currentIndex < model.length - 1) { moveDir = 1; currentIndex++ } else event.accepted = false
 }
