@@ -19,6 +19,7 @@ Item {
     property bool frozen: false
     property bool sourceBusy: false
     property bool sourceMoving: false
+    property bool hideSource: false      // keeps the source out of the scene while still capturing it
     property int busyInterval: 50
     readonly property alias output: v2.output
     readonly property size quarterSize: Qt.size(Math.max(1, Math.round(sourceRect.width / 4)), Math.max(1, Math.round(sourceRect.height / 4)))
@@ -33,7 +34,7 @@ Item {
         sourceRect: chain.sourceRect
         textureSize: chain.quarterSize
         live: chain.active && (!chain.frozen || chain.sourceMoving)
-        hideSource: false; visible: false; smooth: true
+        hideSource: chain.hideSource; visible: false; smooth: true
     }
     Timer {
         running: chain.active && chain.frozen && chain.sourceBusy

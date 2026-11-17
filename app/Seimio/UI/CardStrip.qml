@@ -53,7 +53,8 @@ FocusScope {
         MediaCard {
             readonly property int idx: strip.first + ((index - strip.first) % strip.slots + strip.slots) % strip.slots
             readonly property var d: idx < strip.count ? strip.model[idx] : null
-            visible: d !== null
+            // a card fully off screen isn't drawn: a sliding row keeps a card each side of what shows
+            visible: d !== null && x < strip.width && x + width > 0
             x: strip.inset + idx * strip.stride - strip.scroll
             width: strip.cardWidth; height: strip.cardHeight; radius: strip.cardRadius
             art: d && d.art || ""

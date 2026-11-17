@@ -68,9 +68,13 @@ Item {
     property real zoom: 1
     // previews hold the zoom at rest, so a still captured at any moment is the same
     property bool still: false
+    // under something opaque (a covering frost): the drift pauses where it is, so nothing redraws for it,
+    // and resumes from there once it shows again
+    property bool covered: false
     onStillChanged: if (still) zoom = 1
     SequentialAnimation on zoom {
         running: root.visible && !root.still
+        paused: running && root.covered
         loops: Animation.Infinite
         NumberAnimation { from: 1.0; to: 1.07; duration: 18000; easing.type: Easing.InOutSine }
         NumberAnimation { from: 1.07; to: 1.0; duration: 18000; easing.type: Easing.InOutSine }

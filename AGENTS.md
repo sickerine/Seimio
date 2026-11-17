@@ -87,6 +87,15 @@ Each rule comes from a measured stall on the C5.
   frame cost ~10 render passes and a blur that wide hides the difference, except during the backdrop's 700 ms crossfade
   (`sourceMoving`), where a full-screen frost stepping at 20 Hz showed; that costs no late frames.
 - Blur once. Glass over a Frost samples the frost directly (`preblurred`) instead of blurring it again.
+- Nothing opaque is drawn over something still drawn under it. A frost fully faded in covers the
+  backdrop: it hides it (`hideCovered`, ShaderEffectSource `hideSource`, still captured) and the backdrop's
+  zoom pauses (`covered`). Drawing it under the frost was a full-screen pass a frame; with the
+  off-screen cards (below) it held the Anime schedule at 30 fps (55 late frames a tour, now ~10).
+- Off screen is not free: a strip's cards and a list's rows that are fully off screen are `visible:
+  false`. A sliding row keeps cards past both edges, and a recycled row slot sits below the screen.
+- A recycled row slot rebinds its cards (7 at once, 40-60 ms) when nothing shows it: right away if
+  it will be on screen when the scroll ends, else once the scroll ends. New rows reach the slots a frame
+  apart, top first, while the list fades in, and a row's layout (card size) travels with its data.
 - Batch data arrival: the calendar is built once when all its sources have arrived, and a refresh goes
   through the same staging as a month turn.
 

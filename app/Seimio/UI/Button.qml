@@ -71,7 +71,7 @@ Item {
         Icon {
             id: tail
             visible: btn.trailing !== "" && !btn.round
-            name: btn.trailing; color: btn.inkColor; width: 22; height: 22
+            name: btn.trailing; color: btn.inkColor             // the size of the leading icon
             x: text.x + text.implicitWidth + 10 - inkLeft
             y: body.labelY - height / 2
         }

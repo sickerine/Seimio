@@ -2,7 +2,8 @@
 // rounded `hole` (in this item's pixels) stays clear, for something that should stay sharp above the
 // frost. `frozen`/`sourceBusy` work as in BlurChain. A frost that is about to be needed can be drawn
 // once at a tiny opacity ("warmed") so its shaders compile before first real use; at opacity 0 Qt
-// doesn't draw it at all.
+// doesn't draw it at all. Fully faded in and without a hole it's opaque (`covering`); with
+// `hideCovered` its source then isn't drawn under it, only captured.
 import QtQuick 2.12
 
 Item {
@@ -14,6 +15,8 @@ Item {
     property bool frozen: false
     property bool sourceBusy: false
     property bool sourceMoving: false
+    property bool hideCovered: false
+    readonly property bool covering: opacity >= 1 && hole.width <= 0
     visible: opacity > 0
 
     BlurChain {
@@ -24,6 +27,7 @@ Item {
         frozen: frost.frozen
         sourceBusy: frost.sourceBusy
         sourceMoving: frost.sourceMoving
+        hideSource: frost.hideCovered && frost.covering
     }
     ShaderEffect {
         anchors.fill: parent

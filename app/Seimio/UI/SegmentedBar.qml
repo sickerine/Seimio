@@ -90,7 +90,7 @@ FocusScope {
                         id: tail
                         visible: parent.trailing !== ""
                         name: parent.trailing; color: parent.ink
-                        width: Math.round(bar.fontSize * 0.85); height: width
+                        width: Math.round(bar.fontSize * 28 / 26); height: width     // as icons are to a 26 px label in a Button
                         x: text.x + text.implicitWidth + 8 - inkLeft; anchors.verticalCenter: parent.verticalCenter
                     }
                 }

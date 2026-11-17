@@ -10,9 +10,10 @@
 # scrolling, filtering, leaving), player (an SDR episode's overlay: the transport, seeking, the Audio
 # and Subtitles lists, the Streams sheet, the episode row; nothing is chosen, so no track choice is
 # saved), anime (the Anime tab: moving along the chart crossfades its fanart; a show opening and
-# closing; the filters walked, one chosen and undone). Tours never call the AI pick ("noAi": the app
-# gets no OpenRouter key and plays the best stream by rank).
-# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime   (VARIANT: LabProbe switches)
+# closing; the filters walked, one chosen and undone), schedule (the Anime tab's schedule: down through
+# the days and along them). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
+# plays the best stream by rank).
+# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
@@ -39,6 +40,8 @@ case $route in
           p RIGHT 1 400; p ENTER 1 1200; p DOWN 3 300; p BACK 1 900; p RIGHT 1 400; p ENTER 1 1500; p DOWN 4 300; p BACK 1 900
           p DOWN 1 900; p DOWN 1 1200; p RIGHT 2 500; p UP 1 900; p BACK 1 900; p BACK 1 2500 ;;
   streams) p RIGHT 1 5000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
+  schedule) p UP 1 900; p RIGHT 1 2500; p DOWN 1 900; p RIGHT 1 400; p ENTER 1 2000; p DOWN 1 1200; p RIGHT 3 400; p DOWN 1 900
+            p DOWN 1 900; p DOWN 1 900; p RIGHT 2 400; p UP 1 900; p UP 1 900; p DOWN 3 500; p UP 4 600 ;;
   anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p ENTER 1 2500; p BACK 1 1500
          p UP 1 900; p RIGHT 3 300; p ENTER 1 1500; p LEFT 1 300; p ENTER 1 1500; p UP 1 900 ;;
 esac

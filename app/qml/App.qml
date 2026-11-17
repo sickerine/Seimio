@@ -248,6 +248,7 @@ WebOSWindow {
                 pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
                 Behavior on pan { NumberAnimation { id: panning; duration: 700; easing.type: Theme.ease } }
                 onCrossfadeStarted: probe.act("hero crossfade")
+                covered: backdropFrost.covering
             }
             // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
             // is only a background
@@ -256,6 +257,8 @@ WebOSWindow {
                 anchors.fill: parent
                 source: hero
                 frozen: true; sourceBusy: hero.busy || panning.running; sourceMoving: hero.fading
+                // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
+                hideCovered: true
                 opacity: (app.onHome && app.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }

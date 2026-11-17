@@ -39,7 +39,7 @@ FocusScope {
     property int total: 0
     // the focused show; once opened, its Kitsu version (playable), which App's selection then follows
     readonly property var focusItem: {
-        var r = rows.length ? rows[Math.max(0, row)] || rows[0] : null, raw = r ? r.items[Math.min(column, r.items.length - 1)] || null : null;
+        var r = rows.length ? rows[Math.max(0, row)] || rows[0] : null, raw = r ? r.items[Math.min(restingColumn(Math.max(0, row)), r.items.length - 1)] || null : null;
         return raw && resolved[raw.id] ? resolved[raw.id] : raw;
     }
     property var resolved: ({})
@@ -59,11 +59,11 @@ FocusScope {
         if (view === "chart") {
             var items = catalog.seasonChart(format, genre, sort, now);
             total = items.length;
-            for (var i = 0; i < items.length; i += perRow) out.push({ title: "", date: "", items: items.slice(i, i + perRow) });
+            for (var i = 0; i < items.length; i += perRow) out.push({ title: "", date: "", schedule: false, items: items.slice(i, i + perRow) });
         } else {
             var days = catalog.seasonSchedule(format, genre, now);
             total = 0;
-            for (var d = 0; d < days.length; d++) if (days[d].items.length) { out.push(days[d]); total += days[d].items.length }
+            for (var d = 0; d < days.length; d++) if (days[d].items.length) { days[d].schedule = true; out.push(days[d]); total += days[d].items.length }
         }
         // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
         // the view they're laid out for (cards keep the old shape until then)
@@ -74,7 +74,19 @@ FocusScope {
     property var pending: null
     property string pendingView: "chart"
     property string rowsView: "chart"                // the view the rows on screen are laid out for
-    function apply() { rows = pending; rowsView = pendingView; pending = null; if (row >= rows.length) row = rows.length - 1 }
+    // new rows reach the row slots a slot a frame, top first (`staggering`): handing every slot its
+    // cards at once (28 cards resized and rebound) stalled ~90 ms; they arrive while the list fades in
+    property bool staggering: false
+    Timer { id: staggerEnd; interval: 120; onTriggered: anime.staggering = false }
+    function apply() {
+        staggering = rows.length > 0 || pending.length > 0; staggerEnd.restart();
+        rowColumns = ({}); rows = pending; rowsView = pendingView; pending = null; if (row >= rows.length) row = rows.length - 1;
+    }
+    // where each row rests along itself: the chart's rows line up as a grid and share `column`; each of
+    // the schedule's days slides on its own and keeps its own place (by row), starting at its first card
+    property var rowColumns: ({})
+    function restingColumn(rowIdx) { return rowsView === "schedule" ? (rowColumns[rowIdx] || 0) : column }
+    function rememberColumn(rowIdx, i) { var c = Object.assign({}, rowColumns); c[rowIdx] = i; rowColumns = c }
     Connections { target: anime.catalog; onLoaded: anime.refresh() }
     onShownChanged: if (shown && !rows.length) refresh()
     // a choice (OK on a bar) asks again, once for changes made together
@@ -247,8 +259,9 @@ FocusScope {
         readonly property int rowTop: 650
         // once the controls have gone up, the focused row sits just under them with two more below it,
         // and the rows above have gone
-        property real scrollY: anime.row <= 0 ? 0 : rowTop + anime.row * stride - 160
-        Behavior on scrollY { NumberAnimation { duration: 480; easing.type: Theme.ease } }
+        readonly property real scrollTarget: anime.row <= 0 ? 0 : rowTop + anime.row * stride - 160
+        property real scrollY: scrollTarget
+        Behavior on scrollY { NumberAnimation { id: scrolling; duration: 480; easing.type: Theme.ease } }
         readonly property int slots: 4
         readonly property int first: Math.max(0, Math.floor((scrollY - rowTop) / stride))
         Repeater {
@@ -256,10 +269,29 @@ FocusScope {
             FocusScope {
                 id: slot
                 readonly property int idx: list.first + ((index - list.first) % list.slots + list.slots) % list.slots
-                readonly property var r: idx < anime.rows.length ? anime.rows[idx] : null
-                readonly property bool schedule: anime.rowsView === "schedule"
-                visible: r !== null
+                // the row this slot shows: at once when the slot is recycled while scrolling, a frame per
+                // place down the screen when new rows arrive (anime.staggering); its layout comes with it
+                readonly property var wanted: idx < anime.rows.length ? anime.rows[idx] : null
+                property var r: null
+                Component.onCompleted: r = wanted
+                // recycled mid-scroll into a place that's hidden once the scroll ends (past the bottom, or
+                // above the focused row, which fades out), it rebinds its cards after the scroll: 7 cards at
+                // once cost 40-60 ms, a hitch in the slide
+                readonly property bool shownAtRest: { var y = list.rowTop + idx * list.stride - list.scrollTarget; return y < anime.height && y + height > 0 && (anime.row <= 0 || idx >= anime.row) }
+                onWantedChanged: {
+                    if (anime.staggering) { take.interval = 16 * (1 + Math.max(0, idx - list.first)); take.restart() }
+                    else if (scrolling.running && !shownAtRest) take.stop();          // taken when the scroll ends
+                    else r = wanted;
+                }
+                Connections { target: scrolling; onRunningChanged: if (!scrolling.running && slot.r !== slot.wanted) slot.r = slot.wanted }
+                Timer { id: take; onTriggered: slot.r = slot.wanted }
+                readonly property bool schedule: !!(r && r.schedule)
+                // a slot fully off screen isn't drawn (Qt draws what's off screen)
+                visible: r !== null && y < anime.height && y + height > 0
                 y: list.rowTop + idx * list.stride - list.scrollY
+                // a slot handed another row (the pool recycles as the list scrolls) takes that row's place
+                // along itself, not the place of the row it showed before
+                function place() { strip.jumpTo(Math.max(0, Math.min(anime.restingColumn(idx), (strip.model || []).length - 1))) }
                 width: anime.width; height: list.stride
                 focus: anime.row === idx
                 opacity: anime.row > 0 && idx < anime.row ? 0 : 1
@@ -283,10 +315,11 @@ FocusScope {
                     cardHeight: slot.schedule ? 216 : 285
                     spacing: 36
                     showFocus: activeFocus
-                    onCurrentIndexChanged: if (activeFocus) anime.column = currentIndex
+                    onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) anime.rememberColumn(slot.idx, currentIndex); else anime.column = currentIndex }
                     onActivated: anime.activated(model[cardIndex])
+                    onModelChanged: slot.place()
                 }
-                onActiveFocusChanged: if (activeFocus) strip.jumpTo(Math.min(anime.column, strip.count - 1))
+                onActiveFocusChanged: if (activeFocus) place()
             }
         }
     }
