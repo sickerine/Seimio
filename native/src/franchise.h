@@ -221,7 +221,7 @@ private:
                 if (ok) job->kitsu[k] = QJsonDocument::fromJson(body).object().value("meta").toObject();
                 done();
             });
-        send("https://graphql.anilist.co", graphql("{ Page(perPage:50){ media(id_in:[" + anilist.join(',') + "]){ id title{ english romaji } averageScore description(asHtml:false) "
+        send("https://graphql.anilist.co", graphql("{ Page(perPage:50){ media(id_in:[" + anilist.join(',') + "]){ id status startDate{ day } title{ english romaji } averageScore description(asHtml:false) "
                     "relations{ edges{ relationType node{ id type format status startDate{ day } title{ english romaji } coverImage{ large } } } } } } }"),
              [job, done](const QByteArray &body, bool) {
             for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("data").toObject().value("Page").toObject().value("media").toArray())
@@ -237,6 +237,14 @@ private:
     // What AniList links to the entries that ARM doesn't place in this show: unmapped films and specials join
     // it (their Kitsu metas fetched too), other series are its related shows. Then the show.
     void extras(std::shared_ptr<Job> job) {
+        // (an entry ARM has in the show already, but only announced: no season yet either, unless it is
+        // the title that was opened)
+        QJsonArray dated;
+        for (const QJsonValue &v : job->entries) {
+            const QJsonObject e = v.toObject();
+            if (e.value("kitsu").toInt() == job->picked || !undated(job->anilist.value(e.value("anilist").toInt()))) dated << e;
+        }
+        job->entries = dated;
         QSet<int> known; for (const QJsonValue &v : job->entries) known << v.toObject().value("anilist").toInt();
         QHash<int, QJsonObject> nodes; QHash<int, QString> relation; QJsonArray ask;
         for (const QJsonObject &a : job->anilist)
