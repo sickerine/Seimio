@@ -24,6 +24,8 @@ FocusScope {
     readonly property var seasons: show ? show.seasons : []
     // OK on Play or on an episode plays it (the AI pick); a long OK asks how, from a menu beside `rect`
     signal play(var episode)
+    // OK on a related show (an anime franchise's Related tab) opens its page: { id, title }
+    signal openShow(var show)
     signal playHeld(var episode, rect rect)
     // { id, label, progress, type } of an episode, for playing it; a film among the Specials plays as a film
     function target(sh, season, ep) {
@@ -32,7 +34,7 @@ FocusScope {
     function episodeLabel(sh, season, ep) {
         var n = sh.seasons[season].season;
         if (n === 0) return ep.type === "movie" ? ep.title : "Special " + ep.episode;
-        return (sh.seasons.length > 1 ? "S" + n + " " : "") + "E" + ep.episode;
+        return (sh.seasons.length > 1 ? "S" + n + " " : "") + Episodes.chip(ep.episode);
     }
     function resumeTarget(sh) {
         var p = Episodes.resting(sh, today);
@@ -42,25 +44,63 @@ FocusScope {
     // one season: no season bar, and the episodes move up into its place
     readonly property bool oneSeason: seasons.length < 2
     readonly property int seasonCount: seasons.filter(function (s) { return s.season > 0 }).length
+
+    // ---- the entry the page wears ----------------------------------------------------------------------
+    // An anime franchise's page takes on the entry you're on (Franchise: a season part, a film, a special):
+    // the focused episode's, or the one remembered in the season shown. Its logo, facts and description fill
+    // the header (HeroInfo: logo loaded first, a fade through the change) and its backdrop the screen's
+    // (App reads `backdrop`). It changes once the selection rests on another entry (280 ms, as Home's
+    // selection commits). A show without entries (not an anime) wears its own.
+    // on a tile, the season it leads to (its first card) is what the page previews
+    readonly property var focusedEp: strip.onTile ? ((seasons[shownSeason + (strip.onTile === "next" ? 1 : -1)] || { episodes: [] }).episodes[0] || null)
+                                     : episodes.length ? episodes[Math.max(0, Math.min(strip.currentIndex, episodes.length - 1))] : null
+    readonly property int wantedEntry: focusedEp && focusedEp.entry !== undefined ? focusedEp.entry : -1
+    property int entryIndex: -1
+    onWantedEntryChanged: if (!active || entryIndex < 0) entryIndex = wantedEntry; else entrySettle.restart()
+    Timer { id: entrySettle; interval: 280; onTriggered: page.entryIndex = page.wantedEntry }
+    readonly property var entry: show && show.entries && entryIndex >= 0 ? show.entries[entryIndex] || null : null
+    readonly property string backdrop: entry ? entry.backdrop : ""
+    function relationLabel(r) { return ({ PREQUEL: "Prequel", SEQUEL: "Sequel", SPIN_OFF: "Spin-off", ALTERNATIVE: "Alternative", SIDE_STORY: "Side story", PARENT: "Main story" })[r] || "Related" }
+    readonly property var look: {
+        if (entry) {
+            var count = entry.episodes || 0, at = entryIndex;              // a related show brings its own count
+            if (!count) seasons.forEach(function (s) { s.episodes.forEach(function (e) { if (e.entry === at) count++ }) });
+            return { name: entry.title, logo: entry.logo || "", description: entry.description, rating: entry.rating,
+                     chips: [entry.year, entry.kind === "film" ? entry.runtime : count + (count === 1 ? " episode" : " episodes")]
+                            .concat((entry.genres || []).slice(0, 2)).filter(function (x) { return x }) };
+        }
+        if (!item) return null;
+        return { name: item.name, logo: item.logo || "", description: show && show.description ? show.description : item.description,
+                 rating: show ? show.rating : "",
+                 chips: (show ? [show.year].concat(show.genres) : []).concat(seasonCount > 0 ? [seasonCount + (seasonCount === 1 ? " season" : " seasons")] : [])
+                        .filter(function (x) { return x }) };
+    }
     // the season the episode row shows and its card data, set together by showSeason(), so the row is
     // built once per change instead of once per binding that moves
     property int shownSeason: 0
     property var episodes: []
-    property var episodeData: []
+    property var row: ({})               // the episode row's page (PagedStrip), set whole by showSeason()
     property string today: new Date().toISOString().slice(0, 10)   // App passes its own, so previews can fix the day
     onTodayChanged: if (show) { resumePos = Episodes.resting(show, today); showSeason(shownSeason, strip.currentIndex) }   // what has aired changes at midnight
+    // Movies and Related are rows of posters (a film or a show is a title, not an episode); the header
+    // carries the focused one's facts, so the episode details under the row step aside. Set with the row's
+    // data, so a season change swaps the shape while the row is faded out.
+    property bool posterRow: false
     function showSeason(s, e) {
         shownSeason = s;
         episodes = seasons.length ? seasons[s].episodes : [];
-        episodeData = episodes.map(function (ep) {
+        posterRow = seasons.length > 0 && (seasons[s].kind === "films" || seasons[s].kind === "related");
+        var cards = episodes.map(function (ep) {
             return {
-                art: ep.thumb, fallback: item ? item.backdrop : "", episode: ep.type === "movie" ? "Film" : "E" + ep.episode,
+                art: posterRow && ep.poster ? ep.poster : ep.thumb, fallback: item ? item.backdrop : "",
+                episode: ep.type === "show" ? relationLabel(ep.relation) : ep.type === "movie" ? (ep.released ? ep.released.slice(0, 4) : "Film") : Episodes.chip(ep.episode),
                 progress: ep.progress > 0 ? ep.progress : -1,
                 watched: ep.watched && !(ep.progress > 0),
                 upcoming: ep.released > today ? new Date(ep.released + "T12:00:00").toLocaleDateString(Qt.locale(), "d MMM") : ""
             };
         });
-        strip.jumpTo(e);
+        row = { cards: cards, prev: tileOf(s - 1), next: tileOf(s + 1) };
+        strip.show(row, e);
     }
 
     // where you are in the show ({ s, e }), set with the show by load(), so it is never the last show's
@@ -71,52 +111,60 @@ FocusScope {
         ? (resumeEp.progress > 0 ? "Resume " : "Play ") + episodeLabel(show, resumePos.s, resumeEp)
         : "Play"
 
-    function load(title, seasonsAndEpisodes) {
-        if (title === item && seasonsAndEpisodes === show) return;
-        resumePos = Episodes.resting(seasonsAndEpisodes, today);
+    // `episodeId`: the episode it rests on, when that isn't where you are in the show. The row is built
+    // once, for the place it lands on (built for where you are and then again for the episode, a page
+    // opened from a calendar release was a 126 ms frame).
+    function load(title, seasonsAndEpisodes, episodeId) {
+        if (title === item && seasonsAndEpisodes === show) return false;
+        resumePos = episodeId && Episodes.find(seasonsAndEpisodes, episodeId) || Episodes.resting(seasonsAndEpisodes, today);
         item = title; show = seasonsAndEpisodes;
+        entryIndex = -1;                                  // the new show's entry, at once (not after a settle)
+        episodes = [];                                    // another title: place() builds its row, whatever season it lands on
         place(resumePos);
+        return true;
     }
     function open(title, seasonsAndEpisodes, episodeId) {
-        load(title, seasonsAndEpisodes);
         actions.currentIndex = 0;
-        rest(episodeId);
+        if (load(title, seasonsAndEpisodes, episodeId)) zone = 2;
+        else { resumePos = Episodes.resting(show, today); rest(episodeId) }     // built ahead: where you are, unless it opens on an episode
     }
+    // Play plays what the page rests on: an episode it was opened on (a calendar release, the entry of a
+    // franchise that was picked, the one last played) is where you are from then on
     function rest(episodeId) {
         zone = 2;
-        place((episodeId && Episodes.find(show, episodeId)) || resumePos);
+        var at = episodeId ? Episodes.find(show, episodeId) : null;
+        if (at) resumePos = at;
+        place(resumePos);
     }
     // shows season p.s with episode p.e focused: the row first, so the season bar's change below finds
     // it already shown and doesn't start a slide
     function place(p) {
+        strip.settle();
         if (shownSeason !== p.s || episodes !== (seasons.length ? seasons[p.s].episodes : [])) showSeason(p.s, p.e); else strip.jumpTo(p.e);
         seasonBar.currentIndex = p.s;
     }
 
-    // season change: slide the old episodes out, swap, slide the new ones in from the side moved toward
-    property real rowShift: 0
-    property real rowFade: 1
-    Connections { target: seasonBar; onCurrentIndexChanged: if (page.active && seasonBar.currentIndex !== page.shownSeason) seasonSwap.restart() }
-    SequentialAnimation {
-        id: seasonSwap
-        ParallelAnimation {
-            NumberAnimation { target: page; property: "rowFade"; to: 0; duration: 140; easing.type: Easing.InQuad }
-            NumberAnimation { target: page; property: "rowShift"; to: -60 * seasonBar.moveDir; duration: 140; easing.type: Easing.InQuad }
-        }
-        ScriptAction {
-            script: {
-                page.showSeason(seasonBar.currentIndex, seasonBar.currentIndex === page.resumePos.s ? page.resumePos.e : 0);
-                page.rowShift = 60 * seasonBar.moveDir;
-            }
-        }
-        ParallelAnimation {
-            NumberAnimation { target: page; property: "rowFade"; to: 1; duration: 300; easing.type: Theme.ease }
-            NumberAnimation { target: page; property: "rowShift"; to: 0; duration: 380; easing.type: Theme.ease }
-        }
+    // The episode row is a PagedStrip (as a calendar day's): the seasons either side (Movies, Specials and
+    // Related among them) are its tiles. Turning past a tile, OK on it, or a move on the season bar slides
+    // the row over to that season, landing where you are in it from the bar, on its first or last card from
+    // a tile. A tile shows its season's first art, name and count; focusing one previews it.
+    function tileOf(s) {
+        if (s < 0 || s >= seasons.length) return null;
+        var se = seasons[s], first = se.episodes[0] || {}, n = se.episodes.length, name = seasonName(s);
+        var noun = se.kind === "films" ? " film" : se.kind === "related" ? " show" : se.kind === "specials" ? " special" : " episode";
+        return { key: s, kind: se.kind || "", art: posterRow ? (first.poster || first.thumb || "") : (first.thumb || first.poster || ""), fallback: item ? item.backdrop : "",
+                 upcoming: name, episode: n + noun + (n === 1 ? "" : "s") };
+    }
+    function seasonName(s) { var se = seasons[s]; return se ? se.label || "Season " + se.season : "" }
+    function landing(s) { return s === resumePos.s ? resumePos.e : 0 }
+    Connections {
+        target: seasonBar
+        onCurrentIndexChanged: if (page.active && seasonBar.currentIndex !== page.shownSeason)
+            strip.turnTo(seasonBar.currentIndex > page.shownSeason ? 1 : -1, seasonBar.currentIndex, page.landing(seasonBar.currentIndex))
     }
 
     // sections arrive one after another each time the page opens (each Reveal replays when `active` turns on)
-    opacity: active ? 1 : 0
+    opacity: active ? 1 : 0      // holds: `item` and `show` stay until the next load()
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: page.active ? 200 : 260 } }
 
@@ -124,18 +172,10 @@ FocusScope {
         shown: page.active
         delay: 120
         x: Theme.margin; y: 96
-        TitleArt { width: 560; height: 150; nameSize: 64; logo: page.item && page.item.logo ? page.item.logo : ""; name: page.item ? page.item.name : "" }
-        Row {
-            y: 172; spacing: 10
-            ChipRow { model: page.show ? [page.show.year].concat(page.show.genres).filter(function (x) { return x }) : []; size: 21 }
-            Chip { visible: !!(page.show && page.show.rating); kind: "rating"; icon: "star"; text: page.show ? page.show.rating : ""; size: 21 }
-            // seasons only: Specials (season 0) aren't counted
-            Chip { visible: page.seasonCount > 0; text: page.seasonCount + (page.seasonCount === 1 ? " season" : " seasons"); size: 21 }
-        }
-        Text {
-            y: 230; width: 860; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
-            text: page.show && page.show.description ? page.show.description : (page.item ? page.item.description : "")
-            color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 25; lineHeight: 1.2
+        HeroInfo {
+            item: page.look
+            logoSize: Qt.size(560, 150); nameSize: 64; chipsY: 172; chipSize: 21
+            textY: 230; textWidth: 860; textSize: 25; textLines: 2
         }
     }
 
@@ -146,7 +186,7 @@ FocusScope {
         ButtonRow {
             id: actions
             focus: page.zone === 0
-            onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.resumeTarget(page.show))
+            onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.target(page.show, page.resumePos.s, page.resumeEp))     // what its label names
             onHeld: if (buttonIndex === 0 && page.resumeEp) page.playHeld(page.resumeTarget(page.show), buttonRect(0))
             model: [
                 { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 },
@@ -175,30 +215,35 @@ FocusScope {
         y: page.oneSeason ? 548 : 640; width: page.width; height: 440
         Item {
             width: page.width; height: 440
-            opacity: page.rowFade
-            transform: Translate { x: page.rowShift }
-            CardStrip {
+            PagedStrip {
                 id: strip
                 width: page.width
                 focus: page.zone === 2
-                model: page.episodeData
-                cardWidth: 384; cardHeight: 216; spacing: 32
+                cardWidth: page.posterRow ? Theme.posterCard.width : Theme.stillCard.width; cardHeight: page.posterRow ? Theme.posterCard.height : Theme.stillCard.height; spacing: 32
+                narrowest: Theme.posterCard.width
                 showTitles: false; nextLabels: false
-                onActivated: if (page.episodes[cardIndex]) page.play(page.target(page.show, page.shownSeason, page.episodes[cardIndex]))
+                onTurn: { page.showSeason(key, land); seasonBar.currentIndex = key }
+                onActivated: {
+                    var ep = page.episodes[cardIndex];
+                    if (ep && ep.type === "show") page.openShow({ id: ep.id, name: ep.title, title: ep.title, description: ep.overview });
+                    else if (ep) page.play(page.target(page.show, page.shownSeason, ep));
+                }
                 onHeld: {
-                    if (!page.episodes[cardIndex]) return;
-                    var p = strip.mapToItem(null, strip.inset, 0);
+                    if (!page.episodes[cardIndex] || page.episodes[cardIndex].type === "show") return;
+                    var p = strip.mapToItem(null, Theme.margin, 0);
                     page.playHeld(page.target(page.show, page.shownSeason, page.episodes[cardIndex]), Qt.rect(p.x, p.y, strip.cardWidth, strip.cardHeight));
                 }
             }
             // the focused episode (or the resume episode while focus is above the row)
             Item {
                 id: epInfo
+                visible: !page.posterRow
                 x: Theme.margin; y: 246; width: 1100; height: 180
-                readonly property var ep: page.episodes.length ? page.episodes[Math.min(strip.currentIndex, page.episodes.length - 1)] : null
+                readonly property var ep: !strip.onTile && page.episodes.length ? page.episodes[Math.max(0, Math.min(strip.currentIndex, page.episodes.length - 1))] : null
                 Text {
                     width: 1100; elide: Text.ElideRight
-                    text: epInfo.ep ? epInfo.ep.episode + "   " + (epInfo.ep.title || "Episode " + epInfo.ep.episode) : ""
+                    // an episode's number and title; a film's or a related show's title
+                    text: !epInfo.ep ? "" : epInfo.ep.type && epInfo.ep.type !== "series" ? epInfo.ep.title : epInfo.ep.episode + "   " + (epInfo.ep.title || "Episode " + epInfo.ep.episode)
                     color: Theme.ink; font.family: Theme.face; font.pixelSize: 30; font.weight: Font.DemiBold
                 }
                 ChipRow {

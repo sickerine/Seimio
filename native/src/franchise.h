@@ -64,6 +64,7 @@ private:
     struct Job {
         QVariantMap source; QString sourceId, imdb; int picked = 0, tail = 0, pending = 0, tvdb = 0; QVariantList related;
         QJsonArray entries; QHash<int, QJsonObject> kitsu; QHash<int, QJsonObject> anilist; QJsonObject cinemeta; QJsonObject library;
+        QVector<int> relatedKitsu;                       // the related shows' Kitsu ids, their metas in `kitsu` too
     };
     QNetworkAccessManager m_net { this };
     QJsonObject m_library;
@@ -222,11 +223,12 @@ private:
                     if (tv || !k) continue;                                   // another show's, or not playable
                     e["thetvdb-season"] = 0; e["media"] = n.value("format").toString();
                     job->entries.append(e); fetch << k;
-                } else if (tv != job->tvdb && !(tv && shows.contains(tv))) {
+                } else if (k && tv != job->tvdb && !(tv && shows.contains(tv))) {     // another show, playable
                     if (tv) shows << tv;
                     const QJsonObject t = n.value("title").toObject();
-                    job->related << QVariantMap { { "id", "anilist:" + QString::number(a) }, { "title", t.value("english").toString(t.value("romaji").toString()) },
+                    job->related << QVariantMap { { "id", "kitsu:" + QString::number(k) }, { "title", t.value("english").toString(t.value("romaji").toString()) },
                                                   { "poster", n.value("coverImage").toObject().value("large").toString() }, { "relation", relation[a] } };
+                    job->relatedKitsu << k; fetch << k;
                 }
             }
             if (fetch.isEmpty()) { finish(job); return; }
@@ -312,11 +314,13 @@ private:
                 const QJsonObject e = x.toObject();
                 const QString vid = p.film ? id : e.value("id").toString();
                 const QString released = e.value("released").toString().left(10);
-                mine << QVariantMap { { "id", vid }, { "episode", e.value("episode").toInt() }, { "title", p.film ? name : e.value("title").toString() },
+                // `number`: its place in its own entry (a calendar release names its episode so); `episode` becomes
+                // its number in the season the entry is joined into
+                mine << QVariantMap { { "id", vid }, { "episode", e.value("episode").toInt() }, { "number", e.value("episode").toInt() }, { "title", p.film ? name : e.value("title").toString() },
                                       { "overview", p.film ? entries.last().toMap().value("description") : e.value("overview").toString() },
                                       { "released", released == "1970-01-01" ? QString() : released }, { "runtime", e.value("runtime").toString() },
                                       { "thumb", p.film ? p.meta.value("background").toString() : e.value("thumbnail").toString() },
-                                      { "type", p.film ? "movie" : "series" }, { "entry", entry },
+                                      { "type", p.film ? "movie" : "series" }, { "entry", entry }, { "poster", p.film ? p.meta.value("poster").toString() : QString() },
                                       { "watched", seen.contains(vid) }, { "progress", vid == stCurrent && duration > 0 ? qRound(1000 * offsetMs / duration) / 10.0 : 0 } };
                 if (p.film) break;
             }
@@ -343,11 +347,29 @@ private:
         close();
         if (!films.isEmpty()) seasons << QVariantMap { { "season", 0 }, { "label", "Movies" }, { "kind", "films" }, { "episodes", films } };
         if (!specials.isEmpty()) seasons << QVariantMap { { "season", 0 }, { "label", "Specials" }, { "kind", "specials" }, { "episodes", specials } };
+        // Related: the other shows AniList links (each an entry too, so the page wears it when it's focused)
+        QVariantList related;
+        for (const QVariant &v : job.related) {
+            const QVariantMap r = v.toMap();
+            const QJsonObject m = job.kitsu.value(r["id"].toString().section(':', 1).toInt());
+            if (m.isEmpty()) continue;
+            const int entry = entries.size();
+            entries << QVariantMap { { "id", r["id"] }, { "kind", "related" }, { "title", r["title"] }, { "logo", m.value("logo").toString() },
+                                     { "backdrop", m.value("background").toString() }, { "poster", r["poster"] }, { "year", m.value("year").toVariant().toString() },
+                                     { "runtime", QString() }, { "genres", m.value("genres").toArray().toVariantList() },
+                                     { "rating", m.value("imdbRating").toVariant().toString() }, { "description", clean(m.value("description").toString()) },
+                                     { "episodes", m.value("videos").toArray().size() } };
+            related << QVariantMap { { "id", r["id"] }, { "type", "show" }, { "relation", r["relation"] }, { "episode", related.size() + 1 }, { "title", r["title"] },
+                                     { "thumb", m.value("background").toString() }, { "poster", r["poster"] }, { "overview", clean(m.value("description").toString()) },
+                                     { "released", QString() }, { "entry", entry } };
+        }
+        if (!related.isEmpty()) seasons << QVariantMap { { "season", 0 }, { "label", "Related" }, { "kind", "related" }, { "episodes", related } };
         QVariantMap item = job.source;
         item["id"] = "kitsu:" + QString::number(job.picked);
         if (item["video"].toString().isEmpty()) item["video"] = pickedFirst;
         QString year = cm.value("releaseInfo").toVariant().toString(); while (year.endsWith('-') || year.endsWith(QChar(0x2013))) year.chop(1);
         const QVariantMap show { { "name", cm.value("name").toString(item["name"].toString()) }, { "logo", showLogo }, { "backdrop", showBackdrop },
+                                 { "imdb", job.imdb },             // the series there, whose seasons the numbered ones here follow
                                  { "description", clean(cm.value("description").toString(item["description"].toString())) },
                                  { "genres", cm.value("genres").toArray().toVariantList() }, { "year", year },
                                  { "rating", cm.value("imdbRating").toVariant().toString() }, { "current", current },

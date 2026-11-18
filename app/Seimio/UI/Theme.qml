@@ -13,11 +13,18 @@ QtObject {
 
     // layout
     readonly property int margin: 120                 // left edge of content on every screen
+    // the cards every row is made of: an episode's still, a title's poster, and the player's smaller row of
+    // either (its poster is as tall as its still)
+    readonly property size stillCard: Qt.size(384, 216)
+    readonly property size posterCard: Qt.size(204, 306)
+    readonly property size playerStill: Qt.size(352, 198)
+    readonly property size playerPoster: Qt.size(Math.round(playerStill.height * posterCard.width / posterCard.height), playerStill.height)
     readonly property int screenWidth: 1920
     readonly property int screenHeight: 1080
     // a card's art is decoded this much larger than the card, so its focus lift stays sharp; anything
     // keeping a card's image decoded (a cover pool) asks for the same size and crop, to share the decode
     readonly property real cardDecode: 1.15
+    function cardDecodeSize(w, h) { return Qt.size(Math.round(w * cardDecode), Math.round(h * cardDecode)) }
 
     // colours
     readonly property color ink: "white"

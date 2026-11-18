@@ -38,7 +38,7 @@ FocusScope {
         // a page opening sinks Continue Watching away; the calendar fills the screen, so it only drops a
         // little as it fades
         y: home.row === 0 ? (home.shown ? 610 : 1200) : 64 - home.cwHeight + (home.shown ? 0 : 60)
-        opacity: home.shown ? 1 : 0
+        opacity: home.shown ? 1 : 0      // holds: its rows stay
         visible: opacity > 0
         Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
         Behavior on opacity { NumberAnimation { duration: 320 } }
@@ -47,7 +47,7 @@ FocusScope {
             width: home.width; height: home.cwHeight
             // above the screen while the calendar is up; hidden then, so nothing of it shows when the
             // calendar shifts (opening a page drops it a little)
-            opacity: home.row === 0 ? 1 : 0
+            opacity: home.row === 0 ? 1 : 0      // holds: the row's cards stay
             Behavior on opacity { NumberAnimation { duration: 300 } }
             Text {
                 x: Theme.margin; text: "Continue watching"; color: Theme.ink

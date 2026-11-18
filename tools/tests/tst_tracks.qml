@@ -101,4 +101,13 @@ TestCase {
         tracks.setDelay("a.mkv", 300);
         compare(tracks.delay("a.mkv"), 300); compare(tracks.delay("b.mkv"), 0);
     }
+
+    // what a file's video header says the TV won't show (measured: docs/playback.md)
+    function test_videoTrouble() {
+        compare(tracks.videoTrouble("V_MPEG4/ISO/AVC", "016e0028"), "10-bit H.264", "avcC, profile 110");
+        compare(tracks.videoTrouble("V_MPEG4/ISO/AVC", "01640028"), "", "High: fine");
+        compare(tracks.videoTrouble("V_MPEGH/ISO/HEVC", "0102"), "", "Main 10: fine");
+        compare(tracks.videoTrouble("V_MPEGH/ISO/HEVC", "0104"), "HEVC beyond 10-bit 4:2:0", "range extensions");
+        compare(tracks.videoTrouble("V_AV1", "81"), "");
+    }
 }

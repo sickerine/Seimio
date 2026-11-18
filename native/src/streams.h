@@ -85,10 +85,31 @@ inline QString audioSupport(const QString &text) {
     if (bad && !good) return "unsupported";
     return good ? "supported" : "unknown";
 }
-// only 10-bit H.264 is a problem; 10-bit x265 is ordinary HDR
-inline bool badVideo(const QString &t) {
-    static const RE no = re("(^|[^a-z0-9])(hi10p?|hi444pp?|10-?bits?[ ._-]?(x264|h\\.?264|avc)|(x264|h\\.?264|avc)[ ._-]?10-?bits?)(?=[^a-z]|$)");
-    return no.match(t).hasMatch();
+// Surround the TV plays only the front pair of, losing the dialogue (playback.h): FLAC in 5.1 or 7.1 and
+// Opus in 7.1, when it is the release's one named codec. Returns that name ("Opus 7.1"), or "".
+inline QString lostSurround(const QString &t) {
+    static const RE after = re("(^|[^a-z0-9])(opus|flac)[ ._-]?([57])[ .]?1(?=[^0-9]|$)"), before = re("(^|[^0-9])([57])[ .]1[ ._-]?(opus|flac)(?=[^a-z]|$)");
+    auto m = after.match(t);
+    QString codec = m.captured(2).toLower(), wide = m.captured(3);
+    if (!m.hasMatch()) { m = before.match(t); codec = m.captured(3).toLower(); wide = m.captured(2); }
+    if (!m.hasMatch() || (codec == "opus" && wide == "5")) return QString();
+    return (codec == "opus" ? "Opus " : "FLAC ") + wide + ".1";
+}
+// Video the TV doesn't show (playback.h): 10-bit H.264 fails to start (10-bit x265 is ordinary HDR), and
+// Dolby Vision in AV1 (profile 10) decodes to a broken picture. Returns which, or "".
+inline QString badVideo(const QString &t) {
+    static const RE hi10 = re("(^|[^a-z0-9])(hi10p?|hi444pp?|10-?bits?[ ._-]?(x264|h\\.?264|avc)|(x264|h\\.?264|avc)[ ._-]?10-?bits?)(?=[^a-z]|$)");
+    static const RE av1 = re("(^|[^a-z0-9])av1(?=[^a-z0-9]|$)"), dv = re("(^|[^a-z0-9])(dv|dovi|dolby[ ._-]?vision)(?=[^a-z0-9]|$)");
+    return hi10.match(t).hasMatch() ? "10-bit H.264" : av1.match(t).hasMatch() && dv.match(t).hasMatch() ? "AV1 Dolby Vision" : QString();
+}
+// Anime without subtitles as a track: a raw (the Japanese broadcast or disc: Kawaiika-Raws, Beatrice-Raws;
+// Erai-raws is a subtitle group despite its name, and a release that names its subtitles has them), or
+// subtitles burned into the picture: a hardsub, or an MP4 (it can't carry ASS: NoobSubs' Blu-ray MP4s).
+// The online subtitles the player adds would show twice over burned ones.
+inline bool noSubtitleTrack(const QString &t, const QString &file) {
+    static const RE raw = re("(^|[^a-z0-9])raws?(?=[^a-z]|$)"), subbed = re("erai-raws|(^|[^a-z])(multi-?|e|eng-?)?subs?(?=[^a-z]|$)"),
+                    burned = re("(^|[^a-z])(hard-?sub(s|bed)?|hc|mp4)(?=[^a-z]|$)");
+    return (raw.match(t).hasMatch() && !subbed.match(t).hasMatch()) || burned.match(t).hasMatch() || burned.match(file).hasMatch();
 }
 
 inline QString resolution(const QString &t) {
@@ -166,9 +187,9 @@ inline QVariantMap read(const QString &name, const QString &title, const QString
     }
     const QString quality = nameLines.mid(1).join(' ');
     const QStringList codecs = audio(blob);
-    const bool opusOnly = !codecs.isEmpty() && codecs.count("Opus") == codecs.size();
-    const QString support = opusOnly ? "unsupported" : badVideo(blob) ? "unsupported" : audioSupport(blob);
-    QString why = support != "unsupported" ? "" : opusOnly ? "Opus" : badVideo(blob) ? "10-bit H.264" : "Audio";
+    const QString video = badVideo(blob), surround = codecs.size() <= 1 ? lostSurround(blob) : QString();     // no other codec named
+    const QString support = !video.isEmpty() || !surround.isEmpty() ? "unsupported" : audioSupport(blob);
+    QString why = support != "unsupported" ? "" : !video.isEmpty() ? video : !surround.isEmpty() ? surround : "Audio";
     if (why == "Audio") for (const QString &c : codecs) if (c.startsWith("DTS") || c == "TrueHD") { why = c; break; }
     const QString res = resolution(quality);
     // the stream list's chips, in order: { text, icon, tag } (tag names a tinted kind: bd, version)
@@ -206,6 +227,7 @@ inline QVariantMap read(const QString &name, const QString &title, const QString
         { "url", url },
         { "group", group(lines.value(0)) },
         { "dubOnly", dubOnly(blob) },
+        { "noSubtitleTrack", anime && noSubtitleTrack(blob, fileInPack) },
     };
 }
 
@@ -320,6 +342,27 @@ public:
         if (row < 0 || row >= m_rows.size()) return;
         m_auto = false; ++m_ticket; m_chosen = m_all[m_rows[row]].fields; resolve(m_all[m_rows[row]], m_ticket);
     }
+    // The pick turned out not to be one to watch, which its name didn't say: the TV failed to start it
+    // (Kaleido-Flax's Demon Slayer BDs are 10-bit H.264), or the player read its tracks and found no sound
+    // the TV plays or no subtitles (`why`, shown in the list). Its release (the torrent: one encode for
+    // every episode in it) is left out and the next candidate is picked: for good (`forGood`) when the
+    // file itself said so (its tracks, its video's profile), and until the app closes when the player
+    // only failed or never started, which a bad connection does to a good release too (LG reports a
+    // decoder's failure as "Network Error" as often as not). Only for our own pick (`ownPick`): a stream
+    // chosen from the list plays as it is. `playable` or `failed` follow, maybe before this returns (a
+    // link got ahead), so the caller clears the old stream first.
+    Q_INVOKABLE bool ownPick() const { return m_auto; }
+    Q_INVOKABLE void leaveOut(const QString &url, const QString &why, bool forGood) {
+        if (!m_auto) return;
+        const QString hash = hashOf(url);
+        if (!hash.isEmpty() && forGood) { m_failed.setDir(m_dataDir); m_failed.data()[hash] = why; m_failed.save(); }
+        else if (!hash.isEmpty()) m_leftOut[hash] = why;
+        if (aiPicks().value(m_videoId).toString() == url) { aiPicks().remove(m_videoId); m_picks.save(); }
+        leaveOutFailed();
+        refilter();
+        m_binge.clear();                                    // the release the episode before played is this one
+        choose(++m_ticket);
+    }
     Q_INVOKABLE void cancel() { ++m_ticket; m_auto = false; setStage(""); }
     // the listed row of the stream with this addon link, or -1
     Q_INVOKABLE int rowOf(const QString &url) const { for (int r = 0; r < m_rows.size(); r++) if (m_all[m_rows[r]].url == url) return r; return -1; }
@@ -352,9 +395,9 @@ private:
     static QString rules() {
         return QStringLiteral(
             "Pick one stream to play on an LG C5 OLED TV. Every option plays on it and is cached. Rules, in order:\n"
-            "1. Anime (it comes to you only when there is a Blu-ray): 1080p, not 4K. The most promising 1080p Blu-ray (BD, BDRip, BDRemux) release. Prefer single-episode files to whole-series packs when quality is equal.\n"
+            "1. Anime (it comes to you only when there is a Blu-ray): 1080p, not 4K. The best 1080p Blu-ray (BD, BDRip, BDRemux) from an established encoding group, with English subtitles as a track (MKV). Dual-audio and multi-subtitle releases are fine: the player switches to the Japanese track itself. Seeders show which releases people trust: a well-seeded release from a known group beats an obscure one with a handful. Prefer single-episode files to whole-series packs when quality is equal.\n"
             "2. Not anime: the best 4K HDR (Dolby Vision or HDR10), preferably Blu-ray; else the best 1080p.\n"
-            "3. The first audio track must be the original language in Dolby Digital, Dolby Digital Plus, AAC or LPCM. Skip foreign-market releases whose names are mainly another language or list dubs (DUB, MVO, AVO, Cyrillic titles): their first track is the dub. Prefer releases that name a supported codec over ones that name none.\n"
+            "3. The original-language audio must be in a codec this TV plays: Dolby Digital, Dolby Digital Plus (Atmos and 7.1 too), AAC, MP3, Opus up to 5.1, or FLAC in stereo. It plays no DTS of any kind and no TrueHD, and loses the dialogue of FLAC 5.1 and Opus 7.1. A remux whose main track is TrueHD or DTS-HD is fine when it also carries a Dolby Digital track, which the player picks. The player switches to the original-language track wherever it sits. Skip foreign-market releases whose names are mainly another language (MVO, AVO, Cyrillic titles) or that carry only a dub.\n"
             "4. A re-release (v2, v3, REPACK, PROPER) fixes its original: prefer it to the same release without it.\n"
             "5. Among equals, more seeders.");
     }
@@ -441,11 +484,21 @@ private:
     }
     void listed(const QVector<Item> &all, const QString &failure) {
         m_all = all; m_loading = false; m_failure = failure;
+        leaveOutFailed();
         const QString picked = aiPicks().value(m_videoId).toString();
         for (Item &it : m_all) it.fields["aiPick"] = !picked.isEmpty() && it.url == picked;
         m_kind = m_anime ? 0 : 1;
         refilter();
         if (m_auto) choose(m_ticket);
+    }
+    static QString hashOf(const QString &url) { static const QRegularExpression re("/([0-9a-f]{40})/"); return re.match(url).captured(1); }
+    void leaveOutFailed() {
+        m_failed.setDir(m_dataDir);
+        for (Item &it : m_all) {
+            const QString hash = hashOf(it.url);
+            const QJsonValue why = m_failed.data().value(hash);
+            if (!why.isUndefined() || m_leftOut.contains(hash)) { it.fields["support"] = "unsupported"; it.fields["why"] = m_leftOut.value(hash, why.toString("Didn't play")); }
+        }
     }
     void refilter() {
         beginResetModel();
@@ -464,11 +517,11 @@ private:
         emit listChanged();
     }
 
-    // The candidates: what plays here and is cached, best first. The decision model is asked about the
+    // The candidates: what plays here and is cached (and, for anime, carries its subtitles as a track), best first. The decision model is asked about the
     // first 255 (what a choice question takes); the rules before it see them all.
     static QVector<int> candidates(const QVector<Item> &all, bool anime) {
         QVector<int> c;
-        for (int i = 0; i < all.size(); i++) if (all[i].fields["support"] != "unsupported" && all[i].fields["cached"].toBool()) c << i;
+        for (int i = 0; i < all.size(); i++) if (all[i].fields["support"] != "unsupported" && all[i].fields["cached"].toBool() && !all[i].fields["noSubtitleTrack"].toBool()) c << i;
         // anime: 1080p first, then 4K; anything else: 4K first. A re-release (v2, REPACK) beats its original.
         auto rank = [&all, anime](int i) { const QVariantMap &f = all[i].fields; const QString r = f["res"].toString();
                                     const int res = anime ? (r == "1080p" ? 2 : r == "4K" ? 1 : 0) : (r == "4K" ? 2 : r == "1080p" ? 1 : 0);
@@ -479,7 +532,15 @@ private:
     void choose(int ticket, int attempt = 1) {
         const QVector<int> c = candidates(m_all, m_anime);
         if (c.isEmpty()) { fail(m_all.isEmpty() ? (m_failure.isEmpty() ? "No streams yet" : m_failure) : "Nothing cached plays on this TV"); return; }
-        if (attempt == 1) { const int i = ruled(m_all, c, m_binge, m_anime); if (i >= 0) { pick(i, ticket); return; } }
+        if (attempt == 1) {
+            // the release the episode before played; else the one picked for this video before (an episode
+            // played again is the same file again, not whatever the model says this time); else the rule
+            int i = ruled(m_all, c, m_binge, false);
+            const QString before = aiPicks().value(m_videoId).toString();
+            for (int k = 0; i < 0 && !before.isEmpty() && k < c.size(); k++) if (m_all[c[k]].url == before) i = c[k];
+            if (i < 0) i = ruled(m_all, c, QString(), m_anime);
+            if (i >= 0) { pick(i, ticket); return; }
+        }
         // one candidate needs no decision; without a key (the lab's tours) the best by rank plays
         if (c.size() == 1 || m_openrouter.isEmpty() || m_decider.isEmpty()) { pick(c[0], ticket); return; }
         setStage("choosing");
@@ -558,8 +619,7 @@ private:
     }
     // TorBox's direct link for a Torrentio stream, or "" (`done` plays the stream's own URL then)
     template <typename F> void link(const QString &streamUrl, F done) {
-        static const QRegularExpression hashRe("/([0-9a-f]{40})/");
-        const QString hash = hashRe.match(streamUrl).captured(1);
+        const QString hash = hashOf(streamUrl);
         if (hash.isEmpty() || m_torbox.isEmpty()) { done(QString()); return; }
         const QString want = QUrl::fromPercentEncoding(streamUrl.section('/', -1).toUtf8());
         QNetworkRequest add = torbox("torrents/createtorrent");
@@ -592,6 +652,8 @@ private:
     QNetworkAccessManager m_net;
     QString m_addon, m_torbox, m_openrouter, m_decider = "typesafe/jev-1.14", m_title, m_failure, m_stage, m_videoId;
     JsonStore m_picks { "ai-picks.json" };
+    JsonStore m_failed { "failed-releases.json" };      // torrent hash -> why: picks whose file said it's unwatchable (leaveOut)
+    QHash<QString, QString> m_leftOut;                  // the same for this run: picks that failed or never started
     QString m_dataDir, m_picksStatus;
     QVector<Item> m_all;
     QVector<int> m_rows;

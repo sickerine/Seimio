@@ -1,9 +1,10 @@
 # Anime seasons as one show
 
-Built in `Catalog.loadAnime` (native/src/catalog.h): opening an Anime chart show loads its whole TVDB show
-as above, with AniList's sequel links for unplaced seasons, Specials last (films play as films), and
-Cinemeta for a show Kitsu doesn't have. Checked live on the TV on eight franchises (Sword, Demon Slayer,
-One Piece, Bleach, Attack on Titan, Re:Zero, Naruto, Blue Box).
+Built in `Franchise` (native/src/franchise.h): an anime opens as its whole franchise from wherever it was
+picked. Its TVDB show's seasons as below, AniList's sequel links for the seasons TVDB hasn't placed, then
+Movies, Specials and Related, each entry with its own name, logo and art; and Cinemeta for a show Kitsu
+doesn't have. Checked live on the TV on eight franchises (Sword, Demon Slayer, One Piece, Bleach, Attack
+on Titan, Re:Zero, Naruto, Blue Box).
 
 Kitsu (and the Stremio Kitsu addon we play anime through) treats every season as its own anime, so a
 show page for "Reincarnated as a Sword" showed one season of 12 episodes when there are two. This is

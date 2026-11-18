@@ -59,9 +59,12 @@ import json, os, sys, collections
 d, s, route = sys.argv[1], sys.argv[2], sys.argv[3]
 budget20, budgetMax = (40, 150) if route in ("player", "play") else (8, 60)
 agg = collections.defaultdict(lambda: [0, 0, 0, 0, 0, 0])
+errors = []
 for f in sorted(os.listdir(d)):
     if 'design' not in f or os.path.getmtime(os.path.join(d, f)) < float(s): continue   # this run's reports only
-    for k, v in json.load(open(os.path.join(d, f))).items():
+    report = json.load(open(os.path.join(d, f)))
+    errors += [e for e in report.get('errors', []) if e not in errors]
+    for k, v in report.items():
         if k.startswith('rt '):
             a = agg[k]; a[0] += v['frames']; a[1] += v['late20']; a[2] += v['late30']; a[3] = max(a[3], v['max'])
             a[4] += v.get('stalls', 0); a[5] = max(a[5], v.get('stallMax', 0))
@@ -73,6 +76,9 @@ print(f"  {'total':18s} frames {tot[0]:4d}  late>20ms {tot[1]:3d}  late>30ms {to
 busy = [(k[3:], a) for k, a in agg.items() if k != 'rt idle']
 over = []
 if not tot[0]: over.append("no frame reports (is tools/lab-server.py running?)")
+# a handler that threw or a binding that read nothing: the app said so (LogTap.watch)
+for e in errors: print("  ERROR " + e[:240])
+if errors: over.append(f"{len(errors)} script error(s)")
 if tot[1] > budget20: over.append(f"{tot[1]} frames over 20 ms (budget {budget20})")
 late30 = sum(a[2] for _, a in busy)
 if late30 > 2: over.append(f"{late30} frames over 30 ms outside idle (budget 2)")

@@ -6,7 +6,10 @@
 // The row keeps a fixed set of cards, just enough to cover its width while sliding, and hands them
 // new data as it moves: card slot k shows whichever index in the visible window leaves remainder k
 // when divided by the number of slots. Moving along the row, or swapping in a new model, never creates
-// or destroys a card, so it costs no item creation and no new scene graph nodes on the TV.
+// or destroys a card, so it costs no item creation and no new scene graph nodes on the TV. A row whose
+// cards change size (a show's episodes are stills, its films posters) says how narrow they get
+// (`narrowest`), and the set is made for that: sized by the width of the moment, every card was destroyed
+// and made again at each change (22-26 ms on the TV).
 //
 // `model` is a JS array of card data: { art, fallback, title, caption, label, episode, progress, watched,
 // upcoming }.
@@ -39,6 +42,8 @@ FocusScope {
     property real scroll: 0
     // the card left of the inset is partly on screen, and a slide shows one more at the far end
     readonly property int slots: Math.ceil((width + stride) / stride) + 1
+    property int narrowest: cardWidth
+    readonly property int pool: Math.ceil((width + narrowest + spacing) / (narrowest + spacing)) + 1
     readonly property int first: Math.max(0, Math.floor((scroll - inset) / stride))
 
     // move without animating (a new model, or restoring a position)
@@ -49,10 +54,11 @@ FocusScope {
     NumberAnimation { id: slide; target: strip; property: "scroll"; duration: 400; easing.type: Theme.ease }
 
     Repeater {
-        model: strip.width > 0 ? strip.slots : 0
+        model: strip.width > 0 ? strip.pool : 0
         MediaCard {
-            readonly property int idx: strip.first + ((index - strip.first) % strip.slots + strip.slots) % strip.slots
-            readonly property var d: idx < strip.count ? strip.model[idx] : null
+            // cards past the slots wider cards need have nothing to show
+            readonly property int idx: index < strip.slots ? strip.first + ((index - strip.first) % strip.slots + strip.slots) % strip.slots : -1
+            readonly property var d: idx >= 0 && idx < strip.count ? strip.model[idx] : null
             // a card fully off screen isn't drawn: a sliding row keeps a card each side of what shows
             visible: d !== null && x < strip.width && x + width > 0
             x: strip.inset + idx * strip.stride - strip.scroll

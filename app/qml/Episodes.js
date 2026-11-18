@@ -32,6 +32,21 @@ function after(show, id, today) {
     return null;
 }
 
+// how an episode is named: on a card's chip, and spelled out
+function chip(n) { return "E" + n }
+function named(n) { return "Episode " + n }
+
+// The up-next countdown as two positions in the video (ms): it runs from `from` to `until`, where the next
+// episode takes over. "credits": ten seconds from where the credits start, or from `p` when the offer is
+// made further in (a seek into them), never past their end; "end": the file's last ten seconds.
+function upNextSpan(mode, p, duration, outro) {
+    if (mode !== "credits" || !outro) return { from: duration - 10000, until: duration };
+    var from = Math.max(outro.start, p);
+    return { from: from, until: Math.min(from + 10000, outro.end, duration) };
+}
+// how far through it the video is, 0 to 1
+function upNextElapsed(span, p) { return span.until > span.from ? Math.max(0, Math.min(1, (p - span.from) / (span.until - span.from))) : 0 }
+
 // the position of the episode `id`, or null
 function find(show, id) {
     var all = flat(show);

@@ -1,6 +1,7 @@
 module Seimio.UI
 singleton Theme 1.0 Theme.qml
 singleton Remote 1.0 Remote.qml
+singleton ArtCache 1.0 ArtCache.qml
 OkPress 1.0 OkPress.qml
 Icon 1.0 Icon.qml
 Chip 1.0 Chip.qml
@@ -10,6 +11,7 @@ Shadow 1.0 Shadow.qml
 Button 1.0 Button.qml
 ButtonRow 1.0 ButtonRow.qml
 MenuList 1.0 MenuList.qml
+DropMenu 1.0 DropMenu.qml
 GaussPass 1.0 GaussPass.qml
 BlurChain 1.0 BlurChain.qml
 Glass 1.0 Glass.qml
@@ -20,6 +22,8 @@ BarRow 1.0 BarRow.qml
 MediaCard 1.0 MediaCard.qml
 MonthGrid 1.0 MonthGrid.qml
 CardStrip 1.0 CardStrip.qml
+PagedStrip 1.0 PagedStrip.qml
 Backdrop 1.0 Backdrop.qml
 TitleArt 1.0 TitleArt.qml
 Latch 1.0 Latch.qml
+Fade 1.0 Fade.qml

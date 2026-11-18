@@ -26,6 +26,9 @@
 #include <climits>
 #include <memory>
 
+// how an episode is named on a card (Episodes.chip in QML)
+inline QString episodeChip(int n) { return "E" + QString::number(n); }
+
 // One release on one day: an episode of a library show or of the airing schedule.
 struct Release {
     QVariantMap item;            // the title entry Home shows for it (backdrop, logo, description, ...)
@@ -116,7 +119,7 @@ private:
         d.count = list.size();
         d.opacity = (day.month() != m_month.month() || day.year() != m_month.year()) ? 0.28 : (d.key < m_today ? 0.72 : 1);
         d.isToday = d.key == m_today;
-        if (d.count > 0) { d.art0 = list[0].art; d.name = list[0].name; d.episode = "E" + QString::number(list[0].episode); }
+        if (d.count > 0) { d.art0 = list[0].art; d.name = list[0].name; d.episode = episodeChip(list[0].episode); }
         if (d.count > 1) { d.art1 = list[1].art; d.more = "+" + QString::number(d.count - 1); }
         if (d.count > 2) d.art2 = list[2].art;
         d.stackRoom = std::min(2, std::max(0, d.count - 1)) * 6;
@@ -158,7 +161,10 @@ class Catalog : public QObject {
     Q_PROPERTY(QVariantList popular READ popular NOTIFY loaded)
     Q_PROPERTY(CalendarModel *calendar READ calendar CONSTANT)
     Q_PROPERTY(bool seasonReady READ seasonReady NOTIFY seasonLoaded)      // the Anime tab's season, with its art
-    Q_PROPERTY(QString seasonName READ seasonName NOTIFY seasonLoaded)      // "Fall 2026"
+    Q_PROPERTY(QString seasonName READ seasonName NOTIFY seasonLoaded)      // "Fall 2026": the season the chart holds
+    // the season picked (showSeason): seasonName once it is in, another while it's being fetched
+    Q_PROPERTY(QString seasonAsked READ seasonAsked NOTIFY seasonAskedChanged)
+    Q_PROPERTY(QVariantList seasons READ seasons CONSTANT)                  // the ones on offer, newest first
     Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY seasonLoaded)    // most common first
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
@@ -204,7 +210,7 @@ public:
                 if (at < now || !fits(m, format, genre) || QDateTime::fromSecsSinceEpoch(at).date() != day) continue;
                 QVariantMap i = m;
                 i["label"] = QDateTime::fromSecsSinceEpoch(at).toString("HH:mm");
-                i["episode"] = "E" + QString::number(m["nextEpisode"].toInt());
+                i["episode"] = episodeChip(m["nextEpisode"].toInt());
                 i["art"] = m["backdrop"];                                    // the wide banner suits a row
                 items << i;
             }
@@ -236,16 +242,56 @@ public:
             auto season = std::make_shared<Data>();
             QThread *worker = QThread::create([season, docs] { Data::loadSeason(*season, docs.season); });
             connect(worker, &QThread::finished, this, [this, season] {
-                if (!m_data) m_data = std::make_shared<Data>();
-                m_data->season = season->season; m_data->seasonName = season->seasonName; m_data->seasonGenres = season->seasonGenres;
-                m_seasonReady = true;
-                emit seasonLoaded();
+                m_seasons[season->seasonName] = season;
+                if (!m_seasonAsked.isEmpty()) return;                                // another was picked while it loaded
+                m_seasonAsked = season->seasonName; emit seasonAskedChanged();
+                takeSeason(season->seasonName);
             });
             connect(worker, &QThread::finished, worker, &QObject::deleteLater);
             worker->start();
         });
     }
     bool seasonReady() const { return m_seasonReady; }
+    QString seasonAsked() const { return m_seasonAsked; }
+    // The seasons the Anime tab offers: the next one, the one now, and three years back, as
+    // { season, year, label, detail } ("WINTER", 2027, "Winter 2027", "Next" | "Now" | "").
+    static QVariantList seasonsFrom(const QDate &today) {
+        static const QStringList order { "WINTER", "SPRING", "SUMMER", "FALL" };
+        const auto now = Live::seasonAt(today);
+        int i = order.indexOf(now.first) + 1, year = now.second;                // the next one first
+        if (i > 3) { i = 0; year++; }
+        QVariantList out;
+        for (int n = 0; n < 14; n++) {
+            out << QVariantMap { { "season", order[i] }, { "year", year }, { "label", seasonLabel(order[i], year) },
+                                 { "detail", n == 0 ? "Next" : order[i] == now.first && year == now.second ? "Now" : "" } };
+            if (--i < 0) { i = 3; year--; }
+        }
+        return out;
+    }
+    QVariantList seasons() const { return seasonsFrom(QDate::currentDate()); }
+    Q_INVOKABLE QVariantList seasonsOn(const QString &day) const { return seasonsFrom(QDate::fromString(day, "yyyy-MM-dd")); }   // tests
+    static QString seasonLabel(const QString &season, int year) { return season.left(1) + season.mid(1).toLower() + " " + QString::number(year); }
+    // Shows another season on the Anime tab: at once if it has been fetched this run, else once it is in
+    // whole (its list and every show's art), the one on screen staying until then. `seasonFailed` if it
+    // couldn't be had, and the season shown stays.
+    Q_INVOKABLE void showSeason(const QString &season, int year) {
+        const QString name = seasonLabel(season, year);
+        if (name == m_seasonAsked) return;
+        m_seasonAsked = name; emit seasonAskedChanged();
+        if (m_seasons.contains(name)) { takeSeason(name); return; }
+        m_live.seasonChart(season, year, [this, name](QJsonObject doc) {
+            auto data = std::make_shared<Data>();
+            QThread *worker = QThread::create([data, doc] { Data::loadSeason(*data, doc); });
+            connect(worker, &QThread::finished, this, [this, data, name] {
+                if (!data->season.isEmpty()) m_seasons[name] = data;
+                if (m_seasonAsked != name) return;                                  // another was picked since
+                if (data->season.isEmpty()) { m_seasonAsked = seasonName(); emit seasonAskedChanged(); emit seasonFailed(name); }
+                else takeSeason(name);
+            });
+            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+            worker->start();
+        });
+    }
 
     // a show's seasons and episodes, for the show page (empty if it isn't a library show)
     Q_INVOKABLE QVariantMap show(const QString &id) const { return m_data ? m_data->shows.value(id).toMap() : QVariantMap(); }
@@ -262,6 +308,8 @@ signals:
     void baseChanged();
     void loaded();
     void seasonLoaded();
+    void seasonAskedChanged();
+    void seasonFailed(const QString &name);
     void franchiseReady(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
     void franchiseFailed(const QString &sourceId, const QString &reason);
 
@@ -353,7 +401,7 @@ private:
                 Release r;
                 r.item = QVariantMap{ {"id", a["id"].toString()}, {"name", a["name"].toString()}, {"title", a["name"].toString()},
                                       {"art", artUrl}, {"backdrop", artUrl}, {"logo", QString()}, {"description", a["description"].toString()},
-                                      {"chips", QStringList()}, {"rating", QString()}, {"episode", "E" + QString::number(a["episode"].toInt())}, {"progress", -1} };
+                                      {"chips", QStringList()}, {"rating", QString()}, {"episode", episodeChip(a["episode"].toInt())}, {"progress", -1} };
                 r.name = a["name"].toString(); r.art = artUrl; r.episode = a["episode"].toInt(); r.overview = a["description"].toString();
                 r.released = a["date"].toString(); r.time = a["time"].toString();
                 d.calendar[r.released].append(r);
@@ -420,7 +468,7 @@ private:
         QString label;
         if (at > 0 && left > 0) {
             const qint64 days = left / 86400, hours = left % 86400 / 3600, minutes = left % 3600 / 60;
-            label = "E" + QString::number(m["nextEpisode"].toInt()) + " in "
+            label = episodeChip(m["nextEpisode"].toInt()) + " in "
                   + (days ? QString::number(days) + "d " + QString::number(hours) + "h" : hours ? QString::number(hours) + "h " + QString::number(minutes) + "m" : QString::number(qMax<qint64>(1, minutes)) + "m");
         }
         m["label"] = label;
@@ -435,6 +483,15 @@ private:
 
     QString m_base;
     bool m_ready = false, m_seasonReady = false;
+    QString m_seasonAsked;
+    QHash<QString, std::shared_ptr<Data>> m_seasons;       // the seasons fetched this run, by name ("Fall 2026")
+    void takeSeason(const QString &name) {
+        const auto s = m_seasons.value(name);
+        if (!m_data) m_data = std::make_shared<Data>();
+        m_data->season = s->season; m_data->seasonName = s->seasonName; m_data->seasonGenres = s->seasonGenres;
+        m_seasonReady = true;
+        emit seasonLoaded();
+    }
     Live m_live { this };
     Franchise m_franchise { this };
     std::shared_ptr<Data> m_data;

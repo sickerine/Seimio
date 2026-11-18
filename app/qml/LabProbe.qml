@@ -58,11 +58,11 @@ Item {
     // { "bench": true }: times creating cards and swapping a strip's model on the TV, 4 s after launch
     property var benchOut: null
     Item { id: benchHost; width: 1920; height: 400; y: 2000 }
-    Component { id: benchCard; MediaCard { width: 384; height: 216; episode: "E3"; progress: 40; watched: true; title: "x" } }
-    Component { id: benchPlain; MediaCard { width: 384; height: 216 } }
+    Component { id: benchCard; MediaCard { width: Theme.stillCard.width; height: Theme.stillCard.height; episode: "E3"; progress: 40; watched: true; title: "x" } }
+    Component { id: benchPlain; MediaCard { width: Theme.stillCard.width; height: Theme.stillCard.height } }
     Component { id: benchText; Text { text: "E3"; font.family: Theme.face; font.pixelSize: 18 } }
     Component { id: benchIcon; Icon { name: "check" } }
-    Component { id: benchStrip; CardStrip { width: 1920; cardWidth: 384; cardHeight: 216; spacing: 32; showTitles: false } }
+    Component { id: benchStrip; CardStrip { width: 1920; cardWidth: Theme.stillCard.width; cardHeight: Theme.stillCard.height; spacing: 32; showTitles: false } }
     function benchOne(c, n) { var t = Date.now(); for (var i = 0; i < n; i++) c.createObject(benchHost, { x: (i % 5) * 400 }); return (Date.now() - t) / n }
     Timer {
         running: !!probe.variant.bench; interval: 4000
@@ -85,10 +85,15 @@ Item {
             var fs = frames.take();
             for (var q in fs) out["rt " + q] = fs[q];
             if (probe.variant.timing) out.log = tap.take().map(function (l) { return probe.phase + " | " + l }).slice(-600);
+            // what went wrong since the last report (LogTap.watch): always sent, so a handler that threw on
+            // the TV shows up in the reports (tools/lab-errors.py, and a tour fails on any)
+            var errors = tap.errors();
+            if (errors.length) out.errors = errors;
             var x = new XMLHttpRequest(); x.open("POST", probe.server + "/design"); x.send(JSON.stringify(out));
         }
     }
     Component.onCompleted: {
+        tap.watch();
         lat.attach(window); frames.attach(window); luna.init("");
         var x = new XMLHttpRequest();
         x.open("GET", server + "/variant.json");

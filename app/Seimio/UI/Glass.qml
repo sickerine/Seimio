@@ -1,5 +1,7 @@
 // Liquid glass: a panel that blurs whatever of `source` sits under it and bends it near the edges like
 // a lens, with a saturation boost, a tint, a rim light brightest along the top, and rounded corners.
+// White labels sit on it, so where the backdrop under it is bright the glass tones it down, pixel by
+// pixel from the blurred backdrop's own brightness (`legible`); over dark art it is left as it is.
 // Children sit on the glass. `sx`/`sy` are the panel's position in `source` coordinates; the defaults
 // assume the panel's parent lines up with the source. The blur runs only while the panel is on screen.
 import QtQuick 2.12
@@ -12,6 +14,7 @@ Item {
     property real saturation: 1.6
     property real refraction: 1.0      // 0 = flat glass
     property real rim: 1.0             // 0 = no rim light
+    property real legible: 1.0         // 0 = never toned down
     property real sx: x
     property real sy: y
     readonly property real pad: 32     // margin captured around the panel for the refraction to pull from
@@ -44,6 +47,7 @@ Item {
         property real saturation: glass.saturation
         property real refraction: glass.refraction
         property real rimLight: glass.rim
+        property real legible: glass.legible
         fragmentShader: "
             varying highp vec2 qt_TexCoord0;
             uniform sampler2D tex;
@@ -54,6 +58,7 @@ Item {
             uniform lowp float saturation;
             uniform lowp float refraction;
             uniform lowp float rimLight;
+            uniform lowp float legible;
             uniform lowp float qt_Opacity;
             void main() {
                 highp vec2 p = qt_TexCoord0 * box;
@@ -68,6 +73,7 @@ Item {
                 lowp float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
                 c.rgb = mix(vec3(l), c.rgb, saturation);
                 c.rgb = mix(c.rgb, tint.rgb, tint.a);
+                c.rgb *= 1.0 - 0.52 * legible * smoothstep(0.36, 0.78, l);      // a bright backdrop, toned down for the labels
                 // rim light: a thin bright band just inside the edge, strongest at the top
                 highp float band = smoothstep(-3.0, -0.5, d) * (1.0 - smoothstep(-0.5, 0.5, d));
                 highp float top = 1.0 - qt_TexCoord0.y;

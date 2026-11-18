@@ -7,10 +7,12 @@ previews). `README.md` has the layout and how to build and run.
 
 Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends with "all checks passed".
 
-- The visual check renders fixed states and `tools/preview/gallery.qml` (every control in every state)
+- The visual check renders fixed states and `tools/preview/gallery.qml` and `gallery2.qml` (every control in every state)
   and compares them with `tools/preview/baseline/`. A CHANGED state leaves the render and a brightened
   diff in `.lab/shots/`. Look at both: an intended change gets `tools/preview/shots.sh --approve <state>`,
   anything else gets fixed. A new control or state goes into the gallery or the state list too.
+  Renders load images from a fixed cache (`.lab/preview-images`, with redirects and missing stills pinned
+  in `pinned.json`); a state that had to fetch one renders again, so no render shows art half arrived.
 - The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams|player` against the frame budget in
   `tour.sh`. A new screen or interaction gets a route there too. TV runs vary by about 2x, so judge a
   change by three runs, not one. An OVER BUDGET line means a regression; find it like this:
@@ -43,9 +45,26 @@ Each rule comes from a measured stall on the C5.
   and reads `array[index]`, so a new array of the same length rebinds instead of rebuilding. A
   MediaCard costs about 1.3 ms to create on the TV.
 - Hidden screens take their data through an explicit call (`ShowScreen.load()`, `showSeason()`), never
-  a binding to the Home selection. Build expensive screens ahead of time while Home is idle.
+  a binding to the Home selection. Build expensive screens ahead of time while Home is idle: `App.still`
+  fires once nothing has moved for a second (a key, a tab, a backdrop crossfade all restart it) and does
+  one piece of work a firing (the selection's page, then the Anime tab once). A page built the moment its
+  franchise arrived landed on the tab bar as a 90 ms frame.
+- A component that shows a page of data takes it as one value (`PagedStrip.show(page, index)`, an
+  explicit `load()`): as separate inputs set one after another, every card was rebound for each. A page
+  that opens on an episode is built once, for the place it lands on.
+- A row whose cards change size says how narrow they get (`CardStrip.narrowest`), so its pool is made
+  once: sized by the width of the moment, every card was destroyed and made again (22-26 ms).
+- Card art stays decoded. Qt keeps ~2 MB of images nothing shows, so a card that a row hands other data
+  lets its art go and decodes it again on the way back (covers that came back empty and faded in).
+  `ArtCache` holds every `MediaCard`'s art, decoded as the card decodes it; a screen can hold a view's art
+  ahead (`ArtCache.keep`). Art goes through `MediaCard`, never a bare `Image` in a row or a grid.
+  `ArtCache.loads` in the lab state counts cards that had to wait for art: a walk back adds none.
 - One shader per full-screen layer, and glass and frost only through `Glass`, `Frost` and `BlurChain`,
-  which capture only while visible (`frozen` captures once, and again while `sourceBusy`).
+  which capture only while visible (`frozen` captures once, and again while `sourceBusy`). A small glass
+  over the drifting backdrop (the tab bar) stays live: refreshed twice a second instead, each capture was
+  a 14-16 ms frame on its own and often late, where the steady chain costs ~2 ms a frame.
+- A full-screen texture nobody sees is not free. `Backdrop` lets go of the picture that faded out: its
+  shader samples both, and the second 1080p texture cost 2 to 3.5 ms of every frame.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.
 - State has one source: selection is `App.displayItem`, changed only by `commit()`; components take one
   input and apply explicit rules, as `Backdrop` and `HeroInfo` document at their top.
@@ -107,6 +126,14 @@ the Stremio account (`app/stremio/`, `tools/fetch-library.sh`) until the app sig
 snapshot of data or art to make something look finished; the Mac's visual check alone replays recorded
 answers (`tools/preview/api/`) so its renders stay fixed.
 
+## Playback
+
+What the TV plays is measured: `docs/playback.md` has the table, and `native/src/playback.h` is that table
+as code, read by the picker and the player, so a codec rule lives there and nowhere else. A claim about a
+format comes from that table or from a new run of `tools/playback-matrix.py`, confirmed on the screen and
+by ear. LG's pipeline reports "playing" for sound it can't decode and for pictures it breaks, and LG's own
+format list differs from the TV, so neither settles anything.
+
 ## Visual rules
 
 - Balance by what is drawn. Centre a control's content from the tops of the capitals, pad icons by
@@ -117,12 +144,16 @@ answers (`tools/preview/api/`) so its renders stay fixed.
   never a name that a logo then replaces, a small backdrop that a larger one replaces, or the same
   picture again from another URL. Load first (preload, then commit; `TitleArt`, `HeroInfo`, `Backdrop`
   wait for the image), and when better data arrives for something already on screen, keep what's shown
-  (`Catalog.animeShow` keeps the chart's item). A screen gets its data whole: `Live`
+  (a franchise's item is the chart's or the row's own, with its Kitsu id: `Franchise`). A screen gets its data whole: `Live`
   fetches every piece of art and fact it needs before the screen's data is ready. The name stands in only
   when there's no logo at all.
-- What fades out keeps showing what it showed until its fade ends. Content that reads the state that
-  hides it (which list a panel is, the selected show) reads it through `Latch` (`live` while open), never
-  live: the subtitle panel's delay row vanished the moment its fade began.
+- What fades out keeps showing what it showed until its fade ends: the end of the animation is the end,
+  not its start. Things come and go through `Fade`, whose content can only read the value it holds
+  (`current`); a panel with its own motion holds what it shows in a `Latch` (`live` while open). Never an
+  `opacity` switched by a condition with content that reads that condition: the subtitle panel's delay
+  row vanished the moment its fade began, and so did the "Loading Summer 2026" chip. `check.sh` fails on
+  any `opacity` a condition switches, in a screen or a component, unless its line says why what it shows
+  holds (`// holds: ...`).
 - Reuse the library (`app/Seimio/UI`) before writing a new control; extend it when a screen needs a
   variant, so every screen keeps the same chips, buttons, glass and motion (`Theme` durations and
   easing).

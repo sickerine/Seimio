@@ -21,7 +21,7 @@ DAY='{"today": "2026-11-16"}'
 # froze a different moment of it each run)
 STILL_JS='(function s(o) { if (o.decodeSize !== undefined) o.still = true; for (var i = 0; i < o.children.length; i++) s(o.children[i]) })(win.canvas || win.contentItem);'
 js() {
-  [ "$1" = gallery ] || printf '%s ' "$STILL_JS"
+  case "$1" in gallery*) ;; *) printf '%s ' "$STILL_JS";; esac
   case $1 in
     calendar) echo "$FIND_JS home.row = 1; var g = f(home, function (o) { return o.cellWidth !== undefined && o.today !== undefined });"\
                    ' g.showFocus = true; g.select("2026-11-17")' ;;
@@ -30,12 +30,17 @@ js() {
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title gallery)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title gallery gallery2)
 fail=0
 for s in "${states[@]}"; do
-  screen="$REPO/app/qml/App.qml"; [ "$s" = gallery ] && screen="$P/gallery.qml"
-  rm -f "$OUT/$s.png" "$OUT/$s-diff.png"
-  (cd "$REPO/app" && perl -e 'alarm 60; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 "$([ "$s" = gallery ] || echo "$DAY")" >/dev/null 2>&1)
+  screen="$REPO/app/qml/App.qml"; day="$DAY"; case "$s" in gallery*) screen="$P/$s.qml"; day="";; esac
+  # a render that fetched an image caught it whenever it arrived (the data plugin says "fetched"); the next
+  # one has it on disk
+  for try in 1 2; do
+    rm -f "$OUT/$s.png" "$OUT/$s-diff.png"
+    log=$(cd "$REPO/app" && perl -e 'alarm 60; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 2000 "$day" 2>&1)
+    case "$log" in *"fetched "*) ;; *) break;; esac
+  done
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }
   base="$P/baseline/$s.png"
   if [ $approve = 1 ]; then
@@ -46,7 +51,7 @@ for s in "${states[@]}"; do
   ssim=$(ffmpeg -v info -i "$OUT/$s.png" -i "$base" -lavfi "[0]scale=960:540[a];[a][1]ssim" -f null - 2>&1 | sed -n 's/.*All:\([0-9.]*\).*/\1/p')
   if awk -v v="$ssim" 'BEGIN { exit !(v >= 0.9995) }'; then echo "  $s: same (SSIM $ssim)"
   else
-    ffmpeg -v error -y -i "$OUT/$s.png" -i "$base" -lavfi "[0]scale=960:540[a];[a][1]blend=all_mode=difference,lutrgb=r=val*6:g=val*6:b=val*6" "$OUT/$s-diff.png"
+    ffmpeg -v error -y -i "$OUT/$s.png" -i "$base" -lavfi "[0]scale=960:540,format=rgb24[a];[1]format=rgb24[b];[a][b]blend=all_mode=difference,lutrgb=r=val*6:g=val*6:b=val*6" "$OUT/$s-diff.png"
     echo "  $s: CHANGED (SSIM $ssim): $OUT/$s.png, $OUT/$s-diff.png"; fail=1
   fi
 done

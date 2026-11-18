@@ -19,6 +19,7 @@
 // Only Set default in a list's hold menu (prefer()) sets one; picking a track plays it for that file,
 // and whatever choose() falls back to is never saved.
 // Subtitle delay is kept per file.
+#include "playback.h"
 #include <QtQml>
 #include <QLocale>
 #include "store.h"
@@ -107,9 +108,16 @@ public:
     QString dataDir() const { return m_dir; }
     void setDataDir(const QString &d) { m_dir = d; m_store.setDir(d); emit changed(); }
 
+    // what the TV's player decodes (playback.h), for the player's track lists
+    Q_INVOKABLE bool audioListed(const QString &codec) const { return playback::audioListed(codec); }
+    Q_INVOKABLE bool audioPlays(const QString &codec, int channels) const { return playback::audioPlays(codec, channels); }
+    Q_INVOKABLE QString videoTrouble(const QString &codec, const QString &privHex) const { return playback::videoTrouble(codec, QByteArray::fromHex(privHex.toLatin1())); }   // tests
+
     // Chooses the tracks to play. `tracks` are { id, type: "audio" | "sub", lang, title, default, forced,
     // playable, external } in container order (`external`: loaded for the file, as the OpenSubtitles
-    // addon's are). Returns { audio: id or -1, sub: id or -1, audioOff, subsOff }.
+    // addon's are). Returns { audio: id or -1, sub: id or -1, audioOff, subsOff }, and what's wrong with
+    // the file: `silent` (it has audio, but none the TV plays, or none in the preferred language when it
+    // has that language) and `noSubtitleTrack` (no subtitles of its own).
     Q_INVOKABLE QVariantMap choose(const QVariantList &tracks, const QString &group) {
         const QJsonObject pref = m_store.data().value("prefs").toObject().value(group).toObject();
         const QString audioPref = pref.value("audio").toString(), subPref = pref.value("sub").toString();
@@ -128,8 +136,15 @@ public:
         const T *audio = pick(all, false, alang, QString());
         const QStringList slang = subPref.isEmpty() || subPref == "off" ? QStringList() : QStringList { subPref };
         const T *sub = subPref == "off" ? nullptr : pick(all, true, slang, audio ? audio->lang : QString());
+        bool any = false, anyPlays = false, wanted = false, wantedPlays = false, ownSubs = false;
+        for (const T &t : all) {
+            if (t.sub) { ownSubs = ownSubs || !t.external; continue; }
+            any = true; anyPlays = anyPlays || t.playable;
+            if (lang::match(alang, t.lang) > 0) { wanted = true; wantedPlays = wantedPlays || t.playable; }
+        }
         return { { "audio", audio ? audio->id : -1 }, { "sub", sub ? sub->id : -1 },
-                 { "audioOff", audioPref == "off" }, { "subsOff", subPref == "off" } };
+                 { "audioOff", audioPref == "off" }, { "subsOff", subPref == "off" },
+                 { "silent", any && (!anyPlays || (wanted && !wantedPlays)) }, { "noSubtitleTrack", !ownSubs } };
     }
     // "Set default" in a list's hold menu: `type` "audio" or "sub", the held track's tag and title (as
     // passed to choose()) or "off". It becomes the default for the group.

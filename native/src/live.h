@@ -47,7 +47,22 @@ public:
         auto homeDone = [docs, homeLeft, home] { if (--*homeLeft == 0) home(*docs); };
         rows(docs, homeDone);
         continueWatching(stremioDir, docs, homeDone);
-        season(docs, homeDone, [docs, anime] { anime(*docs); });
+        const auto now = seasonAt(QDate::currentDate());
+        chart(now.first, now.second, true, [docs, homeDone, now](std::shared_ptr<QJsonArray> shows) {
+            docs->season = QJsonObject { { "season", now.first }, { "year", now.second } };
+            docs->airing = airingOf(*shows);
+            homeDone();
+        }, [docs, anime](const QJsonObject &season) { docs->season = season; anime(*docs); });
+    }
+    // the season a day is in, as AniList names it: Winter is December to February, under the year it ends in
+    static QPair<QString, int> seasonAt(const QDate &day) {
+        const int m = day.month();
+        return { m == 12 || m <= 2 ? "WINTER" : m <= 5 ? "SPRING" : m <= 8 ? "SUMMER" : "FALL", m == 12 ? day.year() + 1 : day.year() };
+    }
+    // any season's chart with its art, whole: { season, year, shows } (no shows: it couldn't be had)
+    void seasonChart(const QString &name, int year, std::function<void(QJsonObject)> done) {
+        const auto now = seasonAt(QDate::currentDate());
+        chart(name, year, name == now.first && year == now.second, [](std::shared_ptr<QJsonArray>) {}, done);
     }
 
 private:
@@ -209,13 +224,12 @@ public:
 private:
 
     // ---- the Anime tab ---------------------------------------------------------------------------------------
-    // AniList's season now (Winter is December to February), as AniChart lists it: the season's shows from
-    // 3000 members up, and the ones still airing from earlier seasons from 9000 up (TV, TV short, ONA)
-    void season(std::shared_ptr<Docs> docs, std::function<void()> listed, std::function<void()> done) {
-        const QDate today = QDate::currentDate();
-        const int m = today.month();
-        const QString name = m == 12 || m <= 2 ? "WINTER" : m <= 5 ? "SPRING" : m <= 8 ? "SUMMER" : "FALL";
-        const int year = m == 12 ? today.year() + 1 : today.year();
+    // An AniList season as AniChart lists it: its shows from 3000 members up and, for the season now
+    // (`leftovers`), the ones still airing from earlier seasons from 9000 up (TV, TV short, ONA). A season
+    // that is over has gathered members since, so it is its 150 most popular. `listed(shows)` once the list
+    // is in (the calendar needs only that), `done(season)` with every show's art.
+    void chart(const QString &name, int year, bool leftovers, std::function<void(std::shared_ptr<QJsonArray>)> listed, std::function<void(QJsonObject)> done) {
+        const int lastPage = leftovers ? 8 : 3;
         static const QByteArray fields = "id isAdult popularity averageScore format episodes duration status source "
             "title { romaji english } bannerImage coverImage { extraLarge color } description(asHtml: false) genres "
             "studios(isMain: true) { nodes { name } } startDate { year month day } nextAiringEpisode { episode airingAt } "
@@ -247,7 +261,7 @@ private:
         };
         // pages until the popularity falls under the floor
         auto pages = std::make_shared<std::function<void(QByteArray, QJsonObject, int, int, bool, std::function<void()>)>>();
-        *pages = [this, take, pages](QByteArray q, QJsonObject vars, int page, int floor, bool leftover, std::function<void()> then) {
+        *pages = [this, take, pages, lastPage](QByteArray q, QJsonObject vars, int page, int floor, bool leftover, std::function<void()> then) {
             vars["page"] = page;
             anilist(q, vars, [=](const QJsonObject &data) {
                 const QJsonObject p = data.value("Page").toObject();
@@ -256,16 +270,15 @@ private:
                     if (v.toObject().value("popularity").toInt() < floor) { more = false; break; }
                     take(v.toObject(), leftover);
                 }
-                if (more && page < 8) (*pages)(q, vars, page + 1, floor, leftover, then); else then();
+                if (more && page < lastPage) (*pages)(q, vars, page + 1, floor, leftover, then); else then();
             });
         };
         (*pages)(seasonQ, QJsonObject { { "season", name }, { "year", year } }, 1, 3000, false, [=] {
-            (*pages)(leftoverQ, QJsonObject(), 1, 9000, true, [=] {
-                docs->season = QJsonObject { { "season", name }, { "year", year } };
-                docs->airing = airingOf(*shows);
-                listed();
-                art(shows, [docs, shows, done] { QJsonObject s = docs->season; s["shows"] = *shows; docs->season = s; done(); });
-            });
+            auto finish = [=] {
+                listed(shows);
+                art(shows, [=] { done(QJsonObject { { "season", name }, { "year", year }, { "shows", *shows } }); });
+            };
+            if (leftovers) (*pages)(leftoverQ, QJsonObject(), 1, 9000, true, finish); else finish();
         });
     }
     // the calendar's anime: every episode's air time (local date and time), with the show's banner or cover

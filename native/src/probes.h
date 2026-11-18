@@ -173,15 +173,33 @@ private:
 
 
 // Captures Qt log output in-process (qml-runner sends it to PmLog, which dev mode can't read).
+// watch() is always on: it keeps the warnings and errors (a handler that threw, a binding reading
+// nothing: silent on the TV otherwise, where a broken handler just does nothing), which costs nothing
+// while nothing goes wrong, and passes every message on as before. An image that isn't there is not
+// one of them: art goes missing all the time. start(rules) is the lab's switch: every line of the
+// categories asked for (Qt's per-frame render timing), which does perturb the frames it times.
+inline QStringList g_errorLines;
+inline QtMessageHandler g_handlerBefore = nullptr;
 class LogTap : public QObject {
     Q_OBJECT
 public:
-    Q_INVOKABLE void start(const QString &rules) {
-        QLoggingCategory::setFilterRules(rules);
-        g_logOn = true;
-        qInstallMessageHandler([](QtMsgType, const QMessageLogContext &ctx, const QString &msg) {
+    Q_INVOKABLE void watch() {
+        if (g_handlerBefore) return;
+        g_handlerBefore = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &ctx, const QString &msg) {
             labLog(QString("%1 %2").arg(ctx.category ? ctx.category : "").arg(msg));
+            // not ours to fix: art that isn't there, LG's platform announcing the video window, and Qt's
+            // network code complaining about itself when a reply is aborted as it fails
+            static const QStringList noise { "QML Image:", "[Client:", "QNetworkReplyImplPrivate::error", "libpng warning" };
+            bool ours = type != QtDebugMsg && type != QtInfoMsg;
+            for (const QString &n : noise) ours = ours && !msg.contains(n);
+            if (ours) {
+                QMutexLocker l(&g_logMutex);
+                if (g_errorLines.size() < 200) g_errorLines << msg;
+            }
+            if (g_handlerBefore) g_handlerBefore(type, ctx, msg);
         });
     }
+    Q_INVOKABLE void start(const QString &rules) { QLoggingCategory::setFilterRules(rules); g_logOn = true; watch(); }
     Q_INVOKABLE QStringList take() { QMutexLocker l(&g_logMutex); QStringList out = g_logLines; g_logLines.clear(); return out; }
+    Q_INVOKABLE QStringList errors() { QMutexLocker l(&g_logMutex); QStringList out = g_errorLines; g_errorLines.clear(); return out; }
 };

@@ -89,7 +89,7 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter; y: btn.height + 14
         text: btn.label; color: Theme.ink
         font.family: Theme.face; font.pixelSize: 21; font.weight: Font.Medium
-        opacity: btn.focused ? 1 : 0
+        opacity: btn.focused ? 1 : 0      // holds: a focus ring: nothing in it
         Behavior on opacity { NumberAnimation { duration: Theme.fast } }
     }
 }

@@ -23,6 +23,7 @@ Item {
     property int moveDir: 0             // -1 left, 1 right: the tilt leans into the move
     property bool showTitle: true
     property real radius: 16
+    readonly property bool artReady: img.status === Image.Ready
     // darkens the bottom half for text over the art; on by default when there's a chip or progress bar
     property real shade: progress >= 0 || episode ? 0.7 : 0
     // children go on the card face, so they lift and tilt with it (a calendar day's date, for example)
@@ -46,7 +47,7 @@ Item {
     Shadow {
         drop: card.focused ? 18 : 6
         scale: card.lift
-        opacity: card.focused ? 1 : 0
+        opacity: card.focused ? 1 : 0      // holds: a focus ring: nothing in it
         Behavior on drop { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }
         Behavior on opacity { NumberAnimation { duration: 240 } }
     }
@@ -60,10 +61,20 @@ Item {
             // the art, or the fallback once the art has failed to load
             property bool failed: false
             source: (failed || !card.art) && card.fallback ? card.fallback : card.art
-            onStatusChanged: if (status === Image.Error && !failed) failed = true
+            // ArtCache holds it decoded from here on, so a card that comes back to it finds it ready; art
+            // that loads although it is held ready there means the two decode differently
+            onSourceChanged: ArtCache.hold(source, sourceSize.width, sourceSize.height)
+            onStatusChanged: {
+                if (status === Image.Error && !failed) failed = true;
+                else if (status === Image.Ready) ArtCache.hold(source, sourceSize.width, sourceSize.height);
+                else if (status === Image.Loading) {
+                    ArtCache.loads++;
+                    if (ArtCache.ready(source, sourceSize.width, sourceSize.height)) { ArtCache.reloads++; console.warn("card art decoded again though it is held: " + source) }
+                }
+            }
             Connections { target: card; onArtChanged: img.failed = false }
             asynchronous: true; fillMode: Image.PreserveAspectCrop
-            sourceSize: Qt.size(card.width * Theme.cardDecode, card.height * Theme.cardDecode)
+            sourceSize: Theme.cardDecodeSize(card.width, card.height)
         }
         ShaderEffect {
             // drawn 3px larger than the card: the rounded edge is antialiased inside this rectangle,
@@ -92,7 +103,7 @@ Item {
             property real shadeTop: card.caption !== "" ? 0.25 : 0.5
             Behavior on focusAmt { NumberAnimation { duration: 220 } }
             // fade the art in once decoded instead of popping
-            opacity: img.status === Image.Ready ? 1 : 0
+            opacity: img.status === Image.Ready ? 1 : 0      // holds: only ever fades in, once decoded
             Behavior on opacity { NumberAnimation { duration: 260 } }
             fragmentShader: "
                 varying highp vec2 qt_TexCoord0;
@@ -195,7 +206,7 @@ Item {
         x: (card.width - width) / 2
         width: card.width * 1.15; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
         text: card.title; color: "white"; font.family: Theme.face; font.pixelSize: 22; font.weight: Font.Medium
-        opacity: card.focused ? 1 : 0
+        opacity: card.focused ? 1 : 0      // holds: a focus ring: nothing in it
         Behavior on opacity { NumberAnimation { duration: 220 } }
         Behavior on y { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
     }

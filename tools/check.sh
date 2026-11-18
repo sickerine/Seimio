@@ -6,6 +6,9 @@
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 fail=0
 echo "visual check"; tools/preview/shots.sh || fail=1
+# an opacity that a condition switches, in a screen or a component: content that reads the state hiding
+# it changes as the fade starts (a scale or a slide that goes with one is on the same item)
+echo "fades"; out=$(grep -nE '^[[:space:]]*opacity: .*\?' app/qml/*.qml app/Seimio/UI/*.qml | grep -v '// holds:') && { echo "$out"; echo "  an opacity switched by a condition: use Fade (its content reads \`current\`), or say on the line why what it shows can't change under it (// holds: ...)"; fail=1; }
 echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app -import tools/preview/imports 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
 [ "$1" = --mac ] && exit $fail
 

@@ -17,7 +17,7 @@ FocusScope {
     property bool fresh: false           // rows deal in one after another while true
     property int starting: -1            // the row that's starting to play
     width: Theme.screenWidth; height: Theme.screenHeight
-    opacity: active ? 1 : 0
+    opacity: active ? 1 : 0      // holds: the title and list stay until the next open()
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: page.active ? 240 : 200 } }
 
@@ -77,7 +77,7 @@ FocusScope {
             // how many, and their resolutions as one bar
             Item {
                 width: 460; height: 150
-                opacity: page.loading || !page.count ? 0 : 1
+                opacity: page.loading || !page.count ? 0 : 1      // holds: the counts of the list, which stays until the new one is in
                 Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 Text {
                     id: count
@@ -125,7 +125,7 @@ FocusScope {
     // loading: rows of the final size, breathing until the streams arrive
     Column {
         x: page.listX; y: 180; spacing: 14
-        opacity: page.loading && page.active ? 1 : 0
+        opacity: page.loading && page.active ? 1 : 0      // holds: fixed words
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         Repeater {
@@ -149,7 +149,7 @@ FocusScope {
     // nothing to list
     Column {
         x: page.listX + 60; y: 360; spacing: 14
-        opacity: !page.loading && page.active && page.count === 0 ? 1 : 0
+        opacity: !page.loading && page.active && page.count === 0 ? 1 : 0      // holds: the label stays until the next open()
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         Text {
             text: page.streams.failure ? "Couldn't load streams" : page.streams.total ? "No " + page.captions[bar.currentIndex] : "No streams yet"
@@ -172,7 +172,7 @@ FocusScope {
         // rows exist only while the page is up, built once its streams are in: the player's AI pick fills
         // the same model, and building rows behind the video cost a 50-60 ms stall as it started
         model: page.active && !page.loading ? page.streams : null
-        opacity: page.loading ? 0 : 1
+        opacity: page.loading ? 0 : 1      // holds: the list stays until the new one is in
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         // the focus rests in the upper rows and the list moves under it
         highlightRangeMode: ListView.ApplyRange
@@ -203,7 +203,7 @@ FocusScope {
                 duration: page.fresh ? Theme.slow : 1
                 dy: 18
                 width: row.width; height: row.height
-                opacity: t * (row.unsupported && !row.current ? 0.5 : 1)
+                opacity: t * (row.unsupported && !row.current ? 0.5 : 1)      // holds: only dims a row; its words stay
 
                 // resolution, and which HDR
                 Column {

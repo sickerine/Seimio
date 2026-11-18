@@ -14,6 +14,15 @@ Item {
     id: info
     property var item: null
     width: 900; height: 400
+    // the layout, Home's by default; the show page sets its own (a smaller title, two lines of description)
+    property size logoSize: Qt.size(640, 180)
+    property int nameSize: 72
+    property int chipsY: 206
+    property int chipSize: 22
+    property int textY: 272
+    property int textWidth: 780
+    property int textSize: 26
+    property int textLines: 3
     // where the description ends, for placing things under the info
     readonly property real contentHeight: description.y + description.height
 
@@ -54,18 +63,21 @@ Item {
     Item {
         anchors.fill: parent
         opacity: info.fadeIn
-        TitleArt { logo: info.m && info.m.logo ? info.m.logo : ""; name: info.m ? info.m.name : "" }
+        TitleArt {
+            width: info.logoSize.width; height: info.logoSize.height; nameSize: info.nameSize
+            logo: info.m && info.m.logo ? info.m.logo : ""; name: info.m ? info.m.name : ""
+        }
         Row {
-            y: 206; spacing: 10
-            Chip { visible: !!(info.m && info.m.episode); kind: "solid"; icon: "play"; text: info.m && info.m.episode ? info.m.episode : "" }
-            Chip { visible: !!(info.m && info.m.rating); kind: "rating"; icon: "star"; text: info.m ? info.m.rating : "" }
-            ChipRow { model: info.m ? info.m.chips : []; stagger: 50 }
+            y: info.chipsY; spacing: 10
+            Chip { visible: !!(info.m && info.m.episode); kind: "solid"; icon: "play"; size: info.chipSize; text: info.m && info.m.episode ? info.m.episode : "" }
+            Chip { visible: !!(info.m && info.m.rating); kind: "rating"; icon: "star"; size: info.chipSize; text: info.m ? info.m.rating || "" : "" }
+            ChipRow { model: info.m ? info.m.chips || [] : []; stagger: 50; size: info.chipSize }
         }
         Text {
             id: description
-            y: 272; width: 780; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight
+            y: info.textY; width: info.textWidth; wrapMode: Text.WordWrap; maximumLineCount: info.textLines; elide: Text.ElideRight
             text: info.m ? info.m.description : ""; color: Theme.inkSoft
-            font.family: Theme.face; font.pixelSize: 26; lineHeight: 1.22
+            font.family: Theme.face; font.pixelSize: info.textSize; lineHeight: 1.22
         }
     }
 }

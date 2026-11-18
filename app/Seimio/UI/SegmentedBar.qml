@@ -5,8 +5,11 @@
 // length relabels the segments in place. Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 // Moving selects, unless `selectOnOk`: then a cursor walks the segments and OK selects the one under it
-// (bars side by side, see BarRow). The cursor is the white highlight; the selection keeps the soft one,
-// and the cursor goes back to it when the bar loses focus.
+// (bars side by side, see BarRow). The selection is a soft pill that stays on its segment; the cursor is
+// a white pill of its own, there while the bar has focus. Walked in from a neighbouring bar it grows onto
+// the near segment from that side, and walked out it draws back towards the side it leaves by (enter,
+// leave), so a walk across bars reads as one movement: it never slides over from the selection. Focused
+// from anywhere else it is on the selection.
 import QtQuick 2.12
 
 FocusScope {
@@ -27,9 +30,24 @@ FocusScope {
     property int cursor: currentIndex     // the segment under focus: the selection, unless walking with selectOnOk
     signal triggered(int index)           // OK with selectOnOk, after selecting
     onCurrentIndexChanged: cursor = currentIndex
-    onActiveFocusChanged: if (!activeFocus) cursor = currentIndex
-    // a cursor walking in from a neighbouring bar starts at the near end
-    function enter(fromEnd) { if (selectOnOk) cursor = fromEnd ? model.length - 1 : 0 }
+    property bool arriving: false         // enter() ran: the focus that follows is a walk in
+    onActiveFocusChanged: {
+        if (!activeFocus) return;
+        if (!arriving) { glass.snap = true; cursor = currentIndex; glass.snap = false; grow.stop(); pill.grown = 1 }
+        arriving = false;
+    }
+    // a cursor walking in from a neighbouring bar starts at the near end (`fromEnd`: the last segment)
+    function enter(fromEnd) {
+        if (!selectOnOk) return;
+        arriving = true; moveDir = fromEnd ? -1 : 1;
+        glass.snap = true; cursor = fromEnd ? model.length - 1 : 0; glass.snap = false;
+        pill.fromRight = fromEnd; grow.stop(); pill.grown = 0; grow.to = 1; grow.duration = 260; grow.restart();
+    }
+    // walking out to a neighbouring bar (`step`: -1 to the left, 1 to the right)
+    function leave(step) { pill.fromRight = step > 0; grow.stop(); grow.to = 0; grow.duration = 180; grow.restart() }
+    // where the two pills are, for tests
+    readonly property rect cursorRect: Qt.rect(pill.x, pill.y, pill.width, pill.height)
+    readonly property rect selectionRect: Qt.rect(chosen.x, chosen.y, chosen.width, chosen.height)
     width: glass.width
     height: barHeight
 
@@ -41,24 +59,39 @@ FocusScope {
         sx: bar.sx; sy: bar.sy
         width: segments.width + 2 * inset; height: bar.barHeight; radius: height / 2
         readonly property int inset: Math.round(bar.barHeight * 0.13)
-        property Item target: segmentItems.count, segmentItems.itemAt(bar.showFocus ? bar.cursor : bar.currentIndex)
+        // the cursor's segment and its edges, which stretch like liquid as it moves; `snap`: the next
+        // change is a jump (onto the segment it's walked in at, or back onto the selection out of sight)
+        property bool snap: false
+        property Item target: segmentItems.count, segmentItems.itemAt(bar.cursor)
         property real edgeL: target ? inset + target.x : inset
         property real edgeR: target ? inset + target.x + target.width : inset
-        Behavior on edgeL { NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
-        Behavior on edgeR { NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
-        // the selection, while the cursor is elsewhere
+        Behavior on edgeL { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
+        Behavior on edgeR { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
+        // the selection
         Rectangle {
+            id: chosen
             readonly property Item at: segmentItems.count, segmentItems.itemAt(bar.currentIndex)
-            visible: bar.showFocus && bar.cursor !== bar.currentIndex && !!at
-            x: at ? glass.inset + at.x : 0; width: at ? at.width : 0
+            property real edgeL: at ? glass.inset + at.x : glass.inset
+            property real edgeR: at ? glass.inset + at.x + at.width : glass.inset
+            Behavior on edgeL { NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
+            Behavior on edgeR { NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
+            x: edgeL; width: edgeR - edgeL
             y: glass.inset; height: glass.height - 2 * glass.inset; radius: height / 2
             color: "#2effffff"
         }
+        // the cursor
         Rectangle {
-            x: glass.edgeL; width: glass.edgeR - glass.edgeL
+            id: pill
+            property bool fromRight: false       // the side it was walked in from, or is walked out by
+            property real grown: 1               // how much of its segment it covers, measured from that side
+            NumberAnimation { id: grow; target: pill; property: "grown"; easing.type: Theme.ease }
+            readonly property real span: glass.edgeR - glass.edgeL
+            x: fromRight ? glass.edgeR - span * grown : glass.edgeL
+            width: span * grown
             y: glass.inset; height: glass.height - 2 * glass.inset; radius: height / 2
-            color: bar.showFocus ? Theme.focusFill : "#2effffff"
-            Behavior on color { ColorAnimation { duration: 200 } }
+            color: Theme.focusFill
+            opacity: bar.showFocus ? 1 : 0      // holds: the cursor pill: nothing in it
+            Behavior on opacity { NumberAnimation { duration: 200 } }
         }
         Row {
             id: segments

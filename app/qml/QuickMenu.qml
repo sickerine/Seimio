@@ -10,7 +10,7 @@ FocusScope {
     property var actions: [{ label: "Play", icon: "play" }, { label: "Add to library", icon: "plus" }, { label: "Mark watched", icon: "check" }]
     signal triggered(int actionIndex)
     width: 440; height: list.implicitHeight + 32
-    opacity: open ? 1 : 0
+    opacity: open ? 1 : 0      // holds: its actions don't change while it closes
     scale: open ? 1 : 0.86
     transformOrigin: Item.Left
     visible: opacity > 0.01

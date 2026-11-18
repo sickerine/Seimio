@@ -6,6 +6,7 @@
 // `startFraction` of the way through, and plays. Every event is also emitted raw (`event`), and the
 // latest of each kind is kept in `seen`, for the lab.
 #include <QtQml>
+#include "playback.h"
 #include <QElapsedTimer>
 #include <QWindow>
 #include <QRegion>
@@ -86,6 +87,7 @@ public:
     // queued with the other calls, so an unload or seek for the last stream can't land after it
     Q_INVOKABLE void load(const QString &uri, const QString &payload) {
         ensure();
+        leave();
         m_loaded = m_playing = m_paused = m_buffering = m_seeking = m_seekLanded = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
         m_tracks = QJsonArray(); m_seen.clear(); m_audioTracks.clear(); m_preferredAudio = -1;
         emit stateChanged(); emit positionChanged();
@@ -103,7 +105,7 @@ public:
     }
     Q_INVOKABLE void selectAudio(int index) { command([index](Client *c) { std::string a("audio"); c->selectTrack(a, index); }); m_audioTrack = index; emit stateChanged(); }
     Q_INVOKABLE void mute(bool on) { command([on](Client *c) { c->setAudioMute(on); }); }
-    Q_INVOKABLE void unload() { m_playing = m_loaded = m_seeking = m_seekLanded = false; emit stateChanged(); command([](Client *c) { c->unload(); }); }
+    Q_INVOKABLE void unload() { leave(); m_playing = m_loaded = m_seeking = m_seekLanded = false; m_failure.clear(); emit stateChanged(); command([](Client *c) { c->unload(); }); }
     // "slot:count" for every slot that has fired, to find which one carries raw events.
     Q_INVOKABLE QString slotCounts() const {
         QStringList out;
@@ -116,6 +118,10 @@ public:
         if (e.isEmpty()) return;
         const QString kind = e.begin().key();
         const QJsonObject v = e.begin().value().toObject();
+        // LG's player answers late: an event of a load that has since been unloaded or replaced (each names
+        // its load) must not count against the one playing now
+        const QString id = v.value("mediaId").toString();
+        if (!id.isEmpty()) { if (m_left.contains(id)) return; m_mediaId = id; }
         if (kind == "currentTime") {
             const double t = v.value("currentTime").toDouble();
             // until LG says the seek is done (or 10 s pass), a time far from the target is the old one
@@ -132,7 +138,8 @@ public:
             m_duration = program.value("duration").toDouble();
             m_tracks = program.value("audioTrackInfo").toArray();
             m_audioTracks.clear();
-            for (const QJsonValue &t : m_tracks) m_audioTracks << QVariantMap { { "lang", t.toObject().value("language").toString() }, { "codec", t.toObject().value("codec").toString() } };
+            for (const QJsonValue &t : m_tracks) m_audioTracks << QVariantMap { { "lang", t.toObject().value("language").toString() }, { "codec", t.toObject().value("codec").toString() },
+                                                                                 { "channels", t.toObject().value("channels").toInt() } };
             emit audioTracksChanged();
         } else if (kind == "loadCompleted") {
             m_loaded = true;
@@ -197,12 +204,15 @@ private:
     }
     // the first audio track in a preferred language with a codec this TV decodes, else the first such
     // track, else 0 (LG names codecs as GStreamer does: ac3, eac3, aac, mp3, lpcm)
+    void leave() { if (!m_mediaId.isEmpty()) m_left.insert(m_mediaId); m_mediaId.clear(); }
+    QString m_mediaId;                 // the load the events are about
+    QSet<QString> m_left;              // loads that are over
     int bestAudio() const {
-        auto plays = [](const QString &c) { return c == "ac3" || c == "eac3" || c == "aac" || c == "mp3" || c.contains("pcm"); };
+        auto plays = [this](int i) { return playback::audioPlays(m_tracks[i].toObject().value("codec").toString(), m_tracks[i].toObject().value("channels").toInt()); };
         for (const QString &lang : m_languages)
             for (int i = 0; i < m_tracks.size(); i++)
-                if (plays(m_tracks[i].toObject().value("codec").toString()) && m_tracks[i].toObject().value("language").toString().startsWith(lang)) return i;
-        for (int i = 0; i < m_tracks.size(); i++) if (plays(m_tracks[i].toObject().value("codec").toString())) return i;
+                if (plays(i) && m_tracks[i].toObject().value("language").toString().startsWith(lang)) return i;
+        for (int i = 0; i < m_tracks.size(); i++) if (plays(i)) return i;
         return 0;
     }
     bool m_loaded = false, m_playing = false, m_paused = false, m_buffering = false;

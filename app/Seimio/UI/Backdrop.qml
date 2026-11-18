@@ -10,8 +10,8 @@
 // captures the backdrop (frost) knows when its copy would be stale.
 //
 // Both images are drawn by one opaque shader that crops, zooms, pans and crossfades them, so the
-// backdrop costs one full-screen pass with no blending, even mid-crossfade. `pan` shifts the picture
-// left by that many pixels (parallax).
+// backdrop costs one full-screen pass with no blending, even mid-crossfade; at rest only the shown one
+// is loaded. `pan` shifts the picture left by that many pixels (parallax).
 import QtQuick 2.12
 
 Item {
@@ -24,6 +24,10 @@ Item {
     property string incoming: ""
     readonly property bool busy: target !== shown
     readonly property bool fading: fade.running
+    // changing faster than its drift: a crossfade on its way, or the pan moving (a frozen blur of it follows)
+    readonly property bool settling: busy || panned.running
+    onPanChanged: panned.restart()
+    Timer { id: panned; interval: 120 }
     signal crossfadeStarted()
 
     property int front: 0                     // which image is on screen; the other one loads and fades in
@@ -52,6 +56,9 @@ Item {
             root.fadeIn = 0;
             root.shown = root.incoming;
             root.incoming = "";
+            // the picture that faded out is let go: the shader samples both, and a second full-screen
+            // texture nobody sees cost 2 to 3.5 ms of every frame on the TV
+            root.img(1 - root.front).url = "";
             root.apply();
         }
     }

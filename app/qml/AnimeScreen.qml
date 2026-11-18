@@ -1,6 +1,8 @@
-// The Anime tab: the season as AniChart charts it. Under the focused show's info (App's HeroInfo) and
-// its next episode's countdown sit the controls: the view (the chart, or the week's schedule by day and
-// time), the format, the order, and a genre. Below them the shows: a grid of covers, each counting down
+// The Anime tab: a season as AniChart charts it. Under the focused show's info (App's HeroInfo) and
+// its next episode's countdown sit the controls: the season (its name is the control: it drops the list
+// of seasons), the view (the chart, or the week's schedule by day and time), the format, the order, and
+// a genre. A season picked is fetched live and shown once it is in whole: until then its name is in
+// the title and the season on screen stays, dimmed and out of reach. Below them the shows: a grid of covers, each counting down
 // to its next episode, or a row per day with air times. Moving into the rows lifts the controls into the
 // tab bar's place, as the calendar's months do, and the info steps aside.
 //
@@ -9,6 +11,7 @@
 // rows as the list moves, as CardStrip does with cards, so a long chart never builds more than a screen.
 import QtQuick 2.12
 import Seimio.UI 1.0
+import "Episodes.js" as Episodes
 
 FocusScope {
     id: anime
@@ -27,7 +30,11 @@ FocusScope {
     property string format: "all"
     property string sort: "popular"
     property string genre: ""
-    property bool genreMenu: false
+    property string menu: ""                 // the list that is open: "season", "genre" or none
+    // a season was picked and isn't in yet
+    readonly property bool seasonLoading: !!catalog && catalog.seasonAsked !== catalog.seasonName
+    // a season with nothing left to air has no week to lay out: the schedule is passed over
+    property bool airs: true
 
     readonly property var views: [["Chart", "chart"], ["Schedule", "schedule"]]
     readonly property var formats: [["All", "all"], ["TV", "tv"], ["Movies", "movie"], ["ONA & OVA", "other"]]
@@ -51,8 +58,9 @@ FocusScope {
     signal activated(var item)
     signal exitTop()
 
-    // asked only while the tab is up (a hidden screen builds nothing: its covers decoding at launch
-    // slowed Home)
+    // asked while the tab is up, or once ahead while Home is idle (`warm`): building on the way in was
+    // 18 ms of the key press, then the cards' bindings and decodes over the next frames. Never at launch:
+    // its covers decoding then slowed Home.
     // the rows for the current view and filters, from Catalog
     function build() {
         var out = [];
@@ -67,6 +75,7 @@ FocusScope {
         }
         return out;
     }
+    function warm() { if (!shown && !rows.length && catalog && catalog.seasonReady) { pending = build(); pendingView = view; apply() } }
     function refresh() {
         if (!catalog || !catalog.seasonReady || !shown) return;
         var out = build();
@@ -92,8 +101,19 @@ FocusScope {
     property var rowColumns: ({})
     function restingColumn(rowIdx) { return rowsView === "schedule" ? (rowColumns[rowIdx] || 0) : column }
     function rememberColumn(rowIdx, i) { var c = Object.assign({}, rowColumns); c[rowIdx] = i; rowColumns = c }
-    Connections { target: anime.catalog; onSeasonLoaded: anime.refresh() }
-    onShownChanged: if (shown && !rows.length) refresh()
+    Connections {
+        target: anime.catalog
+        // another season: its own genres, from its top, and the chart if nothing in it airs any more
+        onSeasonLoaded: {
+            if (anime.genre && anime.catalog.seasonGenres.indexOf(anime.genre) < 0) anime.genre = "";
+            anime.airs = anime.catalog.seasonChart("all", "", "popular", anime.now).some(function (m) { return m.nextAt > anime.now });
+            if (!anime.airs) viewBar.currentIndex = 0;
+            anime.row = -1;
+            anime.refresh();
+        }
+        onSeasonFailed: anime.say("Couldn't load " + name)
+    }
+    onShownChanged: { if (shown && !rows.length) refresh(); holdCovers() }
     // a choice (OK on a bar) asks again, once for changes made together
     onViewChanged: Qt.callLater(anime.refresh)
     onFormatChanged: Qt.callLater(anime.refresh)
@@ -112,7 +132,7 @@ FocusScope {
     }
     function rowKey(r) { return r.title + "|" + r.date + "|" + r.items.map(function (x) { return x.id + "/" + x.label + "/" + x.episode }).join(",") }
 
-    opacity: shown ? 1 : 0
+    opacity: shown ? 1 : 0      // holds: its rows stay until the next refresh
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 320 } }
 
@@ -145,7 +165,7 @@ FocusScope {
         readonly property bool airing: at > anime.now
         x: Theme.screenWidth - Theme.margin - width; y: 170
         width: 470; height: 230
-        opacity: anime.row <= 0 && itemAiring ? 1 : 0
+        opacity: anime.row <= 0 && itemAiring ? 1 : 0      // holds: `counted` latches the show
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
         // each new show rises in, as the info does
@@ -168,7 +188,7 @@ FocusScope {
             spacing: 6
             Text {
                 anchors.right: parent.right
-                text: countdown.m ? "Episode " + countdown.m.nextEpisode : ""
+                text: countdown.m ? Episodes.named(countdown.m.nextEpisode) : ""
                 color: Theme.inkDim; font.family: Theme.face; font.pixelSize: 28; font.weight: Font.Medium
             }
             Row {
@@ -226,16 +246,20 @@ FocusScope {
             id: bars
             focus: true
             spacing: 22
-            bars: anime.view === "schedule" ? [viewBar, formatBar, genreBar] : [viewBar, formatBar, sortBar, genreBar]
-            Text {
-                id: seasonLabel
-                anchors.verticalCenter: parent.verticalCenter
-                text: anime.catalog ? anime.catalog.seasonName : ""
-                rightPadding: 10
-                color: Theme.ink; font.family: Theme.face; font.pixelSize: 34; font.weight: Font.Bold
+            bars: [seasonBar].concat(anime.airs ? [viewBar] : [], [formatBar], anime.view === "schedule" ? [] : [sortBar], [genreBar])
+            // the season's name, larger than the other bars' labels: the page's title, and the way to another
+            SegmentedBar {
+                id: seasonBar; selectOnOk: true
+                source: anime.glassSource; preblurred: true
+                sx: controls.x + x; sy: controls.y + y
+                barHeight: 64; fontSize: 27; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
+                model: [{ label: anime.catalog ? anime.catalog.seasonAsked : "", trailing: "chevrons" }]
+                onTriggered: anime.openMenu("season")
             }
             SegmentedBar {
                 id: viewBar; selectOnOk: true
+                opacity: anime.airs ? 1 : 0.3      // holds: only dims; its labels don't change
+                Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
@@ -257,13 +281,13 @@ FocusScope {
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                 model: anime.sorts.map(function (v) { return v[0] })
                 // the schedule is in air-time order: the order has no say there
-                opacity: anime.view === "schedule" ? 0.3 : 1
+                opacity: anime.view === "schedule" ? 0.3 : 1      // holds: only dims; its labels don't change
                 Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 onCurrentIndexChanged: anime.sort = anime.sorts[currentIndex][1]
             }
             // what's left of the width, so the genre control ends on the right margin whatever its name
             Item {
-                width: Math.max(0, anime.contentWidth - seasonLabel.width - viewBar.width - formatBar.width - sortBar.width - genreBar.width - 5 * bars.spacing)
+                width: Math.max(0, anime.contentWidth - seasonBar.width - viewBar.width - formatBar.width - sortBar.width - genreBar.width - 5 * bars.spacing)
                 height: 1
             }
             SegmentedBar {
@@ -272,18 +296,17 @@ FocusScope {
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                 model: [{ label: anime.genre || "All genres", trailing: "chevrons" }]   // it opens the genre list
-                onTriggered: anime.genreMenu = true
+                onTriggered: anime.openMenu("genre")
             }
         }
         Keys.onUpPressed: anime.exitTop()
-        Keys.onDownPressed: if (anime.rows.length) anime.row = 0
+        Keys.onDownPressed: if (anime.rows.length && !anime.seasonLoading) anime.row = 0
     }
 
     // ---- covers kept decoded -------------------------------------------------------------------------------
-    // Every cover of the rows on screen, held by a hidden image decoded as the cards decode it (MediaCard's
-    // sourceSize and crop), so they share one cached decode. Qt keeps only ~2 MB of images nothing shows, so a row
-    // scrolled away and back decoded its covers again: cards came back empty and faded in. A fixed pool,
-    // made once; ~25 MB for the chart's covers, ~40 MB for the schedule's stills.
+    // Every cover of the view is held decoded ahead (ArtCache.keep), as the cards decode it, so a row
+    // scrolled to for the first time has its covers too: ~40 MB for the chart's covers, ~55 MB for the
+    // schedule's stills, of ArtCache's budget.
     readonly property var covers: {
         var out = [];
         for (var i = 0; i < rows.length; i++) for (var j = 0; j < rows[i].items.length; j++) out.push(rows[i].items[j].art || "");
@@ -293,16 +316,13 @@ FocusScope {
     // The page spans the margins, as the countdown does: the chart's 7 covers and their gaps fill the width
     // exactly (204 px covers, 42 px gaps), and the genre control's right edge sits on the right margin.
     readonly property int contentWidth: Theme.screenWidth - 2 * Theme.margin
-    readonly property size chartCard: Qt.size(204, 306)
+    readonly property size chartCard: Theme.posterCard
     readonly property int chartGap: (contentWidth - perRow * chartCard.width) / (perRow - 1)
-    readonly property size scheduleCard: Qt.size(384, 216)
-    readonly property size coverSize: { var c = rowsView === "schedule" ? scheduleCard : chartCard; return Qt.size(c.width * Theme.cardDecode, c.height * Theme.cardDecode) }
-    Repeater {
-        model: anime.shown || anime.covers.length ? 128 : 0
-        // the cache keys an image by its size and its fill mode too: without the cards' crop the pool held
-        // other entries and shared nothing (a card after it still loaded; measured on the Mac)
-        Image { visible: false; asynchronous: true; fillMode: Image.PreserveAspectCrop; source: index < anime.covers.length ? anime.covers[index] : ""; sourceSize: anime.coverSize }
-    }
+    readonly property size scheduleCard: Theme.stillCard
+    readonly property size coverSize: { var c = rowsView === "schedule" ? scheduleCard : chartCard; return Theme.cardDecodeSize(c.width, c.height) }
+    // once the tab has been up: warmed ahead, only the rows on screen decode theirs
+    function holdCovers() { if (shown) ArtCache.keep(covers, coverSize.width, coverSize.height) }
+    onCoversChanged: holdCovers()
 
     // ---- the rows --------------------------------------------------------------------------------------------
     SequentialAnimation {
@@ -319,6 +339,11 @@ FocusScope {
         property real rise: 0
         transform: Translate { y: list.rise }
         width: anime.width; height: anime.height
+        // the season on screen while another is fetched: dimmed, and out of reach (see the controls' Down)
+        property real dim: anime.seasonLoading ? 0.3 : 1
+        Behavior on dim { NumberAnimation { duration: Theme.base } }
+        layer.enabled: dim < 1                  // faded as one piece, only while it is
+        layer.effect: ShaderEffect { property real dim: list.dim; fragmentShader: "varying highp vec2 qt_TexCoord0; uniform sampler2D source; uniform lowp float dim; uniform lowp float qt_Opacity; void main() { gl_FragColor = texture2D(source, qt_TexCoord0) * dim * qt_Opacity; }" }
         readonly property int stride: 430
         readonly property int rowTop: 650
         // once the controls have gone up, the focused row sits just under them with two more below it,
@@ -361,7 +386,7 @@ FocusScope {
                 function place() { strip.jumpTo(Math.max(0, Math.min(anime.restingColumn(idx), (strip.model || []).length - 1))) }
                 width: anime.width; height: list.stride
                 focus: anime.row === idx
-                opacity: anime.row > 0 && idx < anime.row ? 0 : 1
+                opacity: anime.row > 0 && idx < anime.row ? 0 : 1      // holds: the row's cards stay
                 Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 Row {
                     x: Theme.margin
@@ -380,6 +405,7 @@ FocusScope {
                     nextLabels: false
                     cardWidth: slot.schedule ? anime.scheduleCard.width : anime.chartCard.width
                     cardHeight: slot.schedule ? anime.scheduleCard.height : anime.chartCard.height
+                    narrowest: anime.chartCard.width
                     spacing: slot.schedule ? 36 : anime.chartGap
                     showFocus: activeFocus
                     onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) anime.rememberColumn(slot.idx, currentIndex); else anime.column = currentIndex }
@@ -391,47 +417,51 @@ FocusScope {
         }
     }
 
-    // the genres, by their bar and over the rows
-    Rectangle {
-        id: genrePanel
+    // The lists that drop from the controls, by their bar and over the rows: above it while it sits under
+    // the info (the rows fill the space under it), below once it's at the top. One is open at a time
+    // (`menu`), starting on what's chosen; closing gives the remote back to the bar it came from.
+    function openMenu(which) {
+        if (which === "season") seasons.currentIndex = Math.max(0, catalog.seasons.map(function (s) { return s.label }).indexOf(catalog.seasonAsked));
+        else genres.currentIndex = genre ? catalog.seasonGenres.indexOf(genre) + 1 : 0;
+        menu = which;
+    }
+    onMenuChanged: if (!menu && row < 0) bars.forceActiveFocus()
+    DropMenu {
+        id: seasons
         z: 3
-        readonly property bool open: anime.genreMenu
-        // above the bar while it sits under the info (the rows fill the space under it), below once it's
-        // at the top
+        open: anime.menu === "season"
+        up: !anime.scrolled
+        x: controls.x + seasonBar.x
+        y: up ? controls.y - height - 16 : controls.y + controls.height + 16
+        maxRows: 5                                              // clear of the tab bar above
+        model: (anime.catalog ? anime.catalog.seasons : []).map(function (s) { return { label: s.label, detail: s.detail, checked: s.label === anime.catalog.seasonAsked } })
+        onTriggered: { var s = anime.catalog.seasons[rowIndex]; anime.menu = ""; anime.catalog.showSeason(s.season, s.year) }
+    }
+    DropMenu {
+        id: genres
+        z: 3
+        open: anime.menu === "genre"
+        up: !anime.scrolled; fromRight: true
         x: controls.x + genreBar.x + genreBar.width - width
-        y: anime.scrolled ? controls.y + controls.height + 16 : controls.y - height - 16
-        width: 420; height: genres.implicitHeight + 32; radius: 32
-        color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
-        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: anime.scrolled ? Item.TopRight : Item.BottomRight
-        visible: opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: 200 } }
-        Behavior on scale { NumberAnimation { duration: 340; easing.type: Theme.spring; easing.overshoot: 1.3 } }
-        MenuList {
-            id: genres
-            x: 16; y: 16; width: parent.width - 32
-            maxRows: 5                                          // clear of the tab bar above
-            focus: genrePanel.open
-            shown: genrePanel.open
-            model: [{ label: "All genres", checked: anime.genre === "" }].concat((anime.catalog ? anime.catalog.seasonGenres : []).map(function (g) { return { label: g, checked: anime.genre === g } }))
-            onTriggered: { anime.genre = rowIndex === 0 ? "" : anime.catalog.seasonGenres[rowIndex - 1]; anime.genreMenu = false }
-        }
-        onOpenChanged: if (open) { genres.currentIndex = anime.genre ? anime.catalog.seasonGenres.indexOf(anime.genre) + 1 : 0; genres.follow(true); genres.forceActiveFocus() } else if (anime.row < 0) genreBar.forceActiveFocus()
+        y: up ? controls.y - height - 16 : controls.y + controls.height + 16
+        maxRows: 5
+        model: [{ label: "All genres", checked: anime.genre === "" }].concat((anime.catalog ? anime.catalog.seasonGenres : []).map(function (g) { return { label: g, checked: anime.genre === g } }))
+        onTriggered: { anime.genre = rowIndex === 0 ? "" : anime.catalog.seasonGenres[rowIndex - 1]; anime.menu = "" }
     }
 
-    Latch { id: noticeShown; value: anime.notice; live: anime.notice !== "" }
-    Chip {
+    // a season on its way, or a moment's word
+    Fade {
         z: 4
         anchors.horizontalCenter: parent.horizontalCenter; y: Theme.screenHeight - 120
-        kind: "solid"; size: 24; text: noticeShown.current || ""
-        opacity: anime.notice ? 1 : 0; visible: opacity > 0
-        Behavior on opacity { NumberAnimation { duration: Theme.base } }
+        value: anime.seasonLoading ? "Loading " + anime.catalog.seasonAsked : anime.notice
+        Chip { kind: "solid"; size: 24; text: parent.current || "" }
     }
 
     Keys.onUpPressed: if (row > 0) row--; else if (row === 0) row = -1
     Keys.onDownPressed: if (row < rows.length - 1) row++
     Keys.onPressed: {
         if (!Remote.isBack(event.key)) return;
-        if (genreMenu) { genreMenu = false; event.accepted = true }
+        if (menu) { menu = ""; event.accepted = true }
         else if (row >= 0) { row = -1; event.accepted = true }
     }
 }

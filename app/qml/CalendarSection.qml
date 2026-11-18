@@ -12,10 +12,11 @@
 // time. Home shows the focused release's title, episode and synopsis over its art (`dayItem`, which
 // Home hands to the hero info and the backdrop). The timeline goes on into the neighbouring days: a tile
 // for the previous and the next day with releases sits at each end, and focusing one previews that day.
-// OK on it, or Left/Right past it, turns to that day: the date rolls, a light runs along the timeline
-// and the cards slide over. Back zooms the month back out to the day.
+// OK on it, or Left/Right past it, turns to that day (PagedStrip): the date rolls, a light runs along the
+// timeline and the cards slide over. Back zooms the month back out to the day.
 import QtQuick 2.12
 import Seimio.UI 1.0
+import "Episodes.js" as Episodes
 
 FocusScope {
     id: section
@@ -45,10 +46,13 @@ FocusScope {
     property bool dayOpen: false
     property var openDay: []
     property var dayCards: []
+    property var dayRow: ({})                // the row's page (PagedStrip), set whole by buildDay()
     property var dayItems: []
-    readonly property var dayCard: dayCards[dayStrip.currentIndex] || null
-    readonly property var dayItem: dayOpen ? dayItems[dayStrip.currentIndex] || null : null
-    readonly property int dayColumn: dayStrip.currentIndex
+    // the focused card in `dayCards` (the row is a PagedStrip: the day's releases between the two tiles)
+    readonly property int dayAt: dayStrip.onTile === "prev" ? 0 : dayStrip.onTile === "next" ? dayCards.length - 1 : dayStrip.currentIndex + (dayStrip.prev ? 1 : 0)
+    readonly property var dayCard: dayCards[dayAt] || null
+    readonly property var dayItem: dayOpen ? dayItems[dayAt] || null : null
+    readonly property int dayColumn: dayAt
     // the release Home follows: the focused one in an open day (a day tile's first release), else the
     // focused day's first
     readonly property var focusEntry: dayOpen ? (dayCard ? dayCard.entry : null) : dayEntries[0] || null
@@ -74,18 +78,28 @@ FocusScope {
         }
         return "";
     }
-    function buildDay(k) {
+    function buildDay(k, land) {
         var list = releasesOf(k), prev = neighbour(k, -1), next = neighbour(k, 1), cards = [];
         if (prev) cards.push({ kind: "prev", key: prev, entry: releasesOf(prev)[0] });
         list.forEach(function (e) { cards.push({ kind: "release", entry: e }) });
         if (next) cards.push({ kind: "next", key: next, entry: releasesOf(next)[0] });
         openDay = list; dayCards = cards;
+        // releases hang from their air time; a neighbouring day's tile shows that day's art, dimmed, with
+        // its date and how many releases it has
+        function tile(c) {
+            var d = grid.parse(c.key), n = releasesOf(c.key).length;
+            return { key: c.key, art: c.entry.art, label: d.toLocaleDateString(Qt.locale(), "ddd d"),
+                     upcoming: d.toLocaleDateString(Qt.locale(), "dddd"), episode: n + (n === 1 ? " release" : " releases") };
+        }
+        dayRow = { cards: list.map(function (e) { return { art: e.art, label: e.time || "Any time", episode: Episodes.chip(e.episode), watched: e.watched } }),
+                   prev: prev ? tile(cards[0]) : null, next: next ? tile(cards[cards.length - 1]) : null };
         dayItems = cards.map(function (c) {
             var e = c.entry;
             if (c.kind === "release")
-                // `video`: the release's episode, where the show page opens
-                return { id: e.item.id, video: e.video, name: e.name, title: e.name, logo: e.item.logo || "", backdrop: e.item.backdrop, art: e.art,
-                         description: e.overview || e.item.description || "", episode: "Episode " + e.episode,
+                // `video`: the release's episode, where the show page opens; an anime's has no id until its
+                // franchise is in, so it goes by its `number`
+                return { id: e.item.id, video: e.video, number: e.episode, name: e.name, title: e.name, logo: e.item.logo || "", backdrop: e.item.backdrop, art: e.art,
+                         description: e.overview || e.item.description || "", episode: Episodes.named(e.episode),
                          chips: [e.time, stateOf(e)].filter(function (s) { return s }), rating: "", progress: -1 };
             // a neighbouring day: its date as the title, and the first few of its shows
             var day = releasesOf(c.key), names = day.slice(0, 3).map(function (r) { return r.name });
@@ -95,46 +109,25 @@ FocusScope {
                      chips: [day.length + (day.length === 1 ? " release" : " releases"), c.kind === "next" ? "Next day" : "Previous day"],
                      rating: "", progress: -1 };
         });
+        dayStrip.show(dayRow, land);                      // last: what the focused card stands for is in place
     }
-    function firstRelease() { return dayCards.length && dayCards[0].kind === "prev" ? 1 : 0 }
-    function openTheDay() { buildDay(grid.selected); dayStrip.jumpTo(firstRelease()); dayOpen = true; zone = 2 }
+    function openTheDay() { buildDay(grid.selected, 0); dayOpen = true; zone = 2 }
     function closeTheDay() { dayOpen = false; zone = 1 }
 
-    // turning to a neighbouring day: the date rolls, a light runs along the timeline the way you go,
-    // and the cards slide out and the new day's slide in
+    // turning to a neighbouring day (the row, a PagedStrip, slides its cards over): the date rolls and a
+    // light runs along the timeline the way you go
     property int turnDir: 1
-    property string turnTo: ""
-    property real cardsShift: 0
-    property real cardsFade: 1
     property real dateShift: 0
     property real dateFade: 1
-    function goDay(dir) {
-        var k = dayCards.length ? (dir > 0 ? dayCards[dayCards.length - 1] : dayCards[0]) : null;
-        if (!k || k.kind !== (dir > 0 ? "next" : "prev") || dayTurn.running) return;
-        turnDir = dir; turnTo = k.key;
-        rail.sweep(dir);
-        dayTurn.restart();
-    }
+    function goDay(dir) { dayStrip.go(dir) }
     SequentialAnimation {
-        id: dayTurn
+        id: dateRoll
         ParallelAnimation {
-            NumberAnimation { target: section; property: "cardsFade"; to: 0; duration: 160; easing.type: Easing.InQuad }
-            NumberAnimation { target: section; property: "cardsShift"; to: -80 * section.turnDir; duration: 160; easing.type: Easing.InQuad }
             NumberAnimation { target: section; property: "dateFade"; to: 0; duration: 180; easing.type: Easing.InQuad }
             NumberAnimation { target: section; property: "dateShift"; to: -56 * section.turnDir; duration: 180; easing.type: Easing.InQuad }
         }
-        ScriptAction {
-            script: {
-                grid.select(section.turnTo);
-                section.buildDay(section.turnTo);
-                dayStrip.jumpTo(section.turnDir > 0 ? section.firstRelease() : section.firstRelease() + section.openDay.length - 1);
-                section.cardsShift = 80 * section.turnDir;
-                section.dateShift = 56 * section.turnDir;
-            }
-        }
+        ScriptAction { script: section.dateShift = 56 * section.turnDir }
         ParallelAnimation {
-            NumberAnimation { target: section; property: "cardsFade"; to: 1; duration: 320; easing.type: Theme.ease }
-            NumberAnimation { target: section; property: "cardsShift"; to: 0; duration: 460; easing.type: Theme.ease }
             NumberAnimation { target: section; property: "dateFade"; to: 1; duration: 320; easing.type: Theme.ease }
             NumberAnimation { target: section; property: "dateShift"; to: 0; duration: 520; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
         }
@@ -311,27 +304,15 @@ FocusScope {
                         gl_FragColor = vec4(a) * qt_Opacity;
                     }"
             }
-            CardStrip {
+            PagedStrip {
                 id: dayStrip
                 y: 66; width: section.width
                 cardWidth: 320; cardHeight: 180; spacing: 32
                 focus: section.zone === 2
                 nextLabels: false; showTitles: false
-                opacity: section.cardsFade
-                transform: Translate { x: section.cardsShift }
-                // releases hang from their air time; the neighbouring days' tiles show that day's art,
-                // dimmed, with its date and how many releases it has
-                model: section.dayCards.map(function (c) {
-                    if (c.kind === "release")
-                        return { art: c.entry.art, label: c.entry.time || "Any time", episode: "E" + c.entry.episode, watched: c.entry.watched };
-                    var d = grid.parse(c.key), n = section.releasesOf(c.key).length;
-                    return { art: c.entry.art, label: d.toLocaleDateString(Qt.locale(), "ddd d"),
-                             upcoming: d.toLocaleDateString(Qt.locale(), "dddd"), episode: n + (n === 1 ? " release" : " releases") };
-                })
-                onActivated: {
-                    var c = section.dayCards[cardIndex];
-                    if (c.kind === "release") section.activated(c.entry); else section.goDay(c.kind === "next" ? 1 : -1);
-                }
+                onActivated: section.activated(section.openDay[cardIndex])
+                onTurning: { section.turnDir = dir; rail.sweep(dir); dateRoll.restart() }
+                onTurn: { grid.select(key); section.buildDay(key, land) }
             }
         }
     }
@@ -340,9 +321,9 @@ FocusScope {
     Keys.onUpPressed: if (zone === 1) zone = 0; else if (zone !== 2) event.accepted = false
     Keys.onDownPressed: if (zone === 0) zone = 1; else if (zone !== 2) event.accepted = false
     Keys.onPressed: if (zone === 2 && Remote.isBack(event.key)) { event.accepted = true; closeTheDay() }
-    // past the ends of an open day's timeline: the neighbouring day
-    Keys.onLeftPressed: if (zone === 2) goDay(-1); else event.accepted = false
-    Keys.onRightPressed: if (zone === 2) goDay(1); else event.accepted = false
+    // an open day's row turns past its ends itself (PagedStrip); there's nothing beyond
+    Keys.onLeftPressed: if (zone !== 2) event.accepted = false
+    Keys.onRightPressed: if (zone !== 2) event.accepted = false
     OkPress {
         id: ok
         onTapped: if (section.zone === 1 && section.dayEntries.length) {

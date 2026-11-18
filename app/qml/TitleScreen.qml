@@ -15,7 +15,7 @@ FocusScope {
     width: Theme.screenWidth; height: Theme.screenHeight
 
     function open(title) { item = title; actions.currentIndex = 0 }
-    opacity: active ? 1 : 0
+    opacity: active ? 1 : 0      // holds: `item` stays until the next open()
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: page.active ? 200 : 260 } }
 

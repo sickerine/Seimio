@@ -2,10 +2,19 @@
 // SkipTimes: where an episode's intro and end credits are, for Skip Intro and Skip Credits. A port of
 // stremio-webos service/skip-timestamps.js: the file's chapters (named OP, ED, Intro, Credits...), the
 // IntroDB and TheIntroDB (by IMDb episode), and AniSkip (by MyAnimeList id; Kitsu ids map to it through
-// Kitsu's own mappings). Each candidate must be plausible for the episode's length (an intro 5 s to
-// 200 s long, credits in the second half), sources must agree on a boundary within 5 s, and when they
-// disagree only the stretch they all cover is skipped. resolve() ends in `resolved({ intro, outro })`,
-// each { from, to } in ms or null; results are kept for the session.
+// Kitsu's own mappings). An anime played by its Kitsu id is asked of all three when its IMDb episode is
+// known (`imdbEpisode`): AniSkip is filled in by its viewers and misses episodes the other two have
+// (Reborn as a Space Mercenary 1 was in both and not in AniSkip). Each candidate must be plausible for the episode's length (an intro 5 s to
+// 200 s long, credits in the second half).
+// In a file with chapters, the chapters say whether a source's segment is this cut's: one named for it
+// (OP, Credits) is it; else the chapter of a plausible length that a segment covers most of, with the
+// chapter's own bounds (chapterFor); else a segment that opens or closes a chapter, with that edge moved
+// onto the chapter's (edgeFor). A segment the chapters don't bear out gives nothing: the sources time
+// other cuts of an episode often enough that their numbers alone put the button in the wrong place.
+// Without chapters, sources must agree on a boundary within 5 s, and when two disagree only the stretch
+// both cover is skipped; one source's own entries that disagree are no evidence, and give nothing.
+// resolve() ends in `resolved({ intro, outro })`, each { from, to } in ms or null; results are kept for
+// the session.
 #include <QtQml>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -15,16 +24,18 @@
 class SkipTimes : public QObject {
     Q_OBJECT
 public:
-    // `videoId` is "tt…:season:episode" or "kitsu:N:episode"; `chapters` [{ start, end, title }] in ms
-    Q_INVOKABLE void resolve(const QString &videoId, double durationMs, const QVariantList &chapters) {
+    // `videoId` is "tt…:season:episode" or "kitsu:N:episode"; `chapters` [{ start, end, title }] in ms;
+    // `imdbEpisode` the same episode as "tt…:season:episode" when `videoId` is a Kitsu one, or ""
+    Q_INVOKABLE void resolve(const QString &videoId, double durationMs, const QVariantList &chapters, const QString &imdbEpisode = QString()) {
         const int ticket = ++m_ticket;
-        const QString key = videoId + "|" + QString::number(qRound(durationMs / 1000)) + "|" + QString::number(chapters.size());
+        const QString key = videoId + "|" + imdbEpisode + "|" + QString::number(qRound(durationMs / 1000)) + "|" + QString::number(chapters.size());
         if (m_cache.contains(key)) { emit resolved(m_cache.value(key)); return; }
         auto state = std::make_shared<State>();
         state->duration = durationMs; state->key = key; state->ticket = ticket;
         state->items = fromChapters(chapters, durationMs);
+        state->spans = spansOf(sorted(chapters), durationMs);
         static const QRegularExpression imdb("^(tt\\d+):(\\d+):(\\d+)$"), kitsu("^kitsu:(\\d+):(\\d+)$");
-        const auto mi = imdb.match(videoId), mk = kitsu.match(videoId);
+        const auto mk = kitsu.match(videoId), mi = imdb.match(mk.hasMatch() ? imdbEpisode : videoId);
         if (mi.hasMatch()) {
             QUrlQuery q; q.addQueryItem("imdb_id", mi.captured(1)); q.addQueryItem("season", mi.captured(2)); q.addQueryItem("episode", mi.captured(3));
             get(state, "https://api.introdb.app/segments?" + q.toString(), [](const QJsonObject &o, QVector<Item> &out) {
@@ -46,7 +57,8 @@ public:
                         out.append({ pair.second, from, to, "theintrodb", -1 });
                     }
             });
-        } else if (mk.hasMatch()) {
+        }
+        if (mk.hasMatch()) {
             const QString episode = mk.captured(2);
             state->pending++;
             fetch(QUrl("https://kitsu.io/api/edge/anime/" + mk.captured(1) + "/mappings?filter[externalSite]=myanimelist/anime"), ticket,
@@ -77,18 +89,47 @@ signals:
     void resolved(const QVariantMap &segments);
 private:
     struct Item { QString kind; double from, to; QString source; double episodeLength; };
-    struct State { QVector<Item> items; double duration = 0; int pending = 0; int ticket = 0; QString key; };
+    using Spans = QVector<QPair<double, double>>;              // chapters as { from, to }, in order
+    struct State { QVector<Item> items; Spans spans; double duration = 0; int pending = 0; int ticket = 0; QString key; };
+public:
+    // tests: what reconcile() makes of candidates [{ kind, from, to, source, episodeLength }] (ms) for a file
+    // of `durationMs` with `chapters` [{ start, end, title }]
+    Q_INVOKABLE QVariantMap reconciled(const QVariantList &candidates, double durationMs, const QVariantList &chapters) const {
+        QVector<Item> items = fromChapters(chapters, durationMs);
+        for (const QVariant &v : candidates) {
+            const QVariantMap m = v.toMap();
+            items.append({ m.value("kind").toString(), m.value("from").toDouble(), m.value("to").toDouble(), m.value("source").toString(), m.value("episodeLength", -1).toDouble() });
+        }
+        return reconcile(items, durationMs, spansOf(sorted(chapters), durationMs));
+    }
+private:
 
     static double time(const QJsonValue &sec, const QJsonValue &ms) {
         if (ms.isDouble()) return ms.toDouble();
         if (sec.isDouble()) return sec.toDouble() * 1000;
         return -1;
     }
+    static QVector<QVariantMap> sorted(const QVariantList &chapters) {
+        QVector<QVariantMap> c; for (const QVariant &v : chapters) c << v.toMap();
+        std::sort(c.begin(), c.end(), [](const QVariantMap &a, const QVariantMap &b) { return a.value("start").toDouble() < b.value("start").toDouble(); });
+        return c;
+    }
+    // a chapter ends where it says, or where the next one starts, or with the file
+    static Spans spansOf(const QVector<QVariantMap> &c, double duration) {
+        Spans out;
+        for (int i = 0; i < c.size(); i++) {
+            const double from = c[i].value("start").toDouble(), end = c[i].value("end").toDouble();
+            double to = end > 0 ? end : -1;
+            for (int j = i + 1; to < 0 && j < c.size(); j++) if (c[j].value("start").toDouble() > from) to = c[j].value("start").toDouble();
+            out << qMakePair(from, to < 0 ? duration : to);
+        }
+        return out;
+    }
     static QVector<Item> fromChapters(const QVariantList &chapters, double duration) {
         static const QRegularExpression intro("^(?:intro|ncop|op(?:ening)?)(?:\\s*[-_:]?\\s*\\d+)?(?:\\s+(?:theme|credits|song))?$"),
                                         outro("^(?:outro|credits|nced|ed|ending)(?:\\s*[-_:]?\\s*\\d+)?(?:\\s+(?:theme|credits|song))?$|^end credits$");
-        QVector<QVariantMap> c; for (const QVariant &v : chapters) c << v.toMap();
-        std::sort(c.begin(), c.end(), [](const QVariantMap &a, const QVariantMap &b) { return a.value("start").toDouble() < b.value("start").toDouble(); });
+        const QVector<QVariantMap> c = sorted(chapters);
+        const Spans spans = spansOf(c, duration);
         // a file with OP/ED chapters means the songs by them (as AniSkip's "op" and "ed" do): there,
         // "Intro" and "Outro" are the cold open and the epilogue, not something to skip
         static const QRegularExpression song("^(?:ncop|op(?:ening)?|nced|ed|ending)(?:\\s*[-_:]?\\s*\\d+)?(?:\\s+(?:theme|credits|song))?$");
@@ -99,11 +140,7 @@ private:
             const QString t = c[i].value("title").toString().trimmed().toLower();
             const QString kind = intro.match(t).hasMatch() ? "intro" : outro.match(t).hasMatch() ? "outro" : "";
             if (kind.isEmpty() || (songs && !song.match(t).hasMatch())) continue;
-            const double from = c[i].value("start").toDouble(), end = c[i].value("end").toDouble();
-            // a chapter ends where it says, or where the next one starts
-            double to = end > 0 ? end : -1;
-            for (int j = i + 1; to < 0 && j < c.size(); j++) if (c[j].value("start").toDouble() > from) to = c[j].value("start").toDouble();
-            out.append({ kind, from, to < 0 ? duration : to, "chapter", -1 });
+            out.append({ kind, spans[i].first, spans[i].second, "chapter", -1 });
         }
         return out;
     }
@@ -127,7 +164,7 @@ private:
     }
     void done(const std::shared_ptr<State> &state) {
         if (--state->pending > 0 || state->ticket != m_ticket) return;
-        const QVariantMap result = reconcile(state->items, state->duration);
+        const QVariantMap result = reconcile(state->items, state->duration, state->spans);
         m_cache.insert(state->key, result);
         emit resolved(result);
     }
@@ -155,15 +192,64 @@ private:
     }
     static QVariant shared(const QVector<Item> &items, double d) {
         if (items.size() < 2) return QVariant();
+        // two entries of one source that disagree aren't two witnesses: AniSkip's "op" and "mixed-op" for
+        // Dragon Ball Z 1 start two minutes apart, and what they share is neither
+        bool one = true; for (const Item &i : items) one = one && i.source == items[0].source;
+        if (one) return QVariant();
         double from = 0, to = d;
         for (const Item &i : items) { from = qMax(from, i.from); to = qMin(to, i.to < 0 ? d : i.to); }
         return to - from >= 5000 ? QVariant(QVariantMap { { "from", from }, { "to", to } }) : QVariant();
     }
-    static QVariantMap reconcile(const QVector<Item> &all, double d) {
+    // The chapter a source's segment is: the one of a plausible length for `kind` that a candidate covers
+    // four fifths of at least, the most covered (the earliest of equals), with the chapter's own bounds
+    static QVariant chapterFor(const QString &kind, const QVector<Item> &candidates, const Spans &spans, double d) {
+        double best = 0; QVariant out;
+        for (const auto &s : spans) {
+            if (!plausible({ kind, s.first, s.second, "chapter", -1 }, d)) continue;
+            for (const Item &c : candidates) {
+                const double covered = (qMin(s.second, c.to < 0 ? d : c.to) - qMax(s.first, c.from)) / (s.second - s.first);
+                if (covered >= 0.8 && covered > best) { best = covered; out = QVariantMap { { "from", s.first }, { "to", s.second } }; }
+            }
+        }
+        return out;
+    }
+    // A segment that isn't a chapter of its own but begins where one begins or ends where one ends (within
+    // 5 s; the file's own start and end are no evidence) and lies inside it: the source's, with that edge on
+    // the chapter's. Demon Slayer's Blu-rays keep the credits as the last 90 s of the chapter the episode's
+    // second half is, with the preview after it as the next.
+    static QVariant edgeFor(const QVector<Item> &candidates, const Spans &spans, double d) {
+        for (const Item &c : candidates) {
+            for (int i = 0; i < spans.size(); i++) {
+                const double a = spans[i].first, b = spans[i].second;
+                Item out = c; out.to = qMin(c.to < 0 ? d : c.to, b);
+                if (i > 0 && qAbs(c.from - a) <= 5000 && (c.to < 0 ? d : c.to) <= b + 5000) out.from = a;                     // opens it
+                else if (i + 1 < spans.size() && qAbs((c.to < 0 ? d : c.to) - b) <= 5000 && c.from >= a - 5000) out.to = b;    // closes it
+                else continue;
+                if (plausible(out, d)) return QVariantMap { { "from", out.from }, { "to", out.to } };
+            }
+        }
+        return QVariant();
+    }
+    static QVariantMap reconcile(const QVector<Item> &all, double d, const Spans &spans = Spans()) {
         if (d <= 0) return { { "intro", QVariant() }, { "outro", QVariant() } };
         QVector<Item> intros, outros;
         for (const Item &i : all) if (plausible(i, d)) (i.kind == "intro" ? intros : outros) << i;
         QVariantMap out;
+        if (!spans.isEmpty()) {
+            for (const QString &kind : { QString("intro"), QString("outro") }) {
+                QVector<Item> named, others;
+                // a segment timed on a longer cut may run past this file's end (credits to the end of a cut
+                // 16 s longer): it still says which chapter it is
+                for (Item i : all) {
+                    if (i.kind != kind) continue;
+                    if (i.to > d) i.to = d;
+                    if (plausible(i, d)) (i.source == "chapter" ? named : others) << i;
+                }
+                QVariant found = named.isEmpty() ? chapterFor(kind, others, spans, d) : QVariant(QVariantMap { { "from", named[0].from }, { "to", named[0].to } });
+                out[kind] = found.isValid() ? found : edgeFor(others, spans, d);
+            }
+            return out;
+        }
         const QVector<Item> ic = strongestCluster(intros, true);
         if (!ic.isEmpty()) {
             double from = d, to = 0; for (const Item &i : ic) { from = qMin(from, i.from); to = qMax(to, i.to); }

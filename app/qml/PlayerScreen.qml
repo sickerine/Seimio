@@ -10,6 +10,7 @@ import QtQuick 2.12
 import Seimio.UI 1.0
 import Seimio.Native 1.0
 import Seimio.Data 1.0
+import "Episodes.js" as Episodes
 
 FocusScope {
     id: page
@@ -39,12 +40,12 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
-    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments)
+    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) + " now " + (segmentNow ? segmentNow.kind : "-") + " next " + (upNextMode || "-") + ":" + Math.round(upNextElapsed * 100)
         + " binge " + (stream ? stream.bingeGroup : "") + " favs " + JSON.stringify(tracks.favorites("sub")) + " fav-menu " + favoriteMenu + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
         + " audio " + trackList.filter(function (t) { return t.type === "audio" }).map(function (t) { return t.id + ":" + t.lang + (t.playable ? "" : "x") }).join(",")
         + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight
-    opacity: active ? 1 : 0
+    opacity: active ? 1 : 0      // holds: the title and stream stay until the next prepare()
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 220 } }
 
@@ -107,17 +108,17 @@ FocusScope {
     function load() {
         if (!pendingUrl) return;
         if (unloadLater.running) { unloadLater.stop(); media.unload() }
-        loadedAt = Date.now(); startMs = -1;
+        loadedAt = Date.now(); startMs = -1; startWatch.restart();
         upNextMode = ""; creditsOffered = false; endOffered = false;
         if (handoff) { resetHandoffCount(); handoffArmed = true }
-        subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
+        subs.reset(); trackList = []; addonSubs = []; otherSubs = []; fileIsOther = false; pickedSub = false; judged = false; rejected = false; skipped = ""; choice = ({}); chapters = []; pendingChapters = []; skipTimes = ({});
         skipLookup.cancel(); askSkip.stop();
         if (/^(tt\d+|kitsu:\d+)/.test(videoId)) subs.fetchAddon(videoId.indexOf(":") > 0 ? "series" : "movie", videoId);
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
     }
-    function stop() { unloadLater.stop(); handoff = null; media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop() }
+    function stop() { unloadLater.stop(); startWatch.stop(); handoff = null; media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop() }
 
     NativePlayer {
         id: media
@@ -137,6 +138,8 @@ FocusScope {
     Tee {
         id: tee
         onTracksRead: {
+            // a video track the TV won't show (its profile, read from the file): no need to let the player fail on it
+            for (var i = 0; i < tracks.length; i++) if (tracks[i].type === 1 && tracks[i].trouble) { page.reject(tracks[i].trouble, true); return }
             page.fileIsOther = !matroska;
             if (!matroska) page.otherSubs = page.fileTracks(tracks);
             if (matroska) page.chooseTracks(page.fileTracks(tracks)); else if (media.audioTracks.length) page.chooseTracks(page.lgTracks());
@@ -144,17 +147,16 @@ FocusScope {
         // chapters arrive one by one; they're applied together, so the bar and the skip spans build once
         onChapter: { page.pendingChapters.push({ start: startMs, end: endMs, title: title }); chaptersIn.restart() }
     }
-    // what LG's player decodes: Dolby Digital (Plus), AAC, MP3, FLAC, PCM, Vorbis; not DTS, TrueHD or Opus
-    function audioPlays(codec) { return !/dts|truehd|mlp|opus/i.test(codec) }
-    // An audio track's id is LG's index for it: LG's player lists only the tracks it can decode (a remux
-    // with 11 AC3 and 12 DTS tracks lists the 11), in file order, so a playable track's index is its place
-    // among the playable ones. One that won't play gets an id no selection uses.
+    // An audio track's id is LG's index for it: LG's player leaves the codecs it doesn't know out of its
+    // list (a remux with 11 AC3 and 12 DTS tracks lists the 11), in file order, so a listed track's index is
+    // its place among the listed ones. One it leaves out gets an id no selection uses. Listed isn't heard:
+    // it lists Opus and FLAC in 5.1 and plays them in silence. What plays is measured (playback.h).
     function fileTracks(list) {
         var out = [], audio = 0;
         for (var i = 0; i < list.length; i++) {
             var t = list[i];
-            if (t.type === 2) { var plays = audioPlays(t.codec);
-                out.push({ id: plays ? audio++ : -100 - i, type: "audio", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced, playable: plays }) }
+            if (t.type === 2) out.push({ id: tracks.audioListed(t.codec) ? audio++ : -100 - i, type: "audio", lang: t.lang, title: t.title, codec: t.codec,
+                                         default: t.default, forced: t.forced, playable: tracks.audioPlays(t.codec, t.channels) });
             else if (t.type === 17) out.push({ id: t.number, type: "sub", lang: t.lang, title: t.title, codec: t.codec, default: t.default, forced: t.forced,
                                                  playable: /^(S_TEXT\/(ASS|SSA|UTF8)|S_HDMV\/PGS|S_VOBSUB|tx3g)/.test(t.codec) });
         }
@@ -162,11 +164,30 @@ FocusScope {
     }
     function lgTracks() {
         var out = otherSubs.slice();
-        for (var i = 0; i < media.audioTracks.length; i++) out.push({ id: i, type: "audio", lang: media.audioTracks[i].lang, title: "", codec: media.audioTracks[i].codec, playable: audioPlays(media.audioTracks[i].codec) });
+        for (var i = 0; i < media.audioTracks.length; i++) out.push({ id: i, type: "audio", lang: media.audioTracks[i].lang, title: "", codec: media.audioTracks[i].codec,
+                                                                 playable: tracks.audioPlays(media.audioTracks[i].codec, media.audioTracks[i].channels) });
         return out;
+    }
+    // The file isn't one to watch: it has no sound this TV plays (in the language wanted, when it has that
+    // language), or it is anime with no subtitles of its own (a raw, or burned-in ones that the online
+    // subtitles would cover twice). Said once per file, as soon as its tracks are known; App plays the
+    // next stream instead when this one was its own pick.
+    signal unsuitable(string why, bool certain)       // certain: the file's own tracks say so
+    property bool judged: false          // the file's tracks have been looked at
+    property bool rejected: false        // unsuitable() went out for this load
+    function reject(why, certain) { if (!rejected) { rejected = true; unsuitable(why, certain) } }
+    // LG's player says nothing at all about a file it can't open (12-bit HEVC loads for ever): no word from
+    // it 15 s after the load is the same verdict
+    Timer {
+        id: startWatch; interval: 15000
+        onTriggered: if (page.active && !media.playing && !media.failure && !media.seen.sourceInfo) page.reject("Didn't start", false)
     }
     function chooseTracks(list) {
         trackList = list.concat(addonSubs); choice = tracks.choose(trackList, group);
+        if (!judged) {
+            judged = true;
+            if (choice.silent) reject("No sound this TV plays", true); else if (group === "anime" && choice.noSubtitleTrack) reject("No subtitle track", true);
+        }
         if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
         audioMuted = !!choice.audioOff;
         if (media.loaded) media.mute(audioMuted);
@@ -180,7 +201,7 @@ FocusScope {
         anchors.fill: parent
         // what it shows, held while it dissolves into the new video
         Latch { id: handing; value: page.handoff; live: !!page.handoff }
-        opacity: page.handoff ? 1 : 0
+        opacity: page.handoff ? 1 : 0      // holds: `handing` latches the still
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: page.handoff ? 380 : 700; easing.type: Theme.ease } }
         Rectangle { anchors.fill: parent; color: "black" }
@@ -189,7 +210,7 @@ FocusScope {
             anchors.fill: parent
             source: handing.current ? handing.current.art : ""
             sourceSize: Qt.size(1280, 720); fillMode: Image.PreserveAspectCrop; asynchronous: true
-            opacity: status === Image.Ready ? 1 : 0
+            opacity: status === Image.Ready ? 1 : 0      // holds: only ever fades in, once decoded
             Behavior on opacity { NumberAnimation { duration: 300 } }
             // it drifts while it waits, so the screen never looks stopped
             scale: 1.0
@@ -226,13 +247,21 @@ FocusScope {
 
     // ---- the overlay -------------------------------------------------------------------------------------
     // `zone` is what shows and who has the remote: "none" (the video), "bar" (the transport: seeking),
-    // "row" (Audio, Subtitles, Streams), "audio" or "subs" (a list), "streams" (the sheet), "episodes"
+    // "row" (Audio, Subtitles, Streams), "offer" (what's on offer above them: Skip Intro, the next episode),
+    // "audio" or "subs" (a list), "streams" (the sheet), "episodes"
     // (the row below). Everything exists from the start and moves or fades in, so opening costs nothing.
     property string zone: "none"
-    property var episodes: []            // the season's episodes and their cards, for the row below
-    property var episodeCards: []
+    property var episodes: []            // the season's episodes, and the row below them (PagedStrip's page)
+    property var row: ({})
     property string episodeId: ""        // the one playing
+    // the row is a PagedStrip like the show page's: the seasons either side are its tiles, a turn asks for
+    // that season (`turnSeason`), and opening the row asks for the playing episode's (`openingEpisodes`)
+    property bool posterRow: false       // a row of films: portrait cards, the row's height
+    property string rowLabel: "Episodes"
     signal playEpisode(var episode)
+    signal finished()                    // the file played to its end and nothing follows
+    signal turnSeason(var key)
+    signal openingEpisodes()
     signal switchStream(int row)
     onZoneChanged: {
         hide.restart();
@@ -264,16 +293,20 @@ FocusScope {
     function togglePause() { if (media.paused) media.play(); else media.pause() }
 
     // the transport hides on its own after a while, unless paused or seeking
-    Timer { id: hide; interval: 4000; onTriggered: if (page.zone === "bar" && !media.paused && page.seekTarget < 0) page.zone = "none"; else if (page.zone === "bar") restart() }
+    // the overlay goes after four seconds without a key, wherever the remote was left on it (the transport,
+    // the buttons, an offer); not while paused, while a seek is being set, or over a list or the episodes
+    readonly property bool hides: zone === "bar" || zone === "row" || zone === "offer"
+    Timer { id: hide; interval: 4000; onTriggered: if (page.hides && !media.paused && page.seekTarget < 0) page.zone = "none"; else if (page.hides) restart() }
 
     // intro and outro: the file's chapters, the IntroDB, TheIntroDB and AniSkip, reconciled (SkipTimes),
     // asked once the length is known and the chapters are in
     property string videoId: ""
+    property string imdbEpisode: ""       // the same episode as IMDb numbers it ("tt…:1:7"), when videoId is a Kitsu one and it's known
     property var skipTimes: ({})
     SkipTimes { id: skipLookup; onResolved: page.skipTimes = segments }
     Timer {
         id: askSkip; interval: 2500
-        onTriggered: if (media.duration > 0) skipLookup.resolve(page.videoId, media.duration, page.chapters)   // no id: chapters only
+        onTriggered: if (media.duration > 0) skipLookup.resolve(page.videoId, media.duration, page.chapters, page.imdbEpisode)   // no id: chapters only
     }
     Connections { target: media; onLoadedChanged: if (media.loaded) askSkip.restart() }
     readonly property var segments: {
@@ -283,10 +316,21 @@ FocusScope {
         return out;
     }
     readonly property var segmentNow: {
-        for (var i = 0; i < segments.length; i++) if (media.position >= segments[i].start && media.position < segments[i].end - 1500) return segments[i];
+        for (var i = 0; i < segments.length; i++)
+            if (skipped.indexOf(segments[i].kind) < 0 && media.position >= segments[i].start && media.position < segments[i].end - 1500) return segments[i];
         return null;
     }
-    function skip() { if (segmentNow) { media.seek(segmentNow.end); zone = "none" } }
+    // An episode has one intro and one set of credits: once skipped, it isn't offered again for this file
+    // (`skipped`: the kinds skipped, cleared by load()). Nothing about the position decides it: LG's seek
+    // lands on the keyframe before the time asked for, seconds back inside the segment, and reports the
+    // time asked for before it has landed. The seek asks for a moment past the end: the chapter after it
+    // starts on a keyframe, and a time a hair short of that lands on the one before.
+    property string skipped: ""
+    function skip() {
+        var s = segmentNow;                               // read first: once marked it is no longer the one now
+        if (!s) return;
+        skipped += " " + s.kind; media.seek(s.end + 500); zone = "none";
+    }
 
     Keys.onPressed: {
         if (!media.loaded) return;
@@ -305,11 +349,18 @@ FocusScope {
         } else if (zone === "bar") {
             if (ok) { if (seekTarget >= 0) seekNow(); else togglePause() }
             else if (k === Qt.Key_Left || k === Qt.Key_Right) nudge(k === Qt.Key_Left ? -1 : 1);
-            else if (k === Qt.Key_Up) zone = "row";
+            else if (k === Qt.Key_Up) { if (offering) buttons.currentIndex = 2; zone = "row" }      // under what's on offer, when something is
             else if (k === Qt.Key_Down && episodes.length) zone = "episodes";
             else return;
         } else if (zone === "row") {
-            if (k === Qt.Key_Down) zone = "bar"; else return;
+            if (k === Qt.Key_Down) zone = "bar";
+            else if (k === Qt.Key_Up && offering) zone = "offer";
+            else return;
+        } else if (zone === "offer") {
+            // the offer sits above Streams: Down lands there. The Up Next card presses its own buttons.
+            if (k === Qt.Key_Down) { buttons.currentIndex = 2; zone = "row" }
+            else if (ok && offering === "skip") skip();
+            else return;
         } else if (zone === "subs" && !favoriteMenu && (k === Qt.Key_Left || k === Qt.Key_Right)) {
             setDelay(subs.delay + (k === Qt.Key_Left ? -100 : 100));
         } else if (zone === "episodes") {
@@ -487,7 +538,7 @@ FocusScope {
     // loading: the title over its art, until the first frame
     Column {
         anchors.centerIn: parent; spacing: 30
-        opacity: !media.playing && !page.handoff ? 1 : 0
+        opacity: !media.playing && !page.handoff ? 1 : 0      // holds: the title stays, and the status says what's happening, which is never nothing
         Behavior on opacity { NumberAnimation { duration: 400 } }
         TitleArt {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -498,7 +549,7 @@ FocusScope {
         Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             width: 360; height: 4; radius: 2; color: "#26ffffff"; clip: true
-            opacity: media.failure ? 0 : 1
+            opacity: media.failure ? 0 : 1      // holds: nothing in it
             Rectangle {
                 width: 120; height: 4; radius: 2
                 gradient: Gradient { orientation: Gradient.Horizontal
@@ -531,20 +582,21 @@ FocusScope {
     }
 
     // ---- what's on screen -------------------------------------------------------------------------------
-    // shade under the transport and the row below
+    // shade under the title, the transport and the row below: it starts above the logo and is most of the
+    // way there by the buttons, so they read over a bright scene (a sky, a white room)
     Rectangle {
         anchors.fill: parent
-        opacity: page.zone !== "none" && media.playing ? 1 : 0
+        opacity: page.zone !== "none" && media.playing ? 1 : 0      // holds: nothing in it
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
-        gradient: Gradient { GradientStop { position: 0.45; color: "#00000000" } GradientStop { position: 1; color: "#d9000000" } }
+        gradient: Gradient { GradientStop { position: 0.26; color: "#00000000" } GradientStop { position: 0.58; color: "#a6000000" } GradientStop { position: 1; color: "#eb000000" } }
     }
     SubtitleLayer {
         id: subs
         anchors.fill: parent
         source: tee
         // above the shade, rising clear of the transport while it's open, and of the row below
-        lift: page.zone === "episodes" ? 470 : page.zone === "bar" || page.zone === "row" || page.zone === "audio" || page.zone === "subs" ? 200 : 0
+        lift: page.zone === "episodes" ? 470 : page.zone === "bar" || page.zone === "row" || page.zone === "offer" || page.zone === "audio" || page.zone === "subs" ? 200 : 0
         Behavior on lift { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
         position: media.position
         playing: media.playing && !media.paused && !media.buffering            // the clock stops while the video waits
@@ -568,7 +620,7 @@ FocusScope {
         width: parent.width; height: parent.height
         // the whole transport rises out of the row below when it opens, and steps up when the row is open
         property real lift: page.zone === "episodes" ? -270 : 0
-        opacity: media.playing && page.zone !== "none" && page.zone !== "streams" ? 1 : 0
+        opacity: media.playing && page.zone !== "none" && page.zone !== "streams" ? 1 : 0      // holds: the stream's own title and position, there as long as it plays
         // hidden, its clock and bar stop asking for frames over the video
         visible: opacity > 0
         transform: Translate { y: transport.lift + (transport.opacity < 1 ? 24 * (1 - transport.opacity) : 0) }
@@ -624,7 +676,7 @@ FocusScope {
                 kind: "solid"; size: 22
                 text: page.clock(page.shownPosition)
                 x: Math.max(0, Math.min(bar.width - width, head.x + 12 - width / 2)); y: -58
-                opacity: page.seekTarget >= 0 ? 1 : 0
+                opacity: page.seekTarget >= 0 ? 1 : 0      // holds: the position, never nothing
                 Behavior on opacity { NumberAnimation { duration: Theme.fast } }
             }
         }
@@ -636,22 +688,24 @@ FocusScope {
     Item {
         id: episodeRow
         width: parent.width; height: 300
-        y: page.zone === "episodes" ? 790 : page.zone === "bar" || page.zone === "row" ? 1040 : 1120
-        opacity: media.playing && page.episodes.length && page.zone !== "none" && page.zone !== "streams" ? 1 : 0
+        y: page.zone === "episodes" ? 790 : page.zone === "bar" || page.zone === "row" || page.zone === "offer" ? 1040 : 1120
+        opacity: media.playing && page.episodes.length && page.zone !== "none" && page.zone !== "streams" ? 1 : 0      // holds: the row's cards stay while the title is in hand
         visible: opacity > 0
         Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
-        Text { x: Theme.margin; y: 0; text: "Episodes"; color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 26; font.weight: Font.DemiBold }
-        CardStrip {
+        Text { x: Theme.margin; y: 0; text: page.rowLabel; color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 26; font.weight: Font.DemiBold }
+        PagedStrip {
             id: episodeStrip
             y: 46; width: parent.width
             focus: page.zone === "episodes"
-            model: page.episodeCards
-            cardWidth: 352; cardHeight: 198; spacing: 28
+            content: page.row
+            cardWidth: page.posterRow ? Theme.playerPoster.width : Theme.playerStill.width; cardHeight: Theme.playerStill.height; spacing: 28
+            narrowest: Theme.playerPoster.width
             showTitles: false; nextLabels: false
+            onTurn: { page.turnSeason(key); jumpTo(land < 0 ? cards.length - 1 : land) }      // the row follows the show page's
             onActivated: { page.zone = "none"; if (page.episodes[cardIndex] && page.episodes[cardIndex].id !== page.episodeId) page.playEpisode(page.episodes[cardIndex]) }
         }
-        Connections { target: page; onZoneChanged: if (page.zone === "episodes") { for (var i = 0; i < page.episodes.length; i++) if (page.episodes[i].id === page.episodeId) { episodeStrip.jumpTo(i); break } } }
+        Connections { target: page; onZoneChanged: if (page.zone === "episodes") { page.openingEpisodes(); for (var i = 0; i < page.episodes.length; i++) if (page.episodes[i].id === page.episodeId) { episodeStrip.jumpTo(i); break } } }
     }
 
     // Audio and Subtitles: a list above the buttons, at the right
@@ -664,7 +718,7 @@ FocusScope {
         width: 760; height: menu.implicitHeight + 32 + (delayFoot ? 84 : 0); radius: 32
         anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 830 - height
         color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
-        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.BottomRight
+        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.BottomRight      // holds: `menuKind` latches which list it is
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 200 } }
         Behavior on scale { NumberAnimation { duration: 340; easing.type: Theme.spring; easing.overshoot: 1.3 } }
@@ -715,7 +769,7 @@ FocusScope {
         x: menuPanel.x - width - 18
         y: favoriteY.current
         color: "#f0141418"; border.width: 1; border.color: "#26ffffff"
-        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.Right
+        opacity: open ? 1 : 0; scale: open ? 1 : 0.92; transformOrigin: Item.Right      // holds: `favoriteY` latches its place, and its rows are fixed
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 180 } }
         Behavior on scale { NumberAnimation { duration: 300; easing.type: Theme.spring; easing.overshoot: 1.3 } }
@@ -787,10 +841,13 @@ FocusScope {
 
     // ---- up next -----------------------------------------------------------------------------------
     // The next episode (App: Episodes.after, aired, into the next season) is offered twice:
-    //   "credits"  when the outro (SkipTimes) starts: Next episode counting down 10 s, and Skip credits
-    //              when something plays after them
-    //   "end"      10 s before the file ends: Next episode counting down the time that's left, so it
-    //              plays as this one ends
+    //   "credits"  when the outro (SkipTimes) starts: Next episode ten seconds on, and Skip credits when
+    //              something plays after them
+    //   "end"      over the file's last ten seconds: Next episode as this one ends
+    // The countdown is the video's own clock between two positions (`upNextSpan`, Episodes.upNextSpan), not
+    // a timer of the card's: a pause holds it, a seek moves it, a seek to three seconds from the end leaves
+    // three seconds, and a seek back before it takes the offer away. The next episode plays when the
+    // position gets there or the file ends, whichever comes first.
     // Each is offered once per video, and again after a seek back before it. Back closes the card: after
     // the credits one, the end one still comes; after the end one, the episode ends where it is. Offering
     // it gets the next episode's link ahead (Streams.prepare), so Next goes straight to loading.
@@ -799,42 +856,77 @@ FocusScope {
     property bool creditsOffered: false
     property bool endOffered: false
     readonly property var outro: { for (var i = 0; i < segments.length; i++) if (segments[i].kind === "outro") return segments[i]; return null }
+    property var upNextSpan: ({ from: 0, until: 0 })
+    readonly property real upNextElapsed: upNextMode ? Episodes.upNextElapsed(upNextSpan, media.position) : 0
     function offerUpNext() {
         if (!nextEpisode || !media.playing || handoff) return;
         var p = media.position, d = media.duration;
         if (outro && p < outro.start - 5000) creditsOffered = false;
         if (d > 0 && p < d - 15000) endOffered = false;
-        if (upNextMode !== "") return;
-        if (outro && !creditsOffered && p >= outro.start && p < outro.end - 3000) { creditsOffered = true; upNextMode = "credits" }
-        else if (d > 0 && !endOffered && p >= d - 10000) { endOffered = true; upNextMode = "end" }
+        if (upNextMode !== "") {
+            // sought back before it: gone, to be offered again; watched on past the credits: gone, and the
+            // end's offer still comes; there: the next episode
+            if (p < upNextSpan.from - 1500) { if (upNextMode === "credits") creditsOffered = false; else endOffered = false; upNextMode = "" }
+            else if (upNextMode === "credits" && outro && p >= outro.end) upNextMode = "";
+            else if (p >= upNextSpan.until - 250) playNext();
+            return;
+        }
+        var mode = outro && !creditsOffered && p >= outro.start && p < outro.end - 3000 ? "credits" : d > 0 && !endOffered && p >= d - 10000 ? "end" : "";
+        if (!mode) return;
+        if (mode === "credits") creditsOffered = true; else endOffered = true;
+        upNextSpan = Episodes.upNextSpan(mode, p, d, outro); upNextMode = mode;
     }
-    Connections { target: media; onPositionChanged: page.offerUpNext() }
+    Connections {
+        target: media
+        onPositionChanged: page.offerUpNext()
+        // The file ended (the last position LG reports is short of the end): the next episode if it was on
+        // offer, else there is nothing left to show and the player closes. (`loaded` goes with a stop or a
+        // switch, which isn't an ending.)
+        onStateChanged: {
+            if (media.playing || !media.loaded || media.failure || page.handoff || !(media.duration > 0) || media.position < media.duration - 3000) return;
+            if (page.upNextMode && page.nextEpisode) page.playNext(); else page.finished();
+        }
+    }
+    // ---- what's on offer ---------------------------------------------------------------------------------
+    // Skip Intro or Skip Credits while one plays ("skip"), the next episode once it's offered ("next"). Each
+    // is one thing on screen, at the right above the Streams button, whether the overlay is up or not: it is
+    // never swapped for another copy of itself, and never goes because the overlay opened. With the overlay
+    // closed OK takes it; with it up, Up from the buttons reaches it (`zone` "offer") and Down goes back.
+    readonly property string offering: upNextMode && nextEpisode ? "next" : segmentNow ? "skip" : ""
+    onOfferingChanged: if (!offering && zone === "offer") zone = "row"
+    readonly property bool overlayZone: ["bar", "row", "offer", "episodes"].indexOf(zone) >= 0     // the transport is up, no list over it
+    function playNext() { var e = nextEpisode; upNextMode = ""; zone = "none"; playEpisode(e) }
+    function skipCredits() { upNextMode = ""; zone = "none"; if (outro) { skipped += " outro"; media.seek(outro.end + 500) } }
     onUpNextModeChanged: if (upNextMode && nextEpisode) streams.prepare(nextEpisode.id, stream ? stream.bingeGroup || "" : "")
     UpNext {
         id: upNext
-        anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 1010 - height
-        open: page.upNextMode !== "" && !!page.nextEpisode && page.zone === "none"
-        focus: open
+        anchors.right: parent.right; anchors.rightMargin: Theme.margin
+        // in its corner; above the buttons while the overlay is up, where Up from them reaches it
+        y: (page.zone === "none" ? 1010 : 836 + transport.lift) - height
+        Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
+        open: page.upNextMode !== "" && !!page.nextEpisode && (page.zone === "none" || page.overlayZone)
+        focus: open && (page.zone === "none" || page.zone === "offer")
+        owns: page.zone === "none"
         mode: page.upNextMode || "credits"
         canSkip: !!page.outro && page.outro.end < media.duration - 3000
-        seconds: page.upNextMode === "end" ? Math.max(1, (media.duration - media.position) / 1000) : 10
-        paused: media.paused
+        elapsed: page.upNextElapsed
         episode: page.nextEpisode
         fallback: page.item && page.item.backdrop ? page.item.backdrop : ""
-        onNext: { var e = page.nextEpisode; page.upNextMode = ""; page.playEpisode(e) }
-        onSkipCredits: { page.upNextMode = ""; if (page.outro) media.seek(page.outro.end) }
+        onNext: page.playNext()
+        onSkipCredits: page.skipCredits()
         onDismissed: page.upNextMode = ""
     }
 
-    // Skip Intro / Skip Credits, while one plays; OK presses it
-    Chip {
-        id: skipButton
-        anchors.right: parent.right; anchors.rightMargin: Theme.margin; y: 780
-        size: 28; kind: "solid"; icon: "play"
-        text: page.segmentNow ? (page.segmentNow.kind === "intro" ? "Skip Intro" : "Skip Credits") : ""
-        opacity: page.segmentNow && media.playing && (page.zone === "none" || page.zone === "bar") && !upNext.open ? 1 : 0
-        visible: opacity > 0
-        transform: Translate { x: (1 - skipButton.opacity) * 40 }
-        Behavior on opacity { NumberAnimation { duration: Theme.base; easing.type: Theme.ease } }
+    // Skip Intro / Skip Credits: one chip at the right, above the Streams button (it rides with the
+    // transport when the episodes lift it). White while OK would press it: with the overlay closed, and
+    // when Up from the buttons has reached it.
+    Fade {
+        anchors.right: parent.right; anchors.rightMargin: Theme.margin
+        y: 780 + transport.lift
+        value: page.segmentNow
+        shown: page.offering === "skip" && media.loaded && (page.zone === "none" || page.overlayZone)
+        dx: 40
+        Chip { size: 28; icon: "play"; kind: page.zone === "none" || page.zone === "offer" ? "solid" : "glass"
+               text: parent.current ? (parent.current.kind === "intro" ? "Skip Intro" : "Skip Credits") : "" }
     }
 }

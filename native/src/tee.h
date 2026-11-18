@@ -10,11 +10,13 @@
 // to the rest through queued signals. Each connection holds at most kReadAhead + kChunk, so memory
 // stays bounded whatever the file's size.
 #include <QtQml>
+#include "playback.h"
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QThread>
+#include <QMutex>
 #include <functional>
 #include <atomic>
 
@@ -29,7 +31,7 @@ public:
     struct Shared { QSet<int> subs; quint64 scale = 1000000; int matroska = -1; };
     explicit MkvSubs(std::shared_ptr<Shared> shared = std::make_shared<Shared>()) : m_shared(shared) {}
     std::function<void()> onTracksDone;
-    struct Track { int number = 0, type = 0; QString codec, lang, name; QByteArray priv; bool def = true, forced = false, hi = false, commentary = false; };
+    struct Track { int number = 0, type = 0, channels = 1; QString codec, lang, name; QByteArray priv; bool def = true, forced = false, hi = false, commentary = false; };
     std::function<void(const Track &)> onTrack;
     std::function<void(const QString &, const QByteArray &)> onFont;
     std::function<void(qint64, qint64, const QString &)> onChapter;           // start ms, end ms, title
@@ -60,13 +62,13 @@ private:
     enum : quint32 {
         SEGMENT = 0x18538067, INFO = 0x1549a966, TIMESTAMPSCALE = 0x2ad7b1, TRACKS = 0x1654ae6b, TRACKENTRY = 0xae,
         TRACKNUMBER = 0xd7, TRACKTYPE = 0x83, CODECID = 0x86, CODECPRIVATE = 0x63a2, LANGUAGE = 0x22b59c, LANGUAGEBCP47 = 0x22b59d,
-        NAME = 0x536e, FLAGDEFAULT = 0x88, FLAGFORCED = 0x55aa, FLAGHI = 0x55ab, FLAGCOMMENTARY = 0x55af,
+        NAME = 0x536e, FLAGDEFAULT = 0x88, FLAGFORCED = 0x55aa, FLAGHI = 0x55ab, FLAGCOMMENTARY = 0x55af, AUDIO = 0xe1, CHANNELS = 0x9f,
         ATTACHMENTS = 0x1941a469, ATTACHEDFILE = 0x61a7, FILENAME = 0x466e, FILEDATA = 0x465c,
         CHAPTERS = 0x1043a770, EDITIONENTRY = 0x45b9, CHAPTERATOM = 0xb6, CHAPTERDISPLAY = 0x80, CHAPSTART = 0x91, CHAPEND = 0x92, CHAPSTRING = 0x85,
         CLUSTER = 0x1f43b675, TIMESTAMP = 0xe7, SIMPLEBLOCK = 0xa3, BLOCKGROUP = 0xa0, BLOCK = 0xa1, BLOCKDURATION = 0x9b,
     };
     static bool master(quint32 id) {
-        switch (id) { case SEGMENT: case INFO: case TRACKS: case TRACKENTRY: case ATTACHMENTS: case ATTACHEDFILE: case CHAPTERS:
+        switch (id) { case SEGMENT: case INFO: case TRACKS: case TRACKENTRY: case AUDIO: case ATTACHMENTS: case ATTACHEDFILE: case CHAPTERS:
                       case EDITIONENTRY: case CHAPTERATOM: case CHAPTERDISPLAY: case CLUSTER: case BLOCKGROUP: return true; }
         return false;
     }
@@ -120,6 +122,7 @@ private:
         case LANGUAGE: if (m_track.lang.isEmpty()) m_track.lang = QString::fromUtf8(text); break;
         case LANGUAGEBCP47: m_track.lang = QString::fromUtf8(text); break;        // the newer field wins
         case NAME: m_track.name = QString::fromUtf8(text); break;
+        case CHANNELS: m_track.channels = int(uintOf(b, s, e)); break;
         case FLAGDEFAULT: m_track.def = uintOf(b, s, e); break;
         case FLAGFORCED: m_track.forced = uintOf(b, s, e); break;
         case FLAGHI: m_track.hi = uintOf(b, s, e); break;
@@ -682,6 +685,7 @@ private:
                 h += "Content-Length: " + QByteArray::number(c->last - c->from + 1) + "\r\nAccept-Ranges: bytes\r\n";
                 if (r->hasRawHeader("Content-Type")) h += "Content-Type: " + r->rawHeader("Content-Type") + "\r\n";
             } else {
+                failed(r, status);
                 h = "HTTP/1.1 " + QByteArray::number(status ? status : 502) + " Upstream\r\nContent-Length: 0\r\n";
                 c->head = true;                                                      // nothing more to send
             }
@@ -702,7 +706,7 @@ private:
             if (c->reply == r) c->reply = nullptr;
             r->deleteLater();
             if (c->done) return;
-            if (r->error() != QNetworkReply::NoError && r->error() != QNetworkReply::OperationCanceledError) { c->done = true; c->socket->disconnectFromHost(); return; }
+            if (r->error() != QNetworkReply::NoError && r->error() != QNetworkReply::OperationCanceledError) { failed(r); c->done = true; c->socket->disconnectFromHost(); return; }
             more(c);
         });
     }
@@ -737,6 +741,7 @@ private:
             if (m_boot != r) return;
             m_boot = nullptr;
             if (session != m_session) return;
+            if (r->error() != QNetworkReply::NoError && r->error() != QNetworkReply::OperationCanceledError) failed(r);
             if (m_view == Pending) plan(true);
             // the rest of the fonts, then on a piece at a time to the first Cluster (Void, Chapters, Tags)
             if (m_view == Cut && r->error() == QNetworkReply::NoError && !m_bootParser->clusterSeen && m_bootAt < m_size && m_bootAt < m_cut.end + kBootPast)
@@ -802,7 +807,7 @@ private:
         m.onBlock = [this, session](int tn, qint64 s, qint64 d, const QByteArray &text) { emit subtitleBlock(session, tn, s, d, text); };
         p.onTrack = [this, session](const MkvSubs::Track &t) {
             if (!first("t" + QString::number(t.number))) return;
-            m_tracks << QVariantMap { { "number", t.number }, { "type", t.type }, { "codec", t.codec }, { "lang", t.lang }, { "title", t.name },
+            m_tracks << QVariantMap { { "number", t.number }, { "type", t.type }, { "codec", t.codec }, { "channels", t.channels }, { "trouble", t.type == 1 ? playback::videoTrouble(t.codec, t.priv) : QString() }, { "lang", t.lang }, { "title", t.name },
                                       { "default", t.def }, { "forced", t.forced }, { "hi", t.hi }, { "commentary", t.commentary } };
             if (t.type == 0x11) emit subtitleHeader(session, t.number, t.codec, t.priv);
         };
@@ -833,6 +838,15 @@ private:
 public:
     // for the lab, read from the GUI thread without waiting on this one
     std::atomic<int> m_served { 0 }, m_open { 0 };
+    // the last upstream failure (host, then the HTTP status or Qt's error), for the player's report: the
+    // pipeline only ever says "Network Error" when we drop its connection
+    mutable QMutex m_failLock;
+    QString m_failure;
+    void failed(QNetworkReply *r, int status = 0) {
+        QMutexLocker lock(&m_failLock);
+        m_failure = r->url().host() + " " + (status ? QString::number(status) : r->errorString());
+    }
+    QString failure() const { QMutexLocker lock(&m_failLock); return m_failure; }
 };
 
 // The QML side: `open(url)` returns the local URL for the player and starts reading that stream;
@@ -859,7 +873,7 @@ public:
     }
     ~Tee() override { m_thread.quit(); m_thread.wait(); }
     int port() const { return m_port; }
-    Q_INVOKABLE QString stats() const { return QString("served %1 open %2").arg(m_worker->m_served).arg(m_worker->m_open); }
+    Q_INVOKABLE QString stats() const { return QString("served %1 open %2 failure %3").arg(m_worker->m_served).arg(m_worker->m_open).arg(m_worker->failure()); }
     Q_INVOKABLE QString open(const QString &url) {
         if (!m_port) return url;                                                    // not listening: play directly
         const int session = ++m_session;

@@ -18,6 +18,7 @@ FocusScope {
     function go(step) {
         var i = bars.indexOf(current) + step;
         if (i < 0 || i >= bars.length) return false;
+        if (current) current.leave(step);                  // its cursor draws back the way it's going
         current = bars[i]; current.enter(step < 0); current.forceActiveFocus();
         return true;
     }

@@ -1,6 +1,7 @@
-// Streams reads release names exactly as the patched Stremio app does. streams-fixture.json holds that
-// app's answers (stremio-webos stream-filters.js and its badge code) for its test titles and its saved
-// Torrentio lists, made once by running them through that code.
+// Streams reads release names as the patched Stremio app does. streams-fixture.json holds that app's
+// answers (stremio-webos stream-filters.js and its badge code) for its test titles and its saved Torrentio
+// lists, made once by running them through that code, except where the TV says otherwise: what plays was
+// measured on the C5 (docs/playback.md), so Opus 7.1, FLAC 5.1 and Dolby Vision in AV1 are unsupported here.
 import QtQuick 2.12
 import QtTest 1.2
 import Seimio.Data 1.0
@@ -37,6 +38,11 @@ TestCase {
                 "[SubsPlease] Show - 01v2 (1080p) [AAC]", "a v2 of the top release");
         compare(pickOf([stream("[ToonsHub] Show S01E01 1080p WEB-DL (English Dub)", 2000, "1080p"), stream("[Judas] Show - S01E01 [1080p][Multi-Subs]", 300, "1080p")]),
                 "[Judas] Show - S01E01 [1080p][Multi-Subs]", "a dub alone is left out");
-        compare(pickOf([stream("[SubsPlease] Show - 01 (1080p)", 900, "1080p"), stream("[Beatrice-Raws] Show 01 [BDRip 1080p]", 50, "1080p")]), "", "a Blu-ray: the AI judges");
+        compare(pickOf([stream("[SubsPlease] Show - 01 (1080p)", 900, "1080p"), stream("[Judas] Show 01 [BDRip 1080p]", 50, "1080p")]), "", "a Blu-ray: the AI judges");
+        // no subtitle track: Kawaiika-Raws' raw and NoobSubs' hardsubbed MP4 were picks for Demon Slayer S1 E18
+        compare(pickOf([stream("[SubsPlease] Show - 01 (1080p)", 900, "1080p"), stream("[Kawaiika-Raws] Show 01 [BDRip 1920x1080 HEVC FLAC]", 50, "1080p")]),
+                "[SubsPlease] Show - 01 (1080p)", "a raw Blu-ray is left out");
+        compare(pickOf([stream("[SubsPlease] Show - 01 (1080p)", 900, "1080p"), stream("[NoobSubs] Show (1080p Blu-ray 8bit AAC MP4)\n[NoobSubs] Show 01 (1080p Blu-ray 8bit AAC).mp4", 50, "1080p")]),
+                "[SubsPlease] Show - 01 (1080p)", "a Blu-ray MP4 (burned-in subtitles) is left out");
     }
 }

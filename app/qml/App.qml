@@ -1,10 +1,17 @@
 // The app window. State lives here and nowhere else:
 //   layer        which screen has the remote: home | tabs | show | title | menu | streams | player
+//   trail        the screens under it, each with its title in hand: Back returns to the last (go, back)
 //   playMenu     the Play options are open over the page (a long OK on Play or an episode)
 //   focusItem    the title the remote is on (from Home), changes instantly
-//   displayItem  the one title the backdrop, info and the title pages render; it changes only through
-//                commit(). Moving focus commits once it settles, so key presses stay light; opening
-//                anything commits first, so nothing opens on a stale title.
+//   displayItem  Home's selection, which its backdrop and info render; it changes only through commit().
+//                Moving focus commits once it settles, so key presses stay light; opening anything commits
+//                first, so nothing opens on a stale title.
+//   held         the title in hand, { item, show, video }: what the open page, the stream list and the
+//                player are about, and the episode it was picked for (a calendar release, a franchise's
+//                entry). An anime is held as its whole franchise wherever it was picked.
+//   playTarget   the video playing or asked for. Where it is in the held show (`playingAt`) is derived,
+//                and with it the player's row, what's next and the look the player wears: nothing asks
+//                whether it is a series or compares one screen's title with another's.
 // Screens and controls handle their own keys (Qt focus scopes); a key nobody handles reaches the root
 // here, which handles Back and moving between the tab bar and Home.
 import QtQuick 2.12
@@ -35,7 +42,7 @@ WebOSWindow {
     readonly property var focusItem: animeTab ? anime.focusItem : home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
-    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
+    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); still.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
@@ -48,24 +55,100 @@ WebOSWindow {
         onTriggered: {
             if (!app.displayItem || !app.onHome || !(app.animeTab || home.row === 0)) return;
             // an anime's franchise is fetched ahead (its page is built when it's in), so OK opens it at once
-            if (app.isAnime(app.displayItem.id)) { app.loadFranchise(app.displayItem); return }
-            if (app.episodeCount(app.displayItem.id) > 1) showPage.load(app.displayItem, app.showData(app.displayItem.id));
+            if (app.franchiseId(app.displayItem.id)) { app.loadFranchise(app.displayItem); return }
+            if (app.episodeCount(app.displayItem.id) > 1) app.buildAhead(app.displayItem.id, app.displayItem, app.showData(app.displayItem.id));
         }
     }
+    // Building a page is 60-90 ms of JavaScript on the TV, and a franchise arrives whenever the network
+    // answers: one built while the remote was moving along the tab bar was a 90 ms frame. So a page built
+    // ahead waits until nothing has moved for a second (`still`), and is built only if its title is still
+    // the selection. The latest one asked for is the one that waits.
+    property var ahead: null                               // { source, item, show }
+    function buildAhead(source, item, show) { ahead = { source: source, item: item, show: show }; if (!still.running) builtAhead() }
+    // one piece of work a quiet second: the selection's page, then (once) the Anime tab
+    function builtAhead() {
+        var a = ahead; ahead = null;
+        if (a && onHome && selected(a.source, a.item)) { showPage.load(a.item, a.show); if (!anime.rows.length) still.restart() }
+        else if (onHome && started) anime.warm();
+    }
+    Timer { id: still; interval: 1000; onTriggered: app.builtAhead() }
+    // Home's own start (its art decodes for about 5 s after launch) is not idleness: the Anime tab waits it out
+    property bool started: false
+    Timer { interval: 2500; running: !app.warming; onTriggered: { app.started = true; if (!still.running) still.start() } }
 
+    // ---- the title in hand, and the way back ----------------------------------------------------------
+    property var held: null
+    // `show` only when there is something to browse: a film, or a show whose whole run is one episode, is
+    // held alone
+    function hold(item, show, video) { held = { item: item, show: episodesIn(show) > 1 ? show : null, video: video || (item ? item.video : "") || "" } }
+    // Home's selection as the title in hand: an anime's franchise when it's in
+    function holdSelection() {
+        commit();
+        var f = displayItem && franchiseId(displayItem.id) ? franchises[displayItem.id] : null;
+        if (f) hold(f.item, f.show, picked(f, displayItem)); else hold(displayItem, displayItem ? showData(displayItem.id) : null);
+    }
+    // The episode a franchise was picked for: the release's own, by id or (an anime's calendar release) by
+    // its number in the entry picked, else where you are in that entry (Franchise's `video`)
+    function picked(f, item) {
+        var entries = f.show.entries || [], at = -1, found = "";
+        for (var i = 0; i < entries.length; i++) if (entries[i].id === f.item.id) at = i;
+        // by number first: the franchise's own item carries the release's number too, with its `video`
+        // already set to where you are in the entry
+        if (item.number > 0) f.show.seasons.forEach(function (s) { s.episodes.forEach(function (e) { if (e.entry === at && e.number === item.number) found = e.id }) });
+        return found || item.video || f.item.video || "";
+    }
+    // the title a page renders: Home's selection, or the one in hand once a page has it
+    readonly property var pageItem: onHome || !held ? displayItem : held.item
+    // The episode playing as IMDb numbers it ("tt…:season:episode"), for the skip databases keyed that way:
+    // only an episode of a numbered season that is one entry counted from 1. A later part of a split
+    // season, a film and a special are numbered otherwise there, and another episode's intro is worse
+    // than none.
+    function imdbEpisode(id) {
+        var at = held && held.show && held.show.imdb ? Episodes.find(held.show, id) : null;
+        if (!at) return "";
+        var season = held.show.seasons[at.s], ep = season.episodes[at.e];
+        return season.season > 0 && !season.kind && ep.number === ep.episode ? held.show.imdb + ":" + season.season + ":" + ep.episode : "";
+    }
+    function heldEpisode(id) { var at = held && held.show ? Episodes.find(held.show, id) : null; return at ? held.show.seasons[at.s].episodes[at.e] : null }
+    // what the player and the stream list show for a video: its entry in an anime franchise (a season's or
+    // a film's own name, logo and art), else the title
+    function lookFor(id) {
+        if (!held) return null;
+        var ep = heldEpisode(id), entry = ep && held.show.entries && ep.entry !== undefined ? held.show.entries[ep.entry] : null;
+        return entry ? { name: entry.title, logo: entry.logo || "", backdrop: entry.backdrop || held.item.backdrop, year: entry.year } : held.item;
+    }
+    property var trail: []
+    onOnHomeChanged: if (onHome) trail = []
+    // onto another screen; `from` is the title that was in hand when a page opens over a page (Related)
+    function go(to, from) { if (!onHome) trail = trail.concat([{ layer: layer, held: from || held }]); layer = to }
+    function back() {
+        var t = trail.slice(), to = t.pop() || { layer: "home", held: held };
+        trail = t;
+        if (to.held && to.held !== held) {                  // a page that another replaced: it comes back as it opens
+            held = to.held;
+            if (to.layer === "show") showPage.open(held.item, held.show, held.video); else if (to.layer === "title") titlePage.open(held.item);
+        }
+        // the show page comes back on what was last played (it may have changed in the player)
+        else if (layer === "player" && to.layer === "show" && playingAt) showPage.rest(playTarget.id);
+        layer = to.layer;
+    }
+
+    // out of the player, by Back or because the file ended with nothing after it
+    function leavePlayer() { streams.cancel(); player.stop(); back() }
     function open() {
         commit();
         // an anime opens as its whole franchise, wherever it was picked (Continue Watching, the calendar, the
         // Anime tab)
-        if (displayItem && isAnime(displayItem.id)) { openFranchise(displayItem); return }
+        if (displayItem && franchiseId(displayItem.id)) { openFranchise(displayItem); return }
         openPage();
     }
-    // the title page is for a movie, or a show whose whole run is one season with one episode; any other
-    // show gets the show page, even when one of its seasons has a single episode. A calendar release opens on
-    // its own episode (`video`); anything else where you are in the show
-    function openPage() {
-        if (displayItem && app.episodeCount(displayItem.id) > 1) { showPage.open(displayItem, showData(displayItem.id), displayItem.video || ""); layer = "show" }
-        else { titlePage.open(displayItem); layer = "title" }
+    function openPage() { hold(displayItem, showData(displayItem.id)); showHeld(null) }
+    // the page for the title in hand: the show page, on the episode it was picked for or where you are in
+    // it, or the title page for a film or a single episode
+    function showHeld(from) {
+        var to = held.show ? "show" : "title";
+        if (held.show) showPage.open(held.item, held.show, held.video); else titlePage.open(held.item);
+        if (onHome) layer = to; else go(to, from);
     }
     // Playing. Play (and OK on an episode) plays the AI pick: the player opens at once and says what it's
     // doing while `streams` fetches, asks the decision model and resolves the link; if the pick fails, the
@@ -73,42 +156,46 @@ WebOSWindow {
     // `episode` is { id, label, progress } from a show's page; without one it's the movie, or the show's
     // next episode.
     property var playTarget: null
-    property string pageLayer: "title"          // where the stream list goes back to
-    property string playerBack: "title"         // where the player goes back to
+    // where it is in the held show ({ s, e }), or null: a film on its own, or nothing playing
+    readonly property var playingAt: playTarget && held && held.show ? Episodes.find(held.show, playTarget.id) : null
+    // Without an `episode`: the one the title was picked for (`video`: a calendar release, the entry of a
+    // franchise that Continue Watching had), else where you are in it, else the film itself
     function target(episode) {
         if (episode) return { type: episode.type || "series", id: episode.id, label: episode.label, progress: episode.progress };
-        var t = showPage.resumeTarget(showData(displayItem.id));
-        return t ? { type: "series", id: t.id, label: app.episodeCount(displayItem.id) > 1 ? t.label : "", progress: t.progress }
-                 : { type: "movie", id: displayItem.id, label: "", progress: displayItem.progress || 0 };
+        var sh = held.show || showData(held.item.id), at = sh && held.video ? Episodes.find(sh, held.video) : null;
+        var t = at ? showPage.target(sh, at.s, sh.seasons[at.s].episodes[at.e]) : showPage.resumeTarget(sh);
+        return t ? { type: t.type, id: t.id, label: held.show ? t.label : "", progress: t.progress }
+                 : { type: "movie", id: held.item.id, label: "", progress: held.item.progress || 0 };
     }
     function playAi(episode) {
-        commit(); playMenu = false;
+        playMenu = false;
+        if (onHome) holdSelection();                        // Play from Home's menu: no page had it yet
         playTarget = target(episode);
-        if (layer !== "player") playerBack = layer === "menu" ? "home" : layer;     // an episode from the player goes back where it came from
-        // the episode row under the player shows the show page's season: load the show if it isn't there
-        if (playTarget.type === "series" && showPage.item !== displayItem && app.episodeCount(displayItem.id) > 1) showPage.load(displayItem, showData(displayItem.id));
+        // the row under the player is the show page's, on this title: a film has it as an episode does
+        if (held.show && showPage.show !== held.show) showPage.load(held.item, held.show);
         // switching episodes inside the player keeps the release: Stremio's binge group (see Streams.play)
         var binge = layer === "player" && player.stream ? player.stream.bingeGroup || "" : "";
-        player.prepare(displayItem, playTarget.label); layer = "player";
-        streams.play(playTarget.type, playTarget.id, displayItem.name + (playTarget.label ? " " + playTarget.label : ""), binge);
+        player.prepare(lookFor(playTarget.id), playTarget.label);
+        if (layer !== "player") go("player");               // an episode from the player goes back where the player came from
+        streams.play(playTarget.type, playTarget.id, held.item.name + (playTarget.label ? " " + playTarget.label : ""), binge);
     }
-    // an episode's thumbnail from the show page's season, or the title's backdrop
+    // a video's thumbnail from the held show, or the art of what it belongs to
     function episodeArt(id) {
-        var eps = showPage.item === displayItem ? showPage.episodes : [];
-        for (var i = 0; i < eps.length; i++) if (eps[i].id === id && eps[i].thumb) return eps[i].thumb;
-        return displayItem ? displayItem.backdrop : "";
+        var ep = heldEpisode(id), look = lookFor(id);
+        return ep && ep.thumb ? ep.thumb : look ? look.backdrop || "" : "";
     }
     function openStreams(episode) {
-        commit(); playMenu = false;
+        playMenu = false;
+        if (onHome) holdSelection();
         // the fetch starts before the page is up, so its list waits for the new streams instead of
         // building the last ones first
-        playTarget = target(episode); pageLayer = layer === "menu" ? "home" : layer;
-        streamPage.open(displayItem, playTarget); layer = "streams";
+        playTarget = target(episode);
+        streamPage.open(lookFor(playTarget.id), playTarget); go("streams");
     }
     Connections {
         target: streams
         onPlayable: {
-            if (app.layer === "streams") { app.playerBack = "streams"; player.prepare(app.displayItem, streamPage.label); app.layer = "player" }
+            if (app.layer === "streams") { player.prepare(app.lookFor(app.playTarget.id), streamPage.label); app.go("player") }
             if (app.layer !== "player") return;
             // resume where it was left, unless it was nearly done
             // a stream switch keeps the time exactly (`resumeMs`: files of one episode differ in length)
@@ -117,9 +204,9 @@ WebOSWindow {
         }
         onFailed: {
             if (app.layer !== "player") return;
-            app.pageLayer = app.playerBack; app.layer = "streams";
+            app.layer = "streams";                          // in the player's place: Back goes where the player would have
             // with nothing listed the list says why itself
-            streamPage.show(app.displayItem, app.playTarget.label, streams.total ? reason + ". Choose a stream to play." : "");
+            streamPage.show(app.lookFor(app.playTarget.id), app.playTarget.label, streams.total ? reason + ". Choose a stream to play." : "");
         }
     }
     // the Play options (a long OK on Play or an episode), over the page that has them
@@ -130,28 +217,39 @@ WebOSWindow {
     // a handoff (a switch inside the player) is still watching: the scene behind stays away, or the
     // title's backdrop showed through as the still dissolved into the new video
     readonly property bool watching: layer === "player" && (player.playing || !!player.handoff)
-    // lab: { "playList": [{ "title", "url" }], "playSeconds": 20 } plays each in turn from 8 s after launch
-    // and logs how each went (playLog, in the lab reports)
+    // lab: { "playList": [{ "title", "url", "at" }], "playSeconds": 20, "control": url } plays each in turn (from
+    // `at` of the way through: a film opens on a silent logo) from 8 s
+    // after launch and logs how each went (playLog, in the lab reports; tools/playback-matrix.py). After one
+    // that fails, `control` (a file known to play) plays: if it fails too, the TV's media service is stuck and
+    // nothing after it would mean anything, so the run stops there. Each one's picture is captured 5 s in
+    // (`playShotAt` ms: an HDR or Dolby Vision file needs the panel to switch modes first)
+    // (play-<title>.png beside the lab's other captures): the pipeline reports no error for a track it can't
+    // decode, so only the screen and someone's ears say whether it really played.
     property var playLog: []
     property int playIndex: -1
+    property bool playControl: false
+    Timer { id: playShot; interval: probe.variant.playShotAt || 5000; property string name: ""; onTriggered: probe.capture("/media/developer/temp/play-" + name + ".png") }
     Timer {
         running: !!probe.variant.playList; repeat: true
         interval: app.playIndex < 0 ? 8000 : (probe.variant.playSeconds || 20) * 1000
         onTriggered: {
-            var list = probe.variant.playList;
+            var list = probe.variant.playList, control = probe.variant.control;
+            var play = function (title, url, at) { player.prepare({ name: title }, ""); player.start(url, null, at || 0); app.layer = "player"; playShot.name = title; playShot.restart() }
             if (app.playIndex >= 0) {
-                var s = player.seen, log = app.playLog;
-                log.push({ title: list[app.playIndex].title, playing: player.playing, position: player.position, duration: player.duration,
-                           failure: player.failure, video: (s.videoInfo || "").slice(0, 220), audio: (s.audioInfo || "").slice(0, 160),
-                           error: (s.error || "").slice(0, 200) });
+                var s = player.seen, log = app.playLog, ok = player.position > 2000 && !player.failure;       // (a short clip may have ended)
+                log.push({ title: app.playControl ? "control" : list[app.playIndex].title, ok: ok, playing: player.playing, position: player.position,
+                           duration: player.duration, failure: player.failure, tracks: player.subtitleInfo().replace(/^.* audioTrack /, "audioTrack ").replace(/ prefs .* audio /, " audio "),
+                           video: (s.videoInfo || "").slice(0, 420), source: (s.sourceInfo || "").slice(0, 700), error: (s.error || "").slice(0, 200) });
                 app.playLog = log; player.stop();
+                if (app.playControl) { app.playControl = false; if (!ok) { stop(); app.layer = "home"; return } }
+                else if (!ok && control) { app.playControl = true; play("control", control); return }
             }
             if (++app.playIndex >= list.length) { stop(); app.layer = "home"; return }
-            player.prepare({ name: list[app.playIndex].title }, ""); player.start(list[app.playIndex].url, null, 0); app.layer = "player";
+            play(list[app.playIndex].title, list[app.playIndex].url, list[app.playIndex].at);
         }
     }
     function openMenu() { commit(); playMenu = false; layer = "menu"; probe.captures() }
-    onLayerChanged: { probe.act(layer); probe.captures() }
+    onLayerChanged: { still.restart(); probe.act(layer); probe.captures() }
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
     // compile before anyone opens them
@@ -165,16 +263,19 @@ WebOSWindow {
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     // episodes in a show: the library's, or one loaded since (the Anime tab's)
-    function episodeCount(id) {
-        var sh = showData(id), n = 0;
+    function episodesIn(sh) {
+        var n = 0;
         for (var s = 0; sh && sh.seasons && s < sh.seasons.length; s++) n += sh.seasons[s].episodes.length;
         return n;
     }
+    function episodeCount(id) { return episodesIn(showData(id)) }
     // An anime (a Kitsu or AniList id) is a franchise (Catalog.loadFranchise): fetched once, ahead while the
     // selection rests on it or on OK, kept by the id it was asked for and by its Kitsu id (`franchises`), and
     // opened when it's in if OK asked for it (`franchiseOpening`) and it's still the selection. Without it
     // (not on Kitsu, the services down) the title's own page opens, if it has one.
-    function isAnime(id) { return /^(kitsu|anilist):/.test(id || "") }
+    // (Whether a video is anime, for the pick's rules and the track choices, is Streams' to say and nobody
+    // else's: `streams.anime`. This is only whether an id is one a franchise can be fetched for.)
+    function franchiseId(id) { return /^(kitsu|anilist):/.test(id || "") }
     property var franchises: ({})
     property var franchiseLoading: ({})
     property string franchiseOpening: ""
@@ -184,10 +285,11 @@ WebOSWindow {
         catalog.loadFranchise(item);
     }
     function openFranchise(item) {
-        var f = franchises[item.id];
+        var f = franchises[item.id], from = held;
         if (!f) { franchiseOpening = item.id; loadFranchise(item); return }
-        showPage.open(f.item, f.show, item.video || f.item.video || "");
-        layer = "show";
+        hold(f.item, f.show, picked(f, item));
+        showHeld(from);                                    // from a page's Related tab, over that page
+        probe.captures();                                  // lab: a page over a page is a screen change too
     }
     function selected(sourceId, item) { var s = focusItem; return !!s && (s.id === sourceId || s.id === item.id) }
     Connections {
@@ -198,8 +300,14 @@ WebOSWindow {
             app.franchises[sourceId] = f; app.franchises[item.id] = f;
             app.shows[item.id] = show;                     // its episodes, for the player's row and what's next
             if (sourceId.indexOf("anilist:") === 0) anime.resolve(sourceId, item);   // the chart's selection becomes the Kitsu item
+            // playing already (Play from Home before it was in): the franchise becomes the title in hand, so
+            // the player has its row
+            var playing = app.layer === "player" && app.held && app.playTarget && (app.held.item.id === sourceId || app.held.item.id === item.id) ? Episodes.find(show, app.playTarget.id) : null;
+            if (playing) { app.hold(item, show); if (!showPage.load(item, show, app.playTarget.id)) showPage.place(playing); return }
+            // asked for from a page's Related tab: it opens over the page
+            if (sourceId === app.franchiseOpening && app.layer === "show") { app.franchiseOpening = ""; app.openFranchise(item); return }
             if (!app.onHome || !app.selected(sourceId, item)) { if (sourceId === app.franchiseOpening) app.franchiseOpening = ""; return }
-            if (sourceId !== app.franchiseOpening) { showPage.load(item, show); return }      // built ahead
+            if (sourceId !== app.franchiseOpening) { app.buildAhead(sourceId, item, show); return }
             app.franchiseOpening = "";
             app.commit(); app.openFranchise(item);
         }
@@ -226,11 +334,14 @@ WebOSWindow {
         stateOf: function () {
             function id(x) { return x ? x.id || x.name || "?" : null }
             return { layer: app.layer, row: home.row, dayOpen: home.dayOpen, scrolled: home.scrolled,
-                     focusItem: id(app.focusItem), displayItem: id(app.displayItem),
+                     focusItem: id(app.focusItem), displayItem: id(app.displayItem), held: id(app.held ? app.held.item : null),
+                     video: app.playTarget ? app.playTarget.id : "", trail: app.trail.map(function (t) { return t.layer }).join(">"),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
                              visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
                      playLog: app.playLog, subs: player.active ? player.subtitleInfo() : "",
                      playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
+                     art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
+                     page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
@@ -252,7 +363,7 @@ WebOSWindow {
         Item {
             id: scene
             anchors.fill: parent
-            opacity: app.watching ? 0 : 1
+            opacity: app.watching ? 0 : 1      // holds: the scene keeps its screens under the video
             // gone, not just transparent, under the video: its backdrop's slow zoom and the calendar's light
             // stop, so nothing redraws over the film
             visible: opacity > 0
@@ -261,11 +372,12 @@ WebOSWindow {
             Backdrop {
                 id: hero
                 width: parent.width; height: parent.height
-                target: app.displayItem ? app.displayItem.backdrop : ""
+                // an anime franchise's page wears the backdrop of the entry it's on (ShowScreen.backdrop)
+                target: app.layer === "show" && showPage.backdrop ? showPage.backdrop : app.pageItem ? app.pageItem.backdrop || "" : ""
                 // parallax: the backdrop drifts a little against moves along a row
                 pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
-                Behavior on pan { NumberAnimation { id: panning; duration: 700; easing.type: Theme.ease } }
-                onCrossfadeStarted: probe.act("hero crossfade")
+                Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
+                onCrossfadeStarted: { still.restart(); probe.act("hero crossfade") }   // a crossfade is movement too
                 covered: backdropFrost.covering
             }
             // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
@@ -274,10 +386,10 @@ WebOSWindow {
                 id: backdropFrost
                 anchors.fill: parent
                 source: hero
-                frozen: true; sourceBusy: hero.busy || panning.running; sourceMoving: hero.fading
+                frozen: true; sourceBusy: hero.settling; sourceMoving: hero.fading
                 // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
                 hideCovered: true
-                opacity: (app.onHome && app.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)
+                opacity: (app.onHome && app.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
@@ -291,7 +403,9 @@ WebOSWindow {
                 id: info
                 x: Theme.margin
                 // hidden on the calendar, so it doesn't swap to every day there (logo loads, text layout)
-                item: app.scrolled && app.onHome && !home.dayOpen ? null : app.displayItem
+                // Home's selection; on the title page, the title in hand. Under a show page it is away, and
+                // keeps what it showed (the page has its own header)
+                item: app.scrolled && app.onHome && !home.dayOpen ? null : app.layer === "title" && app.held ? app.held.item : app.displayItem
                 // on the title page it moves down to sit just above the actions
                 y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (app.scrolled ? 90 : 150)
                 // it only glides while on screen; hidden, it takes its new place at once and fades in there
@@ -308,9 +422,10 @@ WebOSWindow {
                 focus: app.layer === "show" && !app.playMenu
                 onPlay: app.playAi(episode)
                 onPlayHeld: app.openPlayMenu(episode, rect)
+                onOpenShow: app.openFranchise(show)
                 active: app.layer === "show"
                 source: hero
-                onZoneChanged: probe.act("show " + ["actions", "seasons", "episodes"][zone])
+                onZoneChanged: { probe.act("show " + ["actions", "seasons", "episodes"][zone]); probe.captures() }
             }
             TitleScreen {
                 id: titlePage
@@ -345,6 +460,8 @@ WebOSWindow {
                 shownItem: app.displayItem
                 onExitTop: app.layer = "tabs"
                 onRowChanged: probe.act("anime row")
+                onMenuChanged: probe.captures()            // lab: captures follow its lists, and a season on its way
+                onSeasonLoadingChanged: probe.captures()
                 // a show from the chart opens once its franchise is in (Catalog.loadFranchise)
                 onActivated: app.open()
             }
@@ -359,22 +476,25 @@ WebOSWindow {
             frozen: true; sourceBusy: hero.busy || info.busy
             // around the held card, or the held Play button or episode
             hole: app.playMenu ? Qt.rect(app.menuAnchor.x - 14, app.menuAnchor.y - 14, app.menuAnchor.width + 28, app.menuAnchor.height + 28) : home.focusRect
-            opacity: app.layer === "menu" || app.playMenu ? 1 : (app.warming ? 0.003 : 0)
+            opacity: app.layer === "menu" || app.playMenu ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.InOutQuad } }
         }
         SegmentedBar {
             id: tabs
             focus: app.layer === "tabs"
             source: scene
+            // Its blur is taken every frame, five small passes: taken twice a second instead (the backdrop
+            // under it only drifts), each capture was a 14 to 16 ms frame on its own and often a late one,
+            // where the steady chain costs about 2 ms of every frame.
             model: ["Home", "Anime", "Movies", "Series", "Library", { icon: "search" }]
             // the tab bar belongs to the top of Home; pages and the calendar move it away
             readonly property bool shown: app.onHome && !app.scrolled
             shadow: shown ? 0.8 : 0
             x: (parent.width - width) / 2; y: shown ? 44 : -100
-            opacity: app.layer === "menu" ? 0.3 : 1
+            opacity: app.layer === "menu" ? 0.3 : 1      // holds: only dims; its tabs do not change
             Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
             Behavior on opacity { NumberAnimation { duration: 300 } }
-            onCurrentIndexChanged: probe.act("tabs")
+            onCurrentIndexChanged: { still.restart(); probe.act("tabs") }
         }
         StreamScreen {
             id: streamPage
@@ -390,25 +510,42 @@ WebOSWindow {
             tracks: trackChoice
             useTee: !probe.variant.noTee
             subtitlesShown: !probe.variant.noSubs
-            // the season's episodes, when the show page holds this show
-            readonly property bool sameShow: showPage.item === app.displayItem && !!app.playTarget && app.playTarget.type === "series"
-            episodes: sameShow ? showPage.episodes : []
-            episodeCards: sameShow ? showPage.episodeData : []
+            // the row is the show page's, whenever what plays is in the show in hand (an episode, a film, a
+            // special); Related is left off, there's nothing to play in it
+            readonly property bool inShow: !!app.playingAt && showPage.show === app.held.show
+            episodes: inShow ? showPage.episodes : []
+            row: !inShow ? ({}) : showPage.row.next && showPage.row.next.kind === "related" ? ({ cards: showPage.row.cards, prev: showPage.row.prev }) : showPage.row
+            posterRow: inShow && showPage.posterRow
+            rowLabel: inShow ? showPage.seasonName(showPage.shownSeason) : ""
+            onTurnSeason: showPage.place({ s: key, e: 0 })
+            onOpeningEpisodes: { var at = Episodes.find(showPage.show, episodeId); if (at && at.s !== showPage.shownSeason) showPage.place(at) }
             episodeId: app.playTarget ? app.playTarget.id : ""
             stillArt: app.playTarget ? app.episodeArt(app.playTarget.id) : ""
             videoId: app.playTarget ? app.playTarget.id : ""
+            imdbEpisode: app.playTarget ? app.imdbEpisode(app.playTarget.id) : ""
             // inside the player, an episode change hands off: the picture fades into the episode's still
             // the episode after this one (Up next, and fetched ahead), into the next season
-            nextEpisode: sameShow ? Episodes.after(showPage.show, app.playTarget.id, app.today) : null
+            nextEpisode: app.playingAt ? Episodes.after(app.held.show, app.playTarget.id, app.today) : null
             onPlayEpisode: {
-                player.beginHandoff(episode.thumb, "E" + episode.episode, episode.title || "");
+                player.beginHandoff(episode.thumb, episode.type === "movie" ? "" : Episodes.chip(episode.episode), episode.title || "");
                 // the row below the player follows into another season
-                var at = Episodes.find(showPage.show, episode.id);
+                var at = Episodes.find(app.held.show, episode.id);
                 if (at) showPage.place(at);
-                app.playAi(showPage.target(showPage.show, at ? at.s : showPage.shownSeason, episode));
+                app.playAi(showPage.target(app.held.show, at ? at.s : showPage.shownSeason, episode));
             }
             // once an episode plays, the next one's streams are fetched ahead (as stremio-core does)
-            onPlayingChanged: if (playing && nextEpisode) streams.prefetch("series", nextEpisode.id)
+            onPlayingChanged: if (playing && nextEpisode) streams.prefetch(nextEpisode.type || "series", nextEpisode.id)
+            // a stream that fails before its first frame, or whose file isn't one to watch: the next
+            // candidate plays instead (Streams.leaveOut)
+            function next(why, forGood) {
+                if (!stream || !streams.ownPick()) return;
+                var url = stream.url;
+                prepare(app.playTarget ? app.lookFor(app.playTarget.id) : null, app.playTarget ? app.playTarget.label : "");      // first: the next one may start inside leaveOut
+                streams.leaveOut(url, why, forGood);
+            }
+            onFailureChanged: if (failure && startMs < 0) next("Didn't play", false)
+            onUnsuitable: next(why, certain)
+            onFinished: app.leavePlayer()
             onZoneChanged: probe.captures()            // lab: screen captures follow the overlay too
             onMenuLevelChanged: probe.captures()
             onFavoriteMenuChanged: probe.captures()
@@ -416,7 +553,7 @@ WebOSWindow {
             // another stream of the same video, from where it is now
             onSwitchStream: { app.playTarget.resumeMs = player.position; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
-            group: streams.anime ? "anime" : "other"
+            group: probe.variant.playGroup || (streams.anime ? "anime" : "other")       // lab: the play list's clips as anime
             focus: app.layer === "player"
             active: app.layer === "player"
         }
@@ -443,14 +580,10 @@ WebOSWindow {
 
         Keys.onPressed: {
             if (Remote.isBack(event.key) && app.playMenu) { event.accepted = true; app.playMenu = false }
-            else if (Remote.isBack(event.key) && app.layer === "player") {
-                event.accepted = true; streams.cancel(); player.stop();
-                // the show page comes back on the episode last played (it may have changed in the player)
-                if (app.playerBack === "show" && app.playTarget && app.playTarget.type === "series") showPage.rest(app.playTarget.id);
-                app.layer = app.playerBack;
-            }
-            else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.layer = app.pageLayer }
-            else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.layer = "home" }
+            else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; app.leavePlayer() }
+            else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.back() }
+            else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
+            else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
         }
     }
