@@ -222,7 +222,11 @@ public:
                 const QVariantMap fresh = Live::item(meta);
                 for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
                 item["type"] = type;
-                back([this, id, item, show] { emit franchiseReady(id, item, show); });
+                back([this, source, id, item, show, state] {
+                    // watched while it was on its way: its seasons are made again with what the library says now
+                    if (m_docs.library.value(id).toObject() != state) { loadFranchise(source); return; }
+                    emit franchiseReady(id, item, show);
+                });
             });
         });
     }

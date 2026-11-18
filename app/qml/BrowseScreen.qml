@@ -28,27 +28,27 @@ FocusScope {
     onShownChanged: if (shown && account) account.browse(what)
     onWhatChanged: if (shown && account) account.browse(what)
 
-    // The rows as they were built: the list they are of (its filters' choices), how many titles and which
-    // (`stamp`). The same titles again change nothing; the same list with more after the ones built (a
-    // page more, or the rest of this one) adds rows where they are; anything else (another list, a title
-    // gone, another order) replaces them from the top. Three rows are built at a time, a frame apart:
-    // fifty titles at once was a 60 to 70 ms stall as a tab first showed.
+    // The rows as they were built: the list they are of (its filters' choices) and which titles, in order
+    // (Account.stampOf). While those are still the list's first titles, nothing is rebuilt: a page more, or
+    // the rest of this one, adds rows where they are; anything else (another list, a title gone, another
+    // order) replaces them from the top. Three rows are built at a time, a frame apart: fifty titles at
+    // once was a 60 to 70 ms stall as a tab first showed.
     property string built: ""
     property int builtCount: 0
     property var builtStamp
-    property string builtLast: ""
     Connections { target: browse.account; onBrowsingChanged: browse.take() }
     Timer { id: rest; interval: 16; onTriggered: browse.take() }
     function take() {
         if (!mine || page.loading && !page.count) return;
         var key = what + "|" + filters.map(function (f) { return f.current }).join(",");
-        if (key === built && page.stamp === builtStamp && builtCount === page.count) return;
-        var more = key === built && page.count > builtCount && builtCount > 0 && (account.items(builtCount - 1, 1)[0] || {}).id === builtLast;
+        var same = key === built && builtCount <= page.count && account.stampOf(builtCount) === builtStamp;
+        if (same && builtCount === page.count) return;
+        var more = same && builtCount > 0;
         var from = more ? builtCount - builtCount % grid.perRow : 0, to = Math.min(page.count, from + 3 * grid.perRow), rows = more ? grid.latest.slice() : [];
         for (var i = from; i < to; i += grid.perRow) rows[i / grid.perRow] = { items: account.items(i, grid.perRow) };
         // under the info, or right under the filters: the rows take their place as they come in
         if (more) grid.replace(rows); else { grid.row = Math.min(grid.row, 0); grid.column = 0; grid.show(rows, "grid", hero ? 650 : 240) }
-        built = key; builtCount = to; builtStamp = page.stamp; builtLast = to ? account.items(to - 1, 1)[0].id : "";
+        built = key; builtCount = to; builtStamp = account.stampOf(to);
         if (to < page.count) rest.restart();
     }
     onRowChanged: if (mine && page.more && !page.loading && row >= grid.rows.length - 3) account.more()

@@ -48,6 +48,8 @@ inline void labLog(const QString &line, double at = monoMs()) {
 // counter, the caller and the call stack). The watcher names the frames and logs each as
 // "stack leaf < caller < ...", stamped with when it was taken, so a GUI stall can be read as what ran in
 // it (tools/lab-stacks.py). A GUI thread at rest is never interrupted.
+// For lab runs only, behind its switch: walking the stack inside a signal handler is not safe everywhere
+// (a thread stopped inside the loader or the allocator can hang there), and the app never does it unasked.
 // With the window given, the render thread is sampled the same way (its lines start "rstack"): what the
 // renderer does in a frame that takes too long.
 struct GuiSample { double at; int count; void *frames[20]; };
@@ -151,16 +153,16 @@ public:
         m_beat.setTimerType(Qt::PreciseTimer); m_beat.setInterval(16);
         connect(&m_beat, &QTimer::timeout, this, [this] {
             const double now = monoMs(), gap = now - m_lastBeat, cpu = threadCpuMs(), worked = cpu - m_lastCpu;
-            const double handing = m_handing.exchange(0);
+            const double stall = gap - m_handing.exchange(0);       // less what it waited handing frames over
             m_lastBeat = now; m_lastCpu = cpu;
             if (gap <= 50) return;
             QMutexLocker l(&m_mutex);
             if (now - m_slowSwap < 15) { labLog(QString("gui waited on a slow swap %1 ms").arg(gap, 0, 'f', 1)); return; }
-            if (gap - handing <= 50) { labLog(QString("gui waited %1 ms of %2 to hand a frame over, busy %3").arg(handing, 0, 'f', 1).arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0)); return; }
-            m_stalls[m_phase].append(gap);
+            if (stall <= 50) { labLog(QString("gui waited %1 ms of %2 to hand a frame over, busy %3").arg(gap - stall, 0, 'f', 1).arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0)); return; }
+            m_stalls[m_phase].append(stall);
             // `busy`: the GUI thread's own CPU time in the gap; far less than the gap means it was blocked
             // or starved by other threads and processes, not running our code
-            labLog(QString("gui stall %1 ms busy %2").arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0));
+            labLog(QString("gui stall %1 ms busy %2").arg(stall, 0, 'f', 1).arg(worked, 0, 'f', 0));
         });
     }
     bool heartbeat() const { return m_beat.isActive(); }

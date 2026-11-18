@@ -40,7 +40,10 @@ FocusScope {
     }
     // the rows it shows, or the ones on their way in while the old ones fade out: what `replace` replaces
     readonly property var latest: pending || rows
-    function replace(next) { if (pending) pending = next; else { rows = next; if (row >= rows.length) row = rows.length - 1 } }
+    function replace(next) {
+        if (visible) Remote.stir();
+        if (pending) pending = next; else { rows = next; if (row >= rows.length) row = rows.length - 1 }
+    }
     // new rows reach the row slots a slot a frame, top first (`staggering`): handing every slot its
     // cards at once (28 cards resized and rebound) stalled ~90 ms; they arrive while the list fades in
     property bool staggering: false

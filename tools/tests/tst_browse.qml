@@ -11,14 +11,15 @@ Item {
     QtObject {
         id: account
         property var all: []
-        property var browsing: ({ what: "library", filters: [], count: 0, stamp: 0, more: false, loading: false })
+        property var browsing: ({ what: "library", filters: [], count: 0, more: false, loading: false })
         function browse(what) {}
         function choose(key, option) {}
         function more() {}
         function items(from, n) { return all.slice(from, from + n) }
+        function stampOf(n) { return all.slice(0, n).map(function (i) { return i.id }).join(",") }
         function show(ids) {
             all = ids.map(function (id) { return { id: id, name: id, title: id, art: "" } });
-            browsing = { what: "library", filters: [], count: ids.length, stamp: ids.join(","), more: false, loading: false };
+            browsing = { what: "library", filters: [], count: ids.length, more: false, loading: false };
         }
     }
     // on screen (a TestCase's own children are not), so new rows fade the old ones out first, as in the app
@@ -49,6 +50,12 @@ Item {
         // added to the old rows, which left holes)
         account.show(ids(40, 100)); settle();
         compare(titles().join(","), ids(40, 100).join(","));
+        // grown, but with its first two titles the other way round: not a page more (the rows built
+        // were kept as long as the last of them was where it had been)
+        var grown = ids(42, 100).reverse().slice(2).reverse();     // the same forty
+        grown = [grown[1], grown[0]].concat(grown.slice(2), ["t140", "t141"]);
+        account.show(grown); settle();
+        compare(titles().join(","), grown.join(","));
     }
 }
 }

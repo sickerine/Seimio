@@ -71,11 +71,13 @@ FocusScope {
         }
         return out;
     }
-    // built ahead of its first show; true when it had rows to build
+    // built ahead of its first show; true when it built rows (a chart with nothing in it has none, and
+    // says so each time it's asked)
     function warm() {
         if (shown || rows.length || !catalog || !catalog.seasonReady) return false;
-        grid.show(build(), view);
-        return true;
+        var ahead = build();
+        if (ahead.length) grid.show(ahead, view);
+        return ahead.length > 0;
     }
     property bool stale: false                       // a season came in while the tab was away
     // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with

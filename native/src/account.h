@@ -26,8 +26,9 @@ class Account : public QObject {
     Q_PROPERTY(QVariantMap link READ link NOTIFY linkChanged)
     Q_PROPERTY(int libraryRevision READ libraryRevision NOTIFY libraryChanged)   // read with inLibrary() or watched(), so a binding follows
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
-    //   browsing   { what, filters: [{ key, options: [names], current }], count, stamp (of which titles, in order), more, loading }
+    //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
     //   items(from, n)   that many of its titles, as the screens show a title
+    //   stampOf(n)   a number for its first n titles, in order: the same number, the same titles
     Q_PROPERTY(QVariantMap browsing READ browsing NOTIFY browsingChanged)
 public:
     explicit Account(QObject *parent = nullptr) : QObject(parent) {
@@ -58,9 +59,10 @@ public:
 
     QVariantMap browsing() const { return m_browsing; }
     Q_INVOKABLE QVariantList items(int from, int n) const { return m_items.mid(from, n); }
+    Q_INVOKABLE uint stampOf(int n) const { uint stamp = 0; for (int i = 0; i < n && i < m_ids.size(); i++) stamp = stamp * 31 + qHash(m_ids[i]); return stamp; }
     Q_INVOKABLE void browse(const QString &what) {
         if (what == m_browse) return;
-        m_browse = what; m_items.clear(); m_browsing = QVariantMap { { "what", what }, { "filters", QVariantList() }, { "count", 0 }, { "more", false }, { "loading", true } };
+        m_browse = what; m_items.clear(); m_ids.clear(); m_browsing = QVariantMap { { "what", what }, { "filters", QVariantList() }, { "count", 0 }, { "more", false }, { "loading", true } };
         emit browsingChanged();
         if (what.isEmpty()) return;
         // the library keeps the choice it had; Discover is asked for the type (a list and a genre are that type's)
@@ -186,7 +188,8 @@ private:
     void browsed() {
         const QString what = m_browse;
         const int ticket = ++m_ticket;
-        auto out = std::make_shared<QPair<QVariantMap, QVariantList>>();
+        struct Page { QVariantMap browsing; QVariantList items; QStringList ids; };
+        auto out = std::make_shared<Page>();
         QThread *worker = QThread::create([out, what] {
             const QJsonObject page = Core::view(what == "library" ? "library.page" : "discover.page").object();
             QVariantList filters;
@@ -203,18 +206,18 @@ private:
                 const QJsonArray genres = i.value("genres").toArray();
                 for (int g = 0; g < genres.size() && g < 2; g++) chips << genres[g].toString();
                 chips.removeAll(QString());
-                out->second << QVariantMap { { "id", i.value("id").toString() }, { "type", i.value("type").toString() }, { "name", i.value("name").toString() },
+                out->ids << i.value("id").toString();
+                out->items << QVariantMap { { "id", i.value("id").toString() }, { "type", i.value("type").toString() }, { "name", i.value("name").toString() },
                     { "title", i.value("name").toString() }, { "art", i.value("poster").toString() }, { "poster", i.value("poster").toString() },
                     { "backdrop", i.value("backdrop").toString() }, { "logo", i.value("logo").toString() }, { "description", i.value("description").toString().left(220) },
                     { "chips", chips }, { "rating", i.value("rating").toString() }, { "episode", QString() }, { "progress", -1 } };
             }
-            QString ids; for (const QVariant &v : out->second) ids += v.toMap().value("id").toString() + ',';
-            out->first = QVariantMap { { "what", what }, { "filters", filters }, { "count", out->second.size() }, { "stamp", qHash(ids) },
+            out->browsing = QVariantMap { { "what", what }, { "filters", filters }, { "count", out->items.size() },
                                        { "more", page.value("more").toBool() }, { "loading", page.value("loading").toBool() } };
         });
         connect(worker, &QThread::finished, this, [this, out, ticket] {
             if (ticket != m_ticket) return;                 // a newer page is on its way
-            m_items = out->second; m_browsing = out->first;
+            m_items = out->items; m_ids = out->ids; m_browsing = out->browsing;
             emit browsingChanged();
         });
         connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -223,6 +226,7 @@ private:
     QString m_browse;
     QVariantMap m_browsing;
     QVariantList m_items;
+    QStringList m_ids;                              // m_items' ids, for stampOf
     int m_ticket = 0;
     bool m_libraryAsked = false;
     bool m_signedIn = false, m_reporting = false;
