@@ -21,11 +21,15 @@ FocusScope {
     property string found: ""
     property bool entering: false            // Enter came before the answer: on to the rows when it is in
     onQueryChanged: { entering = false; ask.restart() }
+    onShownChanged: if (!shown) entering = false           // left before the answer: it takes no remote later
     Timer { id: ask; interval: 450; onTriggered: if (search.catalog) search.catalog.search(search.query) }
     Connections {
         target: search.catalog
         onFound: if (query === search.query.trim()) {
-            search.found = query; grid.row = -1; grid.show(rows, "shelf", 240);
+            // The text the rows already show, asked again (a space after it): they stay as they are. They
+            // may have the remote by now, or a page over them, and a row put back to -1 then left the
+            // remote with nothing: Back went nowhere.
+            if (query !== search.found) { search.found = query; grid.row = -1; grid.show(rows, "shelf", 240) }
             if (search.entering) search.enter();
         }
     }

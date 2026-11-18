@@ -1,7 +1,8 @@
 // A search field that opens out of a tab bar's search icon: a glass pill with the icon and what is typed.
-// `open` grows it from `iconX` (where the icon sits, in its parent) to the middle of its parent and gives
-// its text the remote, which brings up the TV's keyboard. Enter on that keyboard is `accepted`. Left at the
-// start of the text, Up and Down pass on.
+// `open` grows it from `iconX` (where the icon sits, in its parent) to the middle of its parent. Given the
+// remote (`focus`), its text has it, which brings up the TV's keyboard; opening takes nothing (it opens
+// again over results that have the remote). Enter on that keyboard is `accepted`. Left at the start of the
+// text, Up and Down pass on.
 import QtQuick 2.12
 
 FocusScope {
@@ -24,7 +25,6 @@ FocusScope {
     width: barHeight + (openWidth - barHeight) * t; height: barHeight
     opacity: Math.min(1, t * 2.5)
     visible: t > 0
-    onOpenChanged: if (open) input.forceActiveFocus()      // the text taking the remote is what brings the keyboard up
 
     Glass { anchors.fill: parent; radius: height / 2; source: field.source; preblurred: field.preblurred; sx: field.x; sy: field.sy }
     Icon { id: glyph; name: "search"; width: 30; height: 30; x: (field.barHeight - width) / 2; anchors.verticalCenter: parent.verticalCenter; color: Theme.ink }
