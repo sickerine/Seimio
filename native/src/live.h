@@ -45,6 +45,64 @@ public:
     }
     static QString metahub(const QString &kind, const QString &id) { return "https://images.metahub.space/" + kind + "/medium/" + id + "/img"; }
     static QJsonArray firstN(const QJsonArray &a, int n) { QJsonArray out; for (int i = 0; i < a.size() && i < n; i++) out << a[i]; return out; }
+    // AniList's fields for a show, and the show as the catalog's documents carry it
+    static QByteArray fields() {
+        return "id isAdult popularity averageScore format episodes duration status source "
+            "title { romaji english } bannerImage coverImage { extraLarge color } description(asHtml: false) genres "
+            "studios(isMain: true) { nodes { name } } startDate { year month day } nextAiringEpisode { episode airingAt } "
+            "airingSchedule(perPage: 50) { nodes { episode airingAt } }";
+    }
+    static QJsonObject shown(const QJsonObject &md, bool leftover) {
+        const int id = md.value("id").toInt();
+        const QString format = md.value("format").toString();
+        const QJsonObject title = md.value("title").toObject(), start = md.value("startDate").toObject(), next = md.value("nextAiringEpisode").toObject();
+        QStringList studios; for (const QJsonValue &n : md.value("studios").toObject().value("nodes").toArray()) if (studios.size() < 2) studios << n.toObject().value("name").toString();
+        QString description = md.value("description").toString();
+        description.replace(QRegularExpression("<[^>]+>|\\(Source:[^)]*\\)"), " ");
+        description = description.simplified().left(320);
+        QJsonArray airing; for (const QJsonValue &n : md.value("airingSchedule").toObject().value("nodes").toArray()) airing << n;
+        return QJsonObject {
+            { "id", "anilist:" + QString::number(id) }, { "anilist", id }, { "name", title.value("english").toString(title.value("romaji").toString()) },
+            { "format", format }, { "episodes", md.value("episodes").toInt() }, { "duration", md.value("duration").toInt() },
+            { "studio", studios.join(", ") }, { "genres", firstN(md.value("genres").toArray(), 4) }, { "score", md.value("averageScore").toInt() },
+            { "popularity", md.value("popularity").toInt() }, { "leftover", leftover },
+            { "start", QString("%1-%2-%3").arg(start.value("year").toInt(), 4, 10, QChar('0')).arg(start.value("month").toInt(), 2, 10, QChar('0')).arg(start.value("day").toInt(), 2, 10, QChar('0')) },
+            { "next", next.isEmpty() ? QJsonValue() : QJsonValue(QJsonObject { { "episode", next.value("episode") }, { "at", next.value("airingAt") } }) },
+            { "color", md.value("coverImage").toObject().value("color").toString() }, { "cover", md.value("coverImage").toObject().value("extraLarge").toString() },
+            { "banner", md.value("bannerImage").toString() }, { "description", description }, { "airing", airing } };
+    }
+    // A Cinemeta meta or preview as the screens show a title
+    static QVariantMap item(const QJsonObject &meta) {
+        const QString id = meta.value("id").toString();
+        QString year = meta.value("releaseInfo").toVariant().toString();
+        while (year.endsWith('-') || year.endsWith(QChar(0x2013))) year.chop(1);
+        QStringList chips { year, meta.value("runtime").toString() };
+        for (const QJsonValue &g : firstN(meta.value("genres").toArray(), 2)) chips << g.toString();
+        chips.removeAll(QString());
+        const QString poster = meta.value("poster").toString(metahub("poster", id));
+        return QVariantMap { { "id", id }, { "type", meta.value("type").toString() }, { "name", meta.value("name").toString() }, { "title", meta.value("name").toString() },
+            { "art", poster }, { "poster", poster }, { "backdrop", meta.value("background").toString(metahub("background", id)) },
+            { "logo", meta.value("logo").toString(metahub("logo", id)) }, { "description", meta.value("description").toString().left(220) },
+            { "chips", chips }, { "rating", meta.value("imdbRating").toVariant().toString() }, { "episode", QString() }, { "progress", -1 } };
+    }
+    // Titles by name: Cinemeta's films and series, and anime from AniList, the most popular of the matches
+    // first (Kitsu's own search ranks poorly: "demon slayer" starts with "Onigiri"). `done({ movies, series,
+    // anime })`: two lists of Cinemeta previews and one of shows as a season's.
+    void search(const QString &query, std::function<void(QJsonObject)> done) {
+        auto out = std::make_shared<QJsonObject>();
+        auto left = std::make_shared<int>(3);
+        auto finish = [out, left, done] { if (--*left == 0) done(*out); };
+        for (const char *type : { "movie", "series" })
+            get(QString(kCinemeta) + "/catalog/" + type + "/top/search=" + QString::fromUtf8(QUrl::toPercentEncoding(query)) + ".json", [out, finish, type](const QJsonDocument &d, bool) {
+                (*out)[type == QByteArray("movie") ? "movies" : "series"] = d.object().value("metas").toArray(); finish();
+            });
+        anilist("query ($q: String) { Page(perPage: 24) { media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
+                QJsonObject { { "q", query } }, [out, finish](const QJsonObject &data) {
+            QJsonArray shows;
+            for (const QJsonValue &v : data.value("Page").toObject().value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) shows << shown(v.toObject(), false);
+            (*out)["anime"] = shows; finish();
+        });
+    }
     // one Cinemeta title's meta (a film, a series), or nothing
     void title(const QString &type, const QString &id, std::function<void(QJsonObject)> done) {
         get(QString(kCinemeta) + "/meta/" + type + "/" + id + ".json", [done](const QJsonDocument &d, bool) { done(d.object().value("meta").toObject()); });
@@ -198,12 +256,8 @@ private:
     // is in (the calendar needs only that), `done(season)` with every show's art.
     void chart(const QString &name, int year, bool leftovers, std::function<void(std::shared_ptr<QJsonArray>)> listed, std::function<void(QJsonObject)> done) {
         const int lastPage = leftovers ? 8 : 3;
-        static const QByteArray fields = "id isAdult popularity averageScore format episodes duration status source "
-            "title { romaji english } bannerImage coverImage { extraLarge color } description(asHtml: false) genres "
-            "studios(isMain: true) { nodes { name } } startDate { year month day } nextAiringEpisode { episode airingAt } "
-            "airingSchedule(perPage: 50) { nodes { episode airingAt } }";
-        const QByteArray seasonQ = "query ($page: Int, $season: MediaSeason, $year: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC) { " + fields + " } } }";
-        const QByteArray leftoverQ = "query ($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(status: RELEASING, type: ANIME, sort: POPULARITY_DESC) { " + fields + " } } }";
+        const QByteArray seasonQ = "query ($page: Int, $season: MediaSeason, $year: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }";
+        const QByteArray leftoverQ = "query ($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(status: RELEASING, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }";
         auto shows = std::make_shared<QJsonArray>();
         auto seen = std::make_shared<QSet<int>>();
         auto take = [shows, seen](const QJsonObject &md, bool leftover) {
@@ -211,21 +265,7 @@ private:
             const QString format = md.value("format").toString();
             if (md.value("isAdult").toBool() || seen->contains(id) || (leftover && format != "TV" && format != "TV_SHORT" && format != "ONA")) return;
             seen->insert(id);
-            const QJsonObject title = md.value("title").toObject(), start = md.value("startDate").toObject(), next = md.value("nextAiringEpisode").toObject();
-            QStringList studios; for (const QJsonValue &n : md.value("studios").toObject().value("nodes").toArray()) if (studios.size() < 2) studios << n.toObject().value("name").toString();
-            QString description = md.value("description").toString();
-            description.replace(QRegularExpression("<[^>]+>|\\(Source:[^)]*\\)"), " ");
-            description = description.simplified().left(320);
-            QJsonArray airing; for (const QJsonValue &n : md.value("airingSchedule").toObject().value("nodes").toArray()) airing << n;
-            shows->append(QJsonObject {
-                { "id", "anilist:" + QString::number(id) }, { "anilist", id }, { "name", title.value("english").toString(title.value("romaji").toString()) },
-                { "format", format }, { "episodes", md.value("episodes").toInt() }, { "duration", md.value("duration").toInt() },
-                { "studio", studios.join(", ") }, { "genres", firstN(md.value("genres").toArray(), 4) }, { "score", md.value("averageScore").toInt() },
-                { "popularity", md.value("popularity").toInt() }, { "leftover", leftover },
-                { "start", QString("%1-%2-%3").arg(start.value("year").toInt(), 4, 10, QChar('0')).arg(start.value("month").toInt(), 2, 10, QChar('0')).arg(start.value("day").toInt(), 2, 10, QChar('0')) },
-                { "next", next.isEmpty() ? QJsonValue() : QJsonValue(QJsonObject { { "episode", next.value("episode") }, { "at", next.value("airingAt") } }) },
-                { "color", md.value("coverImage").toObject().value("color").toString() }, { "cover", md.value("coverImage").toObject().value("extraLarge").toString() },
-                { "banner", md.value("bannerImage").toString() }, { "description", description }, { "airing", airing } });
+            shows->append(shown(md, leftover));
         };
         // pages until the popularity falls under the floor
         auto pages = std::make_shared<std::function<void(QByteArray, QJsonObject, int, int, bool, std::function<void()>)>>();

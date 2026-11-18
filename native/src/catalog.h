@@ -209,20 +209,30 @@ public:
         m_live.title(type, id, [this, source, id, type](const QJsonObject &meta) {
             if (meta.isEmpty()) { emit franchiseFailed(id, "Couldn't load it"); return; }
             const QJsonObject show = type == "series" ? Live::show(meta, m_docs.library.value(id).toObject()) : QJsonObject();
-            QString year = meta.value("releaseInfo").toVariant().toString();
-            while (year.endsWith('-') || year.endsWith(QChar(0x2013))) year.chop(1);
-            QStringList chips { year, meta.value("runtime").toString() };
-            for (const QJsonValue &g : Live::firstN(meta.value("genres").toArray(), 2)) chips << g.toString();
-            chips.removeAll(QString());
+            // what the screen showed, with the meta's facts and art; its own place in the title stays
             QVariantMap item = source;
-            item["type"] = type; item["name"] = item["title"] = meta.value("name").toString(source.value("name").toString());
-            item["backdrop"] = meta.value("background").toString(Live::metahub("background", id));
-            item["logo"] = meta.value("logo").toString(Live::metahub("logo", id));
-            item["description"] = meta.value("description").toString().left(220);
-            item["chips"] = chips; item["rating"] = meta.value("imdbRating").toVariant().toString();
-            if (!item.contains("episode")) item["episode"] = QString();
-            if (!item.contains("progress")) item["progress"] = -1;
+            const QVariantMap fresh = Live::item(meta);
+            for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
+            item["type"] = type;
             emit franchiseReady(id, item, show.toVariantMap());
+        });
+    }
+    // Titles by name (Live::search), as rows for a CardGrid: `found(query, rows)`, each row { title, shelf,
+    // items }, the empty ones left out. Only the last search asked for answers.
+    Q_INVOKABLE void search(const QString &query) {
+        const QString q = query.trimmed();
+        m_searching = q;
+        if (q.size() < 2) { emit found(q, QVariantList()); return; }
+        m_live.search(q, [this, q](const QJsonObject &r) {
+            if (q != m_searching) return;
+            QVariantList rows, movies, series, anime;
+            for (const QJsonValue &v : r.value("movies").toArray()) movies << Live::item(v.toObject());
+            for (const QJsonValue &v : r.value("series").toArray()) series << Live::item(v.toObject());
+            Data d; Data::loadSeason(d, QJsonObject { { "shows", r.value("anime") } });
+            for (const QVariantMap &m : d.season) anime << m;
+            const QList<QPair<QString, QVariantList>> found { { "Movies", movies }, { "Series", series }, { "Anime", anime } };
+            for (const auto &f : found) if (!f.second.isEmpty()) rows << QVariantMap { { "title", f.first }, { "shelf", true }, { "items", f.second } };
+            emit this->found(q, rows);
         });
     }
     // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
@@ -345,6 +355,7 @@ signals:
     void seasonFailed(const QString &name);
     void franchiseReady(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
     void franchiseFailed(const QString &sourceId, const QString &reason);
+    void found(const QString &query, const QVariantList &rows);
 
 private:
     struct Data {
@@ -515,6 +526,7 @@ private:
         if (m_stale) { m_stale = false; reloadNow(); }
     }
 
+    QString m_searching;                                   // the last search asked for
     Live::Docs m_docs;                                     // Home's documents as last fetched
     QTimer m_again;
     bool m_stale = false;

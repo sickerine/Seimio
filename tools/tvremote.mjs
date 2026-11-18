@@ -1,6 +1,6 @@
 // LG network remote (the SSAP API phone remotes use). Pairs once (accept the prompt on the TV), then sends
 // remote buttons through the TV's real input path.
-// usage: node tvremote.mjs pair | node tvremote.mjs press RIGHT 30 300   (button, count, ms between)
+// usage: node tvremote.mjs pair | node tvremote.mjs press RIGHT 30 300   (button, count, ms between) | node tvremote.mjs type "some text"
 import { readFileSync, writeFileSync } from "fs";
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // the TV's certificate is self-signed
 const TV = process.env.TV_HOST || "192.168.1.37";
@@ -33,5 +33,10 @@ if (cmd === "press") {
   }
   input.close();
   console.log(`sent ${count} x ${button}`);
+}
+// text into whatever field the TV's keyboard is up for (`button` is the text here)
+if (cmd === "type") {
+  const r = await send("request", "ssap://com.webos.service.ime/insertText", { text: button, replace: 0 });
+  console.log(r.type === "error" ? "type failed: " + r.error : `typed ${button}`);
 }
 ws.close();

@@ -19,6 +19,7 @@ Frost 1.0 Frost.qml
 Scrim 1.0 Scrim.qml
 SegmentedBar 1.0 SegmentedBar.qml
 FilterBar 1.0 FilterBar.qml
+SearchField 1.0 SearchField.qml
 BarRow 1.0 BarRow.qml
 MediaCard 1.0 MediaCard.qml
 Avatar 1.0 Avatar.qml

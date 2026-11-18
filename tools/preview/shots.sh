@@ -33,9 +33,10 @@ js() {
     anime) echo 'win.tab = 1' ;;
     movies) echo 'win.tab = 2' ;;
     library) echo 'win.tab = 4' ;;
+    search) echo "win.tab = 5; win.layer = 'tabs'; win.searchText = 'demon slayer'" ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title profile signin anime movies library gallery gallery2)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title profile signin anime movies library search gallery gallery2)
 fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; day="$DAY"; case "$s" in gallery*) screen="$P/$s.qml"; day="";; esac

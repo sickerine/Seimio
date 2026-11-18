@@ -158,6 +158,14 @@ Item {
             color: card.focused ? "#40ffffff" : "#1affffff"
             border.width: card.focused ? 2 : 0; border.color: "#59ffffff"
             Behavior on color { ColorAnimation { duration: Theme.fast } }
+            // a title with no art at all carries its name (never while art is on its way: it would be a
+            // name that a picture then replaces)
+            Text {
+                visible: card.title !== "" && (card.art === "" || (img.status === Image.Error && img.failed))
+                anchors.centerIn: parent; width: parent.width - 36
+                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; maximumLineCount: 4; elide: Text.ElideRight
+                text: card.title; color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 22; font.weight: Font.DemiBold
+            }
         }
         Text {
             visible: card.caption !== ""
