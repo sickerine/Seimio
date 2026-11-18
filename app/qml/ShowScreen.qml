@@ -39,6 +39,21 @@ FocusScope {
         return { id: ep.id, label: episodeLabel(sh, season, ep), progress: ep.progress || 0, type: ep.type || "series",
                  plays: ep.type !== "show", watched: !!ep.watched, ahead: ep.released > today, name: ep.title || "", poster: ep.poster || "" };
     }
+    // A season's tab, for its menu: all of it watched or not. `titles`: the titles of Stremio's its cards
+    // are (an anime's season is one or more of Kitsu's entries, a film is one), each marked whole; a plain
+    // series has none and goes by the season's number (`id`, `season`). `watched`: everything out in it
+    // is. Related shows are no season of this title.
+    function seasonCard(s) {
+        var se = seasons[s], titles = [], known = {}, out = 0, done = 0;
+        if (!se || se.kind === "related") return null;
+        se.episodes.forEach(function (ep) {
+            if (ep.released > today) return;      // still to come: no part of what "all" marks
+            out++; if (ep.watched) done++;
+            var entry = show.entries && ep.entry !== undefined ? show.entries[ep.entry] : null;
+            if (entry && !known[entry.id]) { known[entry.id] = true; titles.push({ id: entry.id, type: entry.kind === "film" ? "movie" : "series", name: entry.title, poster: entry.poster || "" }) }
+        });
+        return { id: item.id, type: "season", plays: false, watched: out > 0 && done === out, titles: titles, season: se.season };
+    }
     function episodeLabel(sh, season, ep) {
         var n = sh.seasons[season].season;
         if (n === 0) return ep.type === "movie" ? ep.title : "Special " + ep.episode;
@@ -67,7 +82,7 @@ FocusScope {
     onWantedEntryChanged: if (!active || entryIndex < 0) entryIndex = wantedEntry; else entrySettle.restart()
     Timer { id: entrySettle; interval: 280; onTriggered: page.entryIndex = page.wantedEntry }
     readonly property var entry: show && show.entries && entryIndex >= 0 ? show.entries[entryIndex] || null : null
-    readonly property string backdrop: entry ? entry.backdrop : ""
+    readonly property string backdrop: entry ? entry.backdrop || "" : ""
     // what a card shows when its own picture can't be had (an episode still to come has no still): its
     // entry's backdrop (an anime's season, film or special has its own), else the title's
     function backdropOf(ep) {
@@ -151,14 +166,16 @@ FocusScope {
     }
     // The same title with new data (its watch state changed: an episode marked from its menu, another
     // device). The row is built again where it is, on the card that had the focus, and Play names what it
-    // named, or the episode after it once that one is done. (Loaded as a page opened on the focused card,
-    // Play was renamed to that card.)
+    // named, or once that one is done the next episode that isn't. (Loaded as a page opened on the focused
+    // card, Play was renamed to that card.)
     function refresh(title, seasonsAndEpisodes) {
         var tile = strip.onTile, focusedId = !tile && focusedEp ? focusedEp.id : "", named = resumeEp, was = { s: shownSeason, e: Math.max(0, strip.currentIndex) };
         item = title; show = seasonsAndEpisodes; episodes = [];
         var resume = named ? Episodes.find(show, named.id) : null;
         if (resume) {
-            var next = Episodes.finished(seasons[resume.s].episodes[resume.e]) ? Episodes.after(show, named.id, today) : null;
+            // on past what is done by now (a whole season marked watched: the next season's first)
+            var next = seasons[resume.s].episodes[resume.e];
+            while (next && Episodes.finished(next)) next = Episodes.after(show, next.id, today);
             if (next) resume = Episodes.find(show, next.id);
         }
         resumePos = resume || Episodes.resting(show, today);
@@ -243,6 +260,12 @@ FocusScope {
             sx: Theme.margin; sy: 548
             barHeight: 64; fontSize: 24; segmentPad: 44
             model: page.seasons.map(function (s) { return s.label || "Season " + s.season })
+            // a long OK on a season: its menu (all of it watched or not), beside the season's segment
+            holds: true
+            onHeld: {
+                var card = page.seasonCard(index), r = cursorRect, p = mapToItem(null, r.x, r.y);
+                if (card) page.playHeld(card, Qt.rect(p.x, p.y, r.width, r.height));
+            }
         }
     }
 
@@ -288,7 +311,7 @@ FocusScope {
                 }
                 Text {
                     y: 96; width: 1000; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
-                    text: epInfo.ep ? epInfo.ep.overview : ""; color: Theme.inkDim
+                    text: epInfo.ep ? epInfo.ep.overview || "" : ""; color: Theme.inkDim
                     font.family: Theme.face; font.pixelSize: 23; lineHeight: 1.2
                 }
             }

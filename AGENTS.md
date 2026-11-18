@@ -16,7 +16,10 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   smaller). Renders load images from a fixed cache (`.lab/preview-images`, with redirects and missing stills pinned
   in `pinned.json`); a state that had to fetch one renders again, so no render shows art half arrived.
 - The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams|player|browse` against the frame budget in
-  `tour.sh`. A new screen or interaction gets a route there too. TV runs vary by about 2x, so judge a
+  `tour.sh`. A new screen or interaction gets a route there too. (`search` is a route but not in the
+  check: the TV's own keyboard slides in as the bar opens, and the frames under it come late by their
+  render time with 2 ms of the app's work in them, four to seven a run. Its rows, a title opening and
+  Back are what to read in it.) TV runs vary by about 2x, so judge a
   change by three runs, not one. An OVER BUDGET line means a regression; find it like this:
   1. `VARIANT='{"timing": true}' tools/tour.sh <route>`, then `tools/lab-timeline.py` lines up key
      presses with GUI stalls and late frames. A stall a fixed time after a key (280 ms is the selection
@@ -217,7 +220,8 @@ the lab report before every press (`focusItem`, `library.item`), and stop when i
 film marked watched leaves Continue Watching, the focus moves to the next card, and the next press lands
 on that title. Use a film nobody is watching, put on Continue Watching from the Mac
 (`core/target/release/core-lab`: load the Player model on it and send `TimeChanged`), and
-`'mark:<type>,<title>,<the addon's manifest address>,<episode>,<true|false>'` for an episode. A long OK
+`'mark:<type>,<title>,<the addon's manifest address>,<episode | season:N | *>,<true|false>'` for an
+episode, a season or all of a title (then `<episode>=<day>` for each day the app would give). A long OK
 over the network remote is `tools/tvremote.mjs press ENTER 16 40`, and the lab report says which card the
 open menu is for and what it lists (`menuCard`, `menuEntries`).
 
@@ -237,7 +241,14 @@ Cinemeta's), and where that can't be had (one still to come has none; Cinemeta's
 What is watched wears the check wherever its card is: an episode, a film or a related show by its own
 data, a title's poster in a grid by the account's watched titles (`Account.watchedTitles` to
 `CardGrid.marks`; an anime by its `kitsu` id, which `Live::kitsuIds` gives the chart's and a search's
-shows). A mark that can't be made says so (`App.say`, the one chip at the bottom of the screen).
+shows). A mark that can't be made says so (`App.say`, the one chip at the bottom of the screen). A series
+marked watched takes its episodes with it and a season's tab marks all of it (`Account.markWatched`,
+`markSeason`: the core's own actions, queued in `core/src/lib.rs`, one write to Stremio at a time), the
+ones that are out by the days the page shows (docs/stremio-integration.md); a page's check button shows
+the title's state at rest.
+
+The cursor on Continue Watching stays on its title when the row comes back in another order
+(`HomeScreen.take`): what has the focus is set whole, with the row, never by a place in it.
 
 ## Playback
 

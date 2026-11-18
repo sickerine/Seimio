@@ -96,8 +96,10 @@ public:
         auto left = std::make_shared<int>(3);
         auto finish = [out, left, done] { if (--*left == 0) done(*out); };
         for (const char *type : { "movie", "series" })
-            get(QString(kCinemeta) + "/catalog/" + type + "/top/search=" + QString::fromUtf8(QUrl::toPercentEncoding(query)) + ".json", [out, finish, type](const QJsonDocument &d, bool) {
-                (*out)[type == QByteArray("movie") ? "movies" : "series"] = d.object().value("metas").toArray(); finish();
+            get(QString(kCinemeta) + "/catalog/" + type + "/top/search=" + QString::fromUtf8(QUrl::toPercentEncoding(query)) + ".json", [this, out, finish, type](const QJsonDocument &d, bool) {
+                withPosters(d.object().value("metas").toArray(), [out, finish, type](const QJsonArray &metas) {
+                    (*out)[type == QByteArray("movie") ? "movies" : "series"] = metas; finish();
+                });
             });
         anilist("query ($q: String) { Page(perPage: 24) { media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
                 QJsonObject { { "q", query } }, [this, out, finish](const QJsonObject &data) {
@@ -344,6 +346,24 @@ private:
             }
         }
         return out;
+    }
+    // The titles among `metas` that have a poster, in their order. Cinemeta gives every search result a
+    // poster's address, and behind a fan upload's or a reaction video's there is no picture: its card was
+    // blank with a name on. The image host is asked once a title, all at once (a search has some twenty).
+    void withPosters(const QJsonArray &metas, std::function<void(QJsonArray)> done) {
+        if (metas.isEmpty()) { done(metas); return; }
+        auto there = std::make_shared<QVector<bool>>(metas.size(), true);
+        auto left = std::make_shared<int>(metas.size());
+        for (int i = 0; i < metas.size(); i++) {
+            const QJsonObject m = metas[i].toObject();
+            m_http.exists(m.value("poster").toString(metahub("poster", m.value("id").toString())), [metas, there, left, done, i](bool ok) {
+                (*there)[i] = ok;
+                if (--*left) return;
+                QJsonArray kept;
+                for (int k = 0; k < metas.size(); k++) if ((*there)[k]) kept << metas[k];
+                done(kept);
+            });
+        }
     }
     // each show's Kitsu id (`kitsu`: "kitsu:N", the title Stremio's library knows it by; none when Kitsu
     // doesn't have it): ARM maps AniList to Kitsu, 100 at a time

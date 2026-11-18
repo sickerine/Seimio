@@ -4,7 +4,7 @@ pub mod env;
 pub mod ffi;
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -23,12 +23,12 @@ use stremio_core::{
         player::Player,
     },
     runtime::{
-        msg::{Action, ActionLoad, ActionMetaDetails},
+        msg::{Action, ActionLoad, ActionMetaDetails, Event},
         Env, Runtime, RuntimeAction, RuntimeEvent,
     },
     types::{
         addon::ResourcePath, api::LinkAuthKey, events::DismissedEventsBucket, library::LibraryBucket, notifications::NotificationsBucket,
-        profile::Profile, resource::MetaItemPreview, search_history::SearchHistoryBucket, server_urls::ServerUrlsBucket,
+        profile::Profile, resource::{MetaItemPreview, Video}, search_history::SearchHistoryBucket, server_urls::ServerUrlsBucket,
         streams::StreamsBucket,
     },
     Model,
@@ -79,7 +79,7 @@ fn name(field: &TvModelField) -> &'static str {
 
 /// Starts the core on its own thread. `on_event("ready", "")` once the stored account is loaded,
 /// `("state", "[\"library\", …]")` when models changed, `("event", json)` for the core's events,
-/// `("unmarked", "<episode>: <why>")` for a mark that couldn't be made after all (`mark_video`).
+/// `("unmarked", "<title> <what>: <why>")` for a mark that couldn't be made after all (`mark`).
 pub fn start(storage_dir: &str, fetch: impl Fn(env::Fetch) + Send + Sync + 'static, on_event: impl Fn(&str, &str) + Send + 'static) {
     std::fs::create_dir_all(storage_dir).ok();
     if env::STORAGE_DIR.set(storage_dir.into()).is_err() || env::FETCH.set(Box::new(fetch)).is_err() {
@@ -145,7 +145,21 @@ async fn run(on_event: impl Fn(&str, &str)) {
                     }
                 }
             }
-            RuntimeEvent::CoreEvent(event) => on_event("event", &serde_json::to_string(&event).unwrap_or_default()),
+            RuntimeEvent::CoreEvent(event) => {
+                on_event("event", &serde_json::to_string(&event).unwrap_or_default());
+                // a write of the library that reached the API, or failed to
+                let written_ids = match &event {
+                    Event::LibraryItemsPushedToAPI { ids } => Some(ids),
+                    Event::Error { source, .. } => match source.as_ref() {
+                        Event::LibraryItemsPushedToAPI { ids } => Some(ids),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                for why in written_ids.map(|ids| written(ids)).unwrap_or_default() {
+                    on_event("unmarked", &why);
+                }
+            }
         }
     }
 }
@@ -174,47 +188,66 @@ pub fn state(field_name: &str) -> Option<String> {
     .ok()
 }
 
-/// An episode to mark watched or not: its title (`kind`, `meta`), the addon whose list of episodes the
-/// app shows for it (`base`, its manifest's address), and the episode.
+/// Something of a title to mark watched or not: the title (`kind`, `meta`), the addon whose list of
+/// episodes the app shows for it (`base`, its manifest's address), and `what` of it: an episode by its id,
+/// a season ("season:N"), or all of it ("*": every season, and the title itself as watched or not).
 #[derive(Clone)]
 struct Mark {
     kind: String,
     meta: String,
     base: String,
-    video: String,
+    what: String,
     watched: bool,
+    /// what is out, for a season or all of a title: an episode whose day has come by `today` ("YYYY-MM-DD",
+    /// the app's). `days`: the app's day for an episode, by its id, where it knows better than the addon
+    /// (AniList's, for an anime of this season: Kitsu's are a guess of one a week)
+    today: String,
+    days: HashMap<String, String>,
+    /// how many of its actions have been done (all of a title is the title's own, then its seasons')
+    done: usize,
 }
 /// The marks asked for, in order, and the one thread working through them.
 static MARKS: Mutex<VecDeque<Mark>> = Mutex::new(VecDeque::new());
 static MARKING: Mutex<()> = Mutex::new(());
+/// A write of a title's library item to Stremio's API is on its way (the title's id), and the next action
+/// waits for it. Each action is a write of the title's whole state, and the API keeps the one that reaches
+/// it last: all of a title's seasons sent at once arrived in any order, and the account was left with
+/// seasons still watched that the TV had unmarked.
+static WRITING: Mutex<Option<String>> = Mutex::new(None);
 
 enum Marking {
     Wait,
-    Do(ActionMetaDetails),
+    Do(Vec<ActionMetaDetails>),
     Fail(&'static str),
 }
 
-/// Marks one episode of a title watched or not. The core does that on its details of the title (the
-/// `details` model: the meta from the account's addons, the library item and its watched field), by the
-/// rules every Stremio device has: the title's watched field takes the episode, and Continue Watching
-/// moves on when it was the one you were on. The details are loaded first and the mark waits for them,
-/// behind any mark asked before it. `Err`: what couldn't be marked now, and why; a mark that fails later
-/// is an `unmarked` event.
-pub fn mark_video(kind: &str, meta: &str, base: &str, video: &str, watched: bool) -> Result<(), String> {
+/// Marks an episode, a season or all of a title watched or not. The core does that on its details of the
+/// title (the `details` model: the meta from the account's addons, the library item and its watched
+/// field), by the rules every Stremio device has: the title's watched field takes the episodes, and
+/// Continue Watching moves on when the one you were on is among them. The details are loaded first and the
+/// mark waits for them, behind any mark asked before it. `Err`: what couldn't be marked now, and why; a
+/// mark that fails later is an `unmarked` event.
+pub fn mark(kind: &str, meta: &str, base: &str, what: &str, watched: bool, today: &str, days: HashMap<String, String>) -> Result<(), String> {
     RUNTIME.get().ok_or("the core hasn't started")?;
-    MARKS.lock().unwrap().push_back(Mark { kind: kind.into(), meta: meta.into(), base: base.into(), video: video.into(), watched });
+    MARKS.lock().unwrap().push_back(Mark { kind: kind.into(), meta: meta.into(), base: base.into(), what: what.into(), watched, today: today.into(), days, done: 0 });
     let failed = mark_next();
     if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
 }
 
 /// Works through the marks asked for: the first one's title is loaded into `details` unless it is the one
-/// there, and it is marked once the core would mark against the right list of episodes. Returns the ones
-/// that can't be marked ("<episode>: <why>").
+/// there, and it is marked once the core would mark against the right list of episodes, an action at a
+/// time, each after the write before it has reached the API (`written`). Returns the ones that can't be
+/// marked ("<title> <what>: <why>").
 fn mark_next() -> Vec<String> {
     let mut failed = vec![];
     let Some(runtime) = RUNTIME.get() else { return failed };
     let _one = MARKING.lock().unwrap();
+    // the title's library item, as the core has it
+    let item = |id: &str| runtime.model().ok().and_then(|m| m.ctx.library.items.get(id).cloned());
     loop {
+        if WRITING.lock().unwrap().is_some() {
+            break;
+        }
         let Some(mark) = MARKS.lock().unwrap().front().cloned() else { break };
         let loaded = runtime.model().is_ok_and(|m| m.details.selected.as_ref().is_some_and(|s| s.meta_path.id == mark.meta && s.meta_path.r#type == mark.kind));
         if !loaded {
@@ -224,12 +257,38 @@ fn mark_next() -> Vec<String> {
         let Ok(marking) = runtime.model().map(|m| marking(&m.details, &mark)) else { break };
         match marking {
             Marking::Wait => break,
-            Marking::Do(action) => runtime.dispatch(RuntimeAction { field: Some(TvModelField::Details), action: Action::MetaDetails(action) }),
-            Marking::Fail(why) => failed.push(format!("{}: {why}", mark.video)),
+            Marking::Do(mut actions) if mark.done < actions.len() => {
+                let before = item(&mark.meta);
+                let signed_in = runtime.model().is_ok_and(|m| m.ctx.profile.auth_key().is_some());
+                runtime.dispatch(RuntimeAction { field: Some(TvModelField::Details), action: Action::MetaDetails(actions.swap_remove(mark.done)) });
+                // (an action that changed nothing, or an account that isn't signed in, writes nothing to wait for)
+                if signed_in && item(&mark.meta) != before {
+                    *WRITING.lock().unwrap() = Some(mark.meta.to_owned());
+                }
+                if let Some(first) = MARKS.lock().unwrap().front_mut() {
+                    first.done += 1;
+                }
+                continue;
+            }
+            Marking::Do(_) => {}
+            Marking::Fail(why) => failed.push(format!("{} {}: {why}", mark.meta, mark.what)),
         }
         MARKS.lock().unwrap().pop_front();
     }
     failed
+}
+
+/// A write of the library reached the API, or failed to. The one waited for is of that title alone (an
+/// action writes its own; a sync writes all it has to): then the next action can go.
+fn written(ids: &[String]) -> Vec<String> {
+    {
+        let mut writing = WRITING.lock().unwrap();
+        if !writing.as_ref().is_some_and(|id| ids.len() == 1 && ids[0] == *id) {
+            return vec![];
+        }
+        *writing = None;
+    }
+    mark_next()
 }
 
 /// The core marks against the first meta that is ready, in the order of the account's addons. They answer
@@ -247,13 +306,47 @@ fn marking(details: &MetaDetails, mark: &Mark) -> Marking {
             _ => return Marking::Wait,
         }
     }
-    match &details.meta_items[at].content {
-        Some(Loadable::Ready(meta)) => match meta.videos.iter().find(|v| v.id == mark.video) {
-            Some(video) => Marking::Do(ActionMetaDetails::MarkVideoAsWatched(video.to_owned(), mark.watched)),
-            None => Marking::Fail("its title doesn't list it"),
-        },
-        Some(Loadable::Err(_)) => Marking::Fail("its title couldn't be loaded"),
-        _ => Marking::Wait,
+    let meta = match &details.meta_items[at].content {
+        Some(Loadable::Ready(meta)) => meta,
+        Some(Loadable::Err(_)) => return Marking::Fail("its title couldn't be loaded"),
+        _ => return Marking::Wait,
+    };
+    // the seasons its episodes are in, in order
+    let mut seasons: Vec<u32> = meta.videos.iter().filter_map(|v| v.series_info.as_ref().map(|s| s.season)).collect();
+    seasons.sort_unstable();
+    seasons.dedup();
+    // out: its day has come, or it has no date to say it hasn't (the rule the app shows "still to come" by)
+    let out = |v: &Video| {
+        let day = mark.days.get(&v.id).cloned().or_else(|| v.released.map(|at| at.format("%Y-%m-%d").to_string()));
+        day.is_none_or(|day| day.as_str() <= mark.today.as_str())
+    };
+    let one = |v: &Video| ActionMetaDetails::MarkVideoAsWatched(v.to_owned(), mark.watched);
+    // Stremio's action for a season takes every episode the season lists, the ones still to come too, and
+    // moves "last watched" to the last of them, which keeps their notifications from ever showing. So a
+    // season still airing is marked watched an episode at a time, the ones that are out. A season that is
+    // all out, and unmarking, is the one action.
+    // ponytail: an episode at a time is a write each, one after another, so an airing show with a
+    // thousand episodes in one season takes minutes; send several at once and the last alone if it matters
+    let season = |n: u32| {
+        let videos = meta.videos_by_season(n);
+        if !mark.watched || videos.iter().all(|v| out(v)) {
+            vec![ActionMetaDetails::MarkSeasonAsWatched(n, mark.watched)]
+        } else {
+            videos.into_iter().filter(|v| out(v)).map(one).collect()
+        }
+    };
+    if mark.what == "*" {
+        // the title itself (Stremio's "watched" of a library item), then every season's episodes, then the
+        // episodes that are in no season
+        let loose = meta.videos.iter().filter(|v| v.series_info.is_none() && (!mark.watched || out(v))).map(one);
+        return Marking::Do(std::iter::once(ActionMetaDetails::MarkAsWatched(mark.watched)).chain(seasons.into_iter().flat_map(season)).chain(loose).collect());
+    }
+    if let Some(n) = mark.what.strip_prefix("season:").and_then(|n| n.parse::<u32>().ok()) {
+        return if seasons.contains(&n) { Marking::Do(season(n)) } else { Marking::Fail("its title has no such season") };
+    }
+    match meta.videos.iter().find(|v| v.id == mark.what) {
+        Some(video) => Marking::Do(vec![ActionMetaDetails::MarkVideoAsWatched(video.to_owned(), mark.watched)]),
+        None => Marking::Fail("its title doesn't list it"),
     }
 }
 

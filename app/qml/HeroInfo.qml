@@ -76,7 +76,7 @@ Item {
         Text {
             id: description
             y: info.textY; width: info.textWidth; wrapMode: Text.WordWrap; maximumLineCount: info.textLines; elide: Text.ElideRight
-            text: info.m ? info.m.description : ""; color: Theme.inkSoft
+            text: info.m ? info.m.description || "" : ""; color: Theme.inkSoft
             font.family: Theme.face; font.pixelSize: info.textSize; lineHeight: 1.22
         }
     }

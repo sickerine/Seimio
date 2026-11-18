@@ -86,15 +86,19 @@ QML  ──  Account (Seimio.Data)  ──  core.h (C++)  ──  libseimio_core
 - **`core/`** (Rust): `TvModel` = `ctx`, `link`, `continue_watching`, `library`, `discover`, `player`,
   `details`. C interface: `start(dir, onEvent, onFetch)`, `dispatch(model, actionJson)`, `state(model)`,
   `view(name)` (JSON shaped for the UI where the core's own is too large), `fetched(id, status, body)`,
-  `mark_video(type, meta, base, video, watched)`.
+  `mark(type, meta, base, what, watched, today, days)`.
 - **One episode watched or not** is the core's `MarkVideoAsWatched`, which it does on its details of the
   title (`details`: the meta from the account's addons, the library item, its watched field). The core
   marks against the first meta that is ready, in the order of the account's addons; they answer in any
   order and their episode lists differ (this account has Cinemeta and a second meta addon for the same
-  ids). So `mark_video` names the addon the app shows the title from (`base`: Cinemeta's, or the Kitsu
+  ids). So `mark` names the addon the app shows the title from (`base`: Cinemeta's, or the Kitsu
   addon's for an anime) and marks only when that one is what the core will use: it has answered and every
   addon before it has failed. Otherwise the mark fails with a reason (a warning, and an `unmarked` event
-  when it fails later) and nothing is written. Marks wait in a queue, a title at a time. Marking the
+  when it fails later) and nothing is written. Marks wait in a queue, a title at a time, and an action
+  at a time: each action writes the title's whole state to the API, which keeps the write that reaches
+  it last, so the next one goes when the core says that title's write has arrived
+  (`LibraryItemsPushedToAPI` naming it alone). Four seasons sent together arrived in any order and left
+  the account with seasons still watched that the TV had unmarked. Marking the
   episode you are on moves Continue Watching to the next; marking one whose air date is after the title's
   last-watched date moves that date to it, which is why nothing that airs later has the entry.
 - **A film or a related show watched or not** is the title's own state (`MetaItemMarkAsWatched`,
@@ -132,7 +136,13 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
 4. **Movies, Series**: the same screen with a hero (the focused title's backdrop and facts, as on the Anime
    tab): filters for the list (Popular, New, Featured, the account's other catalogs) and the genre.
 5. **Search**: the search tab opens into a text field and the TV's keyboard comes up. Results under it as
-   three rows: Movies, Series, Anime.
+   three rows: Movies, Series, Anime. Movies and Series are Cinemeta's (IMDb ids); an anime's films and
+   seasons are in the Anime row by their Kitsu ids, titles of their own in Stremio, so the same film can be
+   in both rows with its own watched state in each. A Cinemeta result with no picture behind its poster's
+   address (a fan upload, a reaction video) is left out: the image host is asked once a result. Back from
+   the results goes to the bar; Back there clears what is typed (with the keyboard up the TV's keyboard
+   takes that Back and closes, which the bar sees as the keyboard going away); Back on an empty bar leaves
+   the search. OK on the bar brings the keyboard back.
 6. **Add to library / Remove from library** and **Mark watched / Mark unwatched** on the show and title
    pages, by the core's state, and in Home's menu (a long OK on a Continue Watching card), which also has
    **Remove from Continue Watching**. A long OK on any card of a show's row opens its menu, and what the
@@ -141,8 +151,22 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
    an episode. A title's card in a grid (the Anime tab, Movies, Series, the Library, a search) has the
    library's two entries, on the card's left where its right has no room; an Anime tab card is AniList's
    until its franchise says which Kitsu title it is, so its menu waits for that. A release in an open
-   calendar day has its episode's entry, by the episode's number in its franchise for an anime.
-   Nothing that airs later is marked. A watched title's poster wears the check in every grid, at once
+   calendar day has its episode's entry. A season's tab has all of it (a long OK on the season bar:
+   "Mark all watched"): each title its cards are for an anime (a season is one or more of Kitsu's
+   entries), the season by its number for a plain series. A series marked watched takes its episodes with
+   it, wherever it is marked (the core's `MarkAsWatched`, then its seasons, on its details of the title);
+   a film, and a series neither Cinemeta nor the Kitsu addon lists, is watched as a title only.
+   Only what is out is marked. A season that is all out is the core's `MarkSeasonAsWatched`; that action
+   takes every episode the season lists and moves the title's last-watched date to the last of them,
+   which would tick episodes still to come and hide their new-episode notices, so a season still airing
+   is marked an episode at a time (a write each, about 0.3 s: a thousand-episode show still airing takes
+   minutes). Out is the rule the page shows "still to come" by: the episode's day against today, the
+   day being AniList's for an anime of this season (`Core::setAiring`, from `Live`'s `airing`) and the
+   addon's otherwise. Kitsu's days are a guess of one a week: it had Gensou Suikoden's eighth episode a
+   week after it aired. A season's tab leaves out a film whose day hasn't come.
+   A page's round check button is the white disc a watched card wears while its title is
+   watched. Home's menu has both ways to play, as every menu of something that plays.
+   A watched title's poster wears the check in every grid, at once
    and without its row being rebuilt (`Account.watchedTitles`, `CardGrid.marks`); a mark that can't be
    made says "Couldn't mark it" at the bottom of the screen. A menu lists what it opened with until it has closed
    (`QuickMenu`'s `Latch`): its labels follow what they did. The page under it is built again where it is

@@ -34,6 +34,8 @@ Item {
         page.refresh(title, show([1, 2, 3, 5], 0));             // the third marked watched: done
         compare(page.resumeLabel, "Play E4", "Play moves on once the episode it named is done");
         compare(focused(), "t:1:5");
+        page.refresh(title, show([1, 2, 3, 4], 0));             // the fourth too (a season marked watched)
+        compare(page.resumeLabel, "Play E5", "past every episode that is done, not only the next");
     }
     // Opened on an episode still to come (a calendar release), the page lands on it and Play stays on
     // where you are: it named the release, an episode nothing can play yet.
@@ -46,6 +48,16 @@ Item {
         page.open({ id: "w", name: "W" }, show([1, 2], 40), "t:1:5");      // one that has: Play follows it
         tryVerify(function () { return focused() === "t:1:5" });
         compare(page.resumeLabel, "Play E5");
+    }
+    // A season marked watched is the titles its cards that are out belong to: a film still to come was
+    // among them, and was marked with the rest.
+    function test_seasonCardLeavesWhatIsStillToCome() {
+        var s = show([], 0);
+        s.entries = [{ id: "kitsu:1", kind: "tv", title: "T" }, { id: "kitsu:2", kind: "film", title: "T: The Film" }];
+        s.seasons[0].episodes.forEach(function (ep) { ep.entry = 0 });
+        s.seasons[0].episodes.push({ id: "kitsu:2", episode: 6, title: "T: The Film", released: "2026-12-25", thumb: "", watched: false, progress: 0, type: "movie", entry: 1 });
+        page.open({ id: "x", name: "X" }, s);
+        compare(page.seasonCard(0).titles.map(function (t) { return t.id }).join(), "kitsu:1");
     }
     // On the tile that leads to the season before, a refresh leaves the focus on the tile: put on a card,
     // OK played an episode where it had turned the season.

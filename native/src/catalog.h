@@ -317,6 +317,7 @@ public:
             // together from what was fetched at once, with the library the franchise has then
             const QJsonObject library = docs.library, airing = docs.airing;
             work([this, library, airing] { m_franchise->setLibrary(library, airing); });
+            Core::instance()->setAiring(airing);       // (a title marked watched is its episodes out by the same days)
             take(data);
         });
     }

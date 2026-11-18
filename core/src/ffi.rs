@@ -70,10 +70,14 @@ pub extern "C" fn seimio_core_select(what: *const c_char, choice: *const c_char)
     }
 }
 
-/// One episode watched or not (`mark_video` in lib.rs). Null when asked; otherwise why not (freed by the caller).
+/// An episode, a season or all of a title watched or not (`mark` in lib.rs; `days`: a JSON object, episode
+/// id to day). Null when asked; otherwise why not (freed by the caller).
 #[no_mangle]
-pub extern "C" fn seimio_core_mark_video(kind: *const c_char, meta: *const c_char, base: *const c_char, video: *const c_char, watched: bool) -> *mut c_char {
-    match crate::mark_video(&text(kind), &text(meta), &text(base), &text(video), watched) {
+pub extern "C" fn seimio_core_mark(
+    kind: *const c_char, meta: *const c_char, base: *const c_char, what: *const c_char, watched: bool, today: *const c_char, days: *const c_char,
+) -> *mut c_char {
+    let days = serde_json::from_str(&text(days)).unwrap_or_default();
+    match crate::mark(&text(kind), &text(meta), &text(base), &text(what), watched, &text(today), days) {
         Ok(()) => std::ptr::null_mut(),
         Err(why) => c(&why).into_raw(),
     }

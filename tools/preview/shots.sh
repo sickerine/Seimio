@@ -27,7 +27,9 @@ js() {
     show) echo 'win.open()' ;;
     menu) echo 'win.openMenu()' ;;
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
-    profile) echo 'win.layer = "profile"; win.profileOpen = true' ;;
+    # (its menu's row drawn focused, as it is with the remote: whether the Mac makes the preview's window active varies)
+    profile) echo "$FIND_JS win.layer = 'profile'; win.profileOpen = true;"\
+                  " f(win.canvas, function (o) { return o.showFocus !== undefined && o.model && o.model.length === 1 && o.model[0].label === 'Log out' }).showFocus = true" ;;
     anime) echo "$FIND_JS var a = f(win.canvas, function (o) { return o.seasonLoading !== undefined }); a.live = false; a.now = 1794830400; win.tab = 1" ;;   # its countdowns from a fixed moment
     movies) echo 'win.tab = 2' ;;
     library) echo 'win.tab = 4' ;;
@@ -52,7 +54,7 @@ for s in "${states[@]}"; do
   done
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }
   # a handler that threw or a binding that read nothing while it rendered (the TV's tours catch the same)
-  errs=$(printf '%s\n' "$log" | grep -E "TypeError|ReferenceError|Unable to assign|is not defined" | sed -E 's/^file:[^ ]*\/(app|tools)\//\1\//' | sort -u | head -4)
+  errs=$(printf '%s\n' "$log" | grep -E "TypeError|ReferenceError|Unable to assign|Cannot assign|is not defined" | sed -E 's/^file:[^ ]*\/(app|tools)\//\1\//' | sort -u | head -4)
   [ -n "$errs" ] && { echo "  $s: script errors"; printf '%s\n' "$errs" | cut -c1-220 | sed 's/^/    /'; fail=1; }
   base="$P/baseline/$s.png"
   if [ $approve = 1 ]; then

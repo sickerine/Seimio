@@ -14,16 +14,18 @@
 # saved), anime (the Anime tab: moving along the chart crossfades its fanart; a show opening and
 # closing; the filters walked, one chosen and undone), schedule (the Anime tab's schedule: down through
 # the days and along them), browse (the Movies tab: into its rows, along and down them, a film opening and
-# closing; then Series and the Library, each walked a little). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
+# closing; then Series and the Library, each walked a little), search (the lab types "demon slayer" and
+# enters it: along its first row, down a row, a title opening and closing, back to the bar; not in
+# check.sh, since the TV's keyboard sliding in makes the frames under it late). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
 # plays the best stream by rank) and never tell Stremio what they played ("unreported": the account's own
 # progress stays where it was).
-# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule|browse   (VARIANT: LabProbe switches)
+# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule|browse|search   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 route=${1:-home}
 mkdir -p .lab/www
-python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v["noAi"] = True; v["unreported"] = True; v.update({"autopop": True} if sys.argv[2] == "menu" else {"openStreams": 12000} if sys.argv[2] == "streams" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
+python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v["noAi"] = True; v["unreported"] = True; v.update({"autopop": True} if sys.argv[2] == "menu" else {"openStreams": 12000} if sys.argv[2] == "streams" else {"search": "demon slayer"} if sys.argv[2] == "search" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
 failed=0
 # 8 s: the catalog loads and the calendar's art decodes for about 5 s after launch; that's startup, not
 # what a tour measures
@@ -50,6 +52,7 @@ case $route in
           p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 2 400; p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 3 350 ;;
   anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p ENTER 1 2500; p BACK 1 1500
          p UP 1 900; p RIGHT 3 300; p ENTER 1 1500; p LEFT 1 300; p ENTER 1 1500; p UP 1 900 ;;
+  search) sleep 5; p RIGHT 4 350; p DOWN 1 900; p RIGHT 1 500; p UP 1 900; p LEFT 2 350; p ENTER 1 2500; p BACK 1 1500; p BACK 1 1500 ;;
 esac
 sleep 4; echo '{}' > .lab/www/variant.json
 python3 - .lab/reports $S $route <<'PY'

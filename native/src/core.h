@@ -3,11 +3,12 @@
 // rules) for Qt. One for the process, on the thread that first asks for it (the GUI's). The core runs on
 // its own threads; what it says comes back here through queued calls, and its HTTP is answered by Http.
 //   dispatch(model, action)   the core's Action as JSON, to one of its models or ("") to all
-//   markVideo(type, meta, base, video, watched)   one episode, which the core does on its details of the title;
-//                                                 `unmarked()` when it couldn't be
+//   mark(type, meta, base, what, watched)   an episode, a season or all of a title, which the core does on
+//                                           its details of the title; `unmarked()` when it couldn't be
 //   state(model), view(name)  JSON, read on any thread
 //   changed(models)           those models' state is new;  event(name, args)  the core's events
 #include <QCoreApplication>
+#include <QDate>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -22,7 +23,7 @@ char *seimio_core_dispatch(const char *model, const char *action);
 char *seimio_core_state(const char *model);
 char *seimio_core_view(const char *name);
 char *seimio_core_select(const char *what, const char *choice);
-char *seimio_core_mark_video(const char *type, const char *meta, const char *base, const char *video, bool watched);
+char *seimio_core_mark(const char *type, const char *meta, const char *base, const char *what, bool watched, const char *today, const char *days);
 void seimio_core_free(char *);
 }
 
@@ -51,13 +52,22 @@ public:
     void select(const QByteArray &what, const QByteArray &choice) {
         if (char *why = seimio_core_select(what.constData(), choice.constData())) { qWarning("core: %s = %s: %s", what.constData(), choice.constData(), why); seimio_core_free(why); }
     }
-    // one episode of a title (`type`, `meta`) watched or not, against the list of episodes of the addon at
-    // `base` (`mark_video` in core/src/lib.rs); one that can't be marked is a warning, now or later
-    void markVideo(const QString &type, const QString &meta, const QString &base, const QString &video, bool watched) {
-        if (char *why = seimio_core_mark_video(type.toUtf8().constData(), meta.toUtf8().constData(), base.toUtf8().constData(), video.toUtf8().constData(), watched)) {
+    // `what` of a title (`type`, `meta`) watched or not: an episode by its id, a season ("season:N") or all
+    // of it ("*"), against the list of episodes of the addon at `base` (`mark` in core/src/lib.rs); one
+    // that can't be marked is a warning and `unmarked()`, now or later. A season or all of a title marked
+    // watched is its episodes that are out, by the days the page shows them by: the addon's, and for an
+    // anime of this season AniList's (`setAiring`).
+    void mark(const QString &type, const QString &meta, const QString &base, const QString &what, bool watched) {
+        QJsonObject days;
+        for (auto it = m_airing.constBegin(); it != m_airing.constEnd(); ++it)
+            if (it.key().startsWith(meta + ":")) days[it.key()] = it.value().toObject().value("date");
+        if (char *why = seimio_core_mark(type.toUtf8().constData(), meta.toUtf8().constData(), base.toUtf8().constData(), what.toUtf8().constData(), watched,
+                                         QDate::currentDate().toString("yyyy-MM-dd").toUtf8().constData(), QJsonDocument(days).toJson(QJsonDocument::Compact).constData())) {
             notMarked(why); seimio_core_free(why);
         }
     }
+    // when this season's anime episodes air, by the episode's id (Live's `airing`)
+    void setAiring(const QJsonObject &airing) { m_airing = airing; }
     static QJsonDocument state(const char *model) { return taken(seimio_core_state(model)); }
     static QJsonDocument view(const char *name) { return taken(seimio_core_view(name)); }
     // { action, args } and { model, args }: the two shapes the core's actions nest
@@ -72,7 +82,7 @@ signals:
     void readyChanged();
     void changed(const QStringList &models);
     void event(const QString &name, const QJsonObject &args);
-    void unmarked();                          // an episode asked to be marked couldn't be (`markVideo`)
+    void unmarked();                          // something asked to be marked couldn't be (`mark`)
 
 private:
     explicit Core(QObject *parent) : QObject(parent) {}
@@ -108,4 +118,5 @@ private:
     }
     Http m_http { this };
     bool m_started = false, m_ready = false;
+    QJsonObject m_airing;
 };

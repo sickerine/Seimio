@@ -20,7 +20,21 @@ FocusScope {
     readonly property int dayColumn: cal.dayColumn
     // an open calendar day: the hero info and backdrop show its focused release
     readonly property bool dayOpen: cal.dayOpen
-    readonly property var focusItem: row === 0 ? continueWatching[strip.currentIndex] || null : cal.focusItem
+    readonly property var focusItem: row === 0 ? watchingItem : cal.focusItem
+    // The Continue Watching title under the cursor, set whole with the row the strip shows (`take`) and
+    // by a move. The cursor stays on its title when the row is taken again in another order (the title
+    // just watched moves to the front): held by its place in the row, Back from that title's page landed
+    // on whatever had taken the place, and another title had the focus for a moment on the way.
+    property var watchingItem: null
+    onContinueWatchingChanged: take()
+    Component.onCompleted: take()
+    function take() {
+        var at = -1;
+        for (var i = 0; watchingItem && i < continueWatching.length && at < 0; i++) if (continueWatching[i].id === watchingItem.id) at = i;
+        if (at >= 0) strip.jumpTo(at);                    // first: its move names the same title in the new row
+        strip.model = continueWatching;
+        watchingItem = continueWatching[strip.currentIndex] || null;
+    }
     // the focused Continue Watching card once lifted, for keeping it clear of a frost
     readonly property rect focusRect: Qt.rect(Theme.margin - 20, column.y + 56 - 11.25, 440, 247.5)
     readonly property real focusCardWidth: 400
@@ -55,8 +69,8 @@ FocusScope {
             CardStrip {
                 id: strip
                 y: 56; width: home.width
-                model: home.continueWatching
                 cardWidth: 400; cardHeight: 225; spacing: 40
+                onCurrentIndexChanged: home.watchingItem = home.continueWatching[currentIndex] || null
                 focus: home.row === 0
                 showFocus: activeFocus || (home.holdFocus && home.row === 0)
                 onActivated: home.activated(home.continueWatching[cardIndex])

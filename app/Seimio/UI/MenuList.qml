@@ -12,6 +12,7 @@ FocusScope {
     property var model: []
     property int currentIndex: 0
     property bool shown: true
+    property bool showFocus: activeFocus          // draws the focused look; previews set it directly (a window the Mac hasn't made active has no focus)
     property int rowHeight: 70
     property int rowSpacing: 8
     property int maxRows: 0                       // 0: every row shows
@@ -46,7 +47,7 @@ FocusScope {
         Behavior on at { NumberAnimation { duration: 260; easing.type: Theme.spring; easing.overshoot: 1.2 } }
         width: menu.width; height: menu.rowHeight; radius: 22
         y: at - view.contentY
-        color: menu.activeFocus ? "#4dffffff" : "#26ffffff"
+        color: menu.showFocus ? "#4dffffff" : "#26ffffff"
         Behavior on color { ColorAnimation { duration: Theme.fast } }
     }
     ListView {

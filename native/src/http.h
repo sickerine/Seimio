@@ -49,6 +49,21 @@ public:
         });
     }
 
+    // Whether something is at `url` (a HEAD): `done(false)` only when the server says there is nothing (404),
+    // so a request that failed otherwise loses nothing. A preview asks nothing of the network: there.
+    void exists(const QString &url, std::function<void(bool)> done) {
+        if (replaying()) { QTimer::singleShot(0, this, [done] { done(true); }); return; }
+        QNetworkRequest r { QUrl(url) };
+        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
+        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = m_net.head(r);
+        QTimer::singleShot(8000, reply, &QNetworkReply::abort);
+        connect(reply, &QNetworkReply::finished, this, [reply, done] {
+            reply->deleteLater();
+            done(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 404);
+        });
+    }
+
 private:
     QNetworkAccessManager m_net { this };
 };

@@ -136,6 +136,13 @@ FocusScope {
     }
     Keys.onLeftPressed: if (cursor > 0) move(-1); else event.accepted = false
     Keys.onRightPressed: if (cursor < model.length - 1) move(1); else event.accepted = false
-    Keys.forwardTo: selectOnOk ? [ok] : []
-    OkPress { id: ok; onTapped: { bar.currentIndex = bar.cursor; bar.triggered(bar.cursor) } }
+    // `holds`: a long OK on a segment is `held` (a season's menu); OK is the bar's then, though a tap does nothing without selectOnOk
+    property bool holds: false
+    signal held(int index)
+    Keys.forwardTo: selectOnOk || holds ? [ok] : []
+    OkPress {
+        id: ok
+        onTapped: if (bar.selectOnOk) { bar.currentIndex = bar.cursor; bar.triggered(bar.cursor) }
+        onHeld: if (bar.holds) bar.held(bar.cursor)
+    }
 }

@@ -3,7 +3,8 @@
 // from the server at launch ({ "captureAt": [ms...], "autopop": true }) and can capture the TV's
 // screen through LG's capture service. { "openMenu": true } opens quick actions 2 s after launch, for
 // a tour, whose keys are single presses (a long OK takes `tvremote.mjs press ENTER 16 40`); { "openStreams": ms }
-// opens the stream list for the title on screen that long after launch, for the same reason. { "noAi": true } keeps the AI
+// opens the stream list for the title on screen that long after launch, for the same reason. { "search": "text" } opens
+// the search tab with that typed and entered, 8 s after launch (the TV's keyboard can't be typed on blind). { "noAi": true } keeps the AI
 // pick from being called (no key), so tours cost nothing. { "timing": true } adds Qt's own
 // per-frame render loop timing (GUI-thread sync vs render thread) to each report, along with stamped
 // key presses, late frames and GUI-thread stalls; a string instead of true sets other Qt log rules
@@ -28,6 +29,7 @@ Item {
     signal autopop()
     signal openMenu()
     signal openStreams()
+    signal search(string text)
 
     // name what is animating now; it falls back to "idle" 900 ms after the last change
     function act(p) { phase = p; phaseReset.restart() }
@@ -58,6 +60,7 @@ Item {
     Timer { running: !!probe.variant.autopop; interval: 2500; repeat: true; onTriggered: probe.autopop() }
     Timer { running: !!probe.variant.openMenu; interval: 2000; onTriggered: probe.openMenu() }
     Timer { running: !!probe.variant.openStreams; interval: probe.variant.openStreams || 1; onTriggered: probe.openStreams() }
+    Timer { running: !!probe.variant.search; interval: 8000; onTriggered: probe.search(probe.variant.search) }
 
     // { "bench": true }: times creating cards and swapping a strip's model on the TV, 4 s after launch
     property var benchOut: null

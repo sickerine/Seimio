@@ -94,15 +94,20 @@ public:
     // `item`: { id, type ("movie" | "series"), name, poster }
     Q_INVOKABLE void addToLibrary(const QVariantMap &item) { ctx("AddToLibrary", preview(item)); }
     Q_INVOKABLE void removeFromLibrary(const QString &id) { ctx("RemoveFromLibrary", id); }
+    // A title watched or not. A series takes all its episodes with it (the title is watched because they
+    // are), which the core does on its details of the title: `markFailed()` if it can't be. A film is
+    // watched as a title, and so is a series neither Cinemeta nor the Kitsu addon lists (another addon's:
+    // the app has no list of its episodes to mark by).
     Q_INVOKABLE void markWatched(const QVariantMap &item, bool watched) {
-        ctx("MetaItemMarkAsWatched", QJsonObject { { "meta_item", preview(item) }, { "is_watched", watched } });
+        const QString id = item.value("id").toString();
+        if (item.value("type") == "movie" || !(id.startsWith("tt") || id.startsWith("kitsu:")))
+            ctx("MetaItemMarkAsWatched", QJsonObject { { "meta_item", preview(item) }, { "is_watched", watched } });
+        else mark(id, "*", watched);
     }
     // one episode of a series, by its id: the core's rules (Continue Watching moves on when it was the one
-    // you were on); `markFailed()` if it can't be
-    Q_INVOKABLE void markEpisode(const QString &videoId, bool watched) {
-        const QString meta = titleOf(videoId);
-        Core::instance()->markVideo("series", meta, sourceOf(meta), videoId, watched);
-    }
+    // you were on); and one season of a series, by Cinemeta's number
+    Q_INVOKABLE void markEpisode(const QString &videoId, bool watched) { mark(titleOf(videoId), videoId, watched); }
+    Q_INVOKABLE void markSeason(const QString &id, int season, bool watched) { mark(id, "season:" + QString::number(season), watched); }
     // off Continue Watching, as Stremio's own Dismiss does it: the title goes back to its start and its
     // new-episode notices go. It stays in the library, and what was watched stays watched.
     Q_INVOKABLE void stopWatching(const QString &id) { ctx("RewindLibraryItem", id); ctx("DismissNotificationItem", id); }
@@ -138,6 +143,8 @@ signals:
 
 private:
     static void ctx(const char *action, const QJsonValue &args = QJsonValue(QJsonValue::Undefined)) { Core::instance()->dispatch("", Core::action("Ctx", Core::action(action, args))); }
+    // `what` of the series `meta` (an episode's id, "season:N", "*"), against its addon's list of episodes
+    static void mark(const QString &meta, const QString &what, bool watched) { Core::instance()->mark("series", meta, sourceOf(meta), what, watched); }
     // the title an episode belongs to, from its id ("tt…:2:3", "kitsu:44081:9")
     static QString titleOf(const QString &videoId) { return videoId.section(':', 0, videoId.startsWith("kitsu:") ? 1 : 0); }
     // the addon the app shows a title's episodes from, as the core names an addon (its manifest's address)

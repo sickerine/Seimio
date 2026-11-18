@@ -15,7 +15,23 @@ TestCase {
         focus: !typing
         Item { id: card; focus: true }
     }
-    SearchField { id: field; focus: typing }
+    QtObject { id: keys; property bool visible: false; function show() { visible = true } }       // the TV's keyboard
+    SearchField { id: field; focus: typing; keyboard: keys }
+    SignalSpy { id: dismissed; target: field; signalName: "dismissed" }
+    // Back with the keyboard up closes the keyboard, and the field takes a keyboard that went without an
+    // Enter as that Back. After an Enter, OK brought the keyboard back and the Back that closed it then
+    // was still taken for the Enter: the query stayed.
+    function test_backAfterTheKeyboardCameBack() {
+        typing = true; wait(0);
+        keys.visible = true; field.text = "demon";
+        keyClick(Qt.Key_Return); keys.visible = false;          // Enter, and the keyboard goes
+        compare(dismissed.count, 0, "Enter closing the keyboard is no Back");
+        keyClick(Qt.Key_Return);                                // OK with the keyboard away
+        verify(keys.visible, "brings it back");
+        keys.visible = false;                                   // Back, which only the keyboard sees
+        compare(dismissed.count, 1, "the keyboard going without an Enter is Back");
+    }
+    function cleanup() { typing = false; wait(0) }
     function test_opensWithoutTakingTheRemote() {
         verify(card.activeFocus);
         field.open = true; wait(0);

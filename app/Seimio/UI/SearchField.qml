@@ -3,6 +3,9 @@
 // remote (`focus`), its text has it, which brings up the TV's keyboard; opening takes nothing (it opens
 // again over results that have the remote). Enter on that keyboard is `accepted`. Left at the start of the
 // text, Up and Down pass on.
+// Back with the keyboard up goes to the keyboard, which closes: the field never sees that key. A keyboard
+// that goes away while the field still has the remote was that Back (after Enter it isn't): `dismissed`.
+// With the keyboard away, OK brings it back.
 import QtQuick 2.12
 
 FocusScope {
@@ -10,6 +13,16 @@ FocusScope {
     property bool open: false
     property alias text: input.text
     signal accepted()
+    signal dismissed()
+    property bool entered: false             // Enter closed the keyboard, not Back
+    property var keyboard: Qt.inputMethod    // (`visible`, `show()`: a test gives its own)
+    Connections {
+        target: field.keyboard
+        onVisibleChanged: {
+            if (field.keyboard.visible) field.entered = false;       // up again: the next time it goes, it's Back unless Enter says so
+            else if (input.activeFocus && !field.entered) field.dismissed();
+        }
+    }
     property Item source
     property bool preblurred: false
     property real sy: y
@@ -43,7 +56,10 @@ FocusScope {
             color: Theme.ink; selectionColor: Theme.fillStrong; selectedTextColor: Theme.ink
             font.family: Theme.face; font.pixelSize: 30; font.weight: Font.Medium
             inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
-            onAccepted: field.accepted()
+            onAccepted: { field.entered = true; field.accepted() }
+            onTextChanged: field.entered = false
+            onActiveFocusChanged: if (activeFocus) field.entered = false
+            Keys.onPressed: if (Remote.isOk(event.key) && !field.keyboard.visible) { field.keyboard.show(); event.accepted = true }
         }
     }
 }

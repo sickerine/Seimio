@@ -204,8 +204,10 @@ WebOSWindow {
     // what they do.
     function libraryEntries(item) {
         var known = account.libraryRevision >= 0 && !!item, has = known && account.inLibrary(item.id), seen = known && account.watched(item.id);
+        // (`primary`: a page's round button is the white disc with the dark check a watched card wears,
+        // so the button says the title is watched before it is focused)
         return [{ label: has ? "Remove from library" : "Add to library", icon: has ? "minus" : "plus", round: true },
-                { label: seen ? "Mark unwatched" : "Mark watched", icon: "check", round: true }];
+                { label: seen ? "Mark unwatched" : "Mark watched", icon: "check", round: true, primary: seen }];
     }
     function libraryAct(item, index) {
         if (!item) return;
@@ -332,17 +334,21 @@ WebOSWindow {
     //   what plays                              Play AI Pick, Play from Stream
     //   a title (a film, a show)                the library's two entries
     //   an episode                              watched or not
-    // and nothing is marked that airs later (`ahead`).
+    //   a season's tab (type "season")          all of it watched or not (ShowScreen.seasonCard)
+    // and nothing is marked that airs later (`ahead`). A series marked watched takes its episodes with it
+    // (Account.markWatched).
     property bool playMenu: false
     property var menuEpisode: null
     property rect menuAnchor: Qt.rect(0, 0, 0, 0)
     function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; playMenu = true }
-    readonly property var menuTitle: menuEpisode && menuEpisode.type !== "series"
+    readonly property var menuTitle: menuEpisode && (menuEpisode.type === "movie" || menuEpisode.type === "show")
         ? { id: menuEpisode.id, type: (menuEpisode.kind || menuEpisode.type) === "movie" ? "movie" : "series", name: menuEpisode.name, poster: menuEpisode.poster } : null
     readonly property int menuPlays: menuEpisode && !menuEpisode.plays ? 0 : 2
+    readonly property var playEntries: [{ label: "Play AI Pick", icon: "play" }, { label: "Play from Stream", icon: "list" }]
     readonly property var menuEntries: {
-        var e = menuEpisode, entries = menuPlays ? [{ label: "Play AI Pick", icon: "play" }, { label: "Play from Stream", icon: "list" }] : [];
+        var e = menuEpisode, entries = menuPlays ? playEntries : [];
         if (!e) return entries;
+        if (e.type === "season") return [{ label: e.watched ? "Mark all unwatched" : "Mark all watched", icon: "check" }];
         if (menuTitle) return entries.concat(libraryEntries(menuTitle).slice(0, e.ahead ? 1 : 2));
         return e.ahead ? entries : entries.concat([{ label: e.watched ? "Mark unwatched" : "Mark watched", icon: "check" }]);
     }
@@ -350,7 +356,11 @@ WebOSWindow {
         var e = menuEpisode;
         if (index < menuPlays) { if (index === 0) playAi(e); else openStreams(e); return }
         playMenu = false;
-        if (menuTitle) libraryAct(menuTitle, index - menuPlays); else account.markEpisode(e.id, !e.watched);
+        if (menuTitle) libraryAct(menuTitle, index - menuPlays);
+        else if (e.type !== "season") account.markEpisode(e.id, !e.watched);
+        // a season: each title its cards are, whole; a plain series' season by its number
+        else if (e.titles.length) e.titles.forEach(function (t) { account.markWatched(t, !e.watched) });
+        else account.markSeason(e.id, e.season, !e.watched);
     }
     // A title's card in a grid (the Anime tab, Movies, Series, the Library, a search). A card of the Anime
     // tab is AniList's until its franchise is in, which says which of Stremio's titles it is (a Kitsu id):
@@ -549,6 +559,7 @@ WebOSWindow {
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
         onOpenStreams: app.openStreams(null)
+        onSearch: { app.tab = 5; app.layer = "tabs"; searchField.text = text; search.enter() }      // typed, and Enter: on to what is found
         onVariantChanged: {
             if (variant.signIn && account.ready && !account.signedIn) account.signInWith(variant.signIn[0], variant.signIn[1]);   // lab: a tour can't approve a code
             if (variant.signOut && account.signedIn) account.signOut();
@@ -757,6 +768,7 @@ WebOSWindow {
             Keys.onDownPressed: search.enter()
             Keys.onUpPressed: {}
             onAccepted: search.enter()                      // Enter on the keyboard: on to what was found
+            onDismissed: text = ""                          // Back on the keyboard: it closes, and the bar is cleared
         }
         // The account, at the top left on the tab bar's line: Left from Home's tab reaches it, OK opens its
         // menu. It comes and goes with the tab bar.
@@ -849,14 +861,16 @@ WebOSWindow {
             open: app.layer === "menu"
             source: scene
             x: Theme.margin + home.focusCardWidth * 1.1 + 44
-            y: home.focusRect.y + 10
-            // Play plays the AI pick; then the library's two, as on a page; the last takes the title off
-            // Continue Watching (the panel is as wide as that label needs)
+            y: Math.min(home.focusRect.y + 10, Theme.screenHeight - height - 60)
+            // The two ways to play, as every menu of something that plays has them; the library's two, as
+            // on a page; the last takes the title off Continue Watching (the panel is as wide as that
+            // label needs)
             width: 544
-            actions: [{ label: "Play", icon: "play" }].concat(app.libraryEntries(app.menuCard), [{ label: "Remove from Continue Watching", icon: "close" }])
+            actions: app.playEntries.concat(app.libraryEntries(app.menuCard), [{ label: "Remove from Continue Watching", icon: "close" }])
             onTriggered: {
                 if (actionIndex === 0) { app.playAi(null); return }
-                if (actionIndex < 3) app.libraryAct(app.menuCard, actionIndex - 1); else if (app.menuCard) account.stopWatching(app.menuCard.id);
+                if (actionIndex === 1) { app.openStreams(null); return }
+                if (actionIndex < 4) app.libraryAct(app.menuCard, actionIndex - 2); else if (app.menuCard) account.stopWatching(app.menuCard.id);
                 app.layer = "home";
             }
         }
@@ -884,7 +898,8 @@ WebOSWindow {
             else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; app.leavePlayer() }
             else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.back() }
             else if (Remote.isBack(event.key) && app.layer === "signin") event.accepted = true                       // nowhere to go back to: signed out, the app is this screen
-            else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; app.tab = 0; app.layer = "home" }   // out of the search
+            // Back in the search bar: what is typed goes first, and from an empty bar it leaves the search
+            else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; if (searchField.text) searchField.text = ""; else { app.tab = 0; app.layer = "home" } }
             else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
