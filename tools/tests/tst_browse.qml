@@ -17,7 +17,7 @@ Item {
         function browse(what) {}
         function choose(key, option) {}
         function more() {}
-        function items(from, n) { return all.slice(from, from + n) }
+        function itemsOf(ids) { return ids.map(function (id) { return all.filter(function (i) { return i.id === id })[0] }) }
         function ids() { return all.map(function (i) { return i.id }) }
         function show(ids) {
             all = ids.map(function (id) { return { id: id, name: id, title: id, art: "" } });
@@ -54,11 +54,13 @@ Item {
         // added to the old rows, which left holes)
         account.show(ids(40, 100)); settle();
         compare(titles().join(","), ids(40, 100).join(","));
-        // grown, but with its first two titles the other way round: not a page more (the rows built
-        // were kept as long as the last of them was where it had been)
+        // grown, with its first two titles the other way round: on screen the forty stay in the order
+        // they are in and the new ones join at the end; the list's own order comes when it next does
         var grown = ids(42, 100).reverse().slice(2).reverse();     // the same forty
         grown = [grown[1], grown[0]].concat(grown.slice(2), ["t140", "t141"]);
-        account.show(grown); settle();
+        account.show(grown);
+        tryVerify(function () { return titles().join(",") === ids(42, 100).join(",") }, 3000);
+        screen.shown = false; screen.shown = true; settle();
         compare(titles().join(","), grown.join(","));
     }
     // A title removed from the library with the library on screen: the page was shown again from the
@@ -81,6 +83,40 @@ Item {
         compare(screen.focusItem.id, "t210", "the cursor stays on its title");
         compare(screen.row, 1);
         compare(Remote.tallies["grid shown"] || 0, shown, "and the page is never shown again");
+        screen.row = -1;
+    }
+    // While the list is on screen its titles stay in the order they are in. One marked watched goes to
+    // the front of the list's order, which is left for later; then another removed took that order with
+    // it, and every row changed for a title that only left.
+    function test_theOrderOnScreenStaysWhileATitleLeaves() {
+        var list = ids(14, 300);
+        account.show(list); settle();
+        var moved = [list[8]].concat(list.slice(0, 8), list.slice(9));      // the ninth to the front
+        account.show(moved); wait(50);
+        compare(titles().join(","), list.join(","), "another order is left alone");
+        var first = screen.rows[0];
+        moved.splice(moved.indexOf("t309"), 1);             // then the tenth removed
+        account.show(moved); wait(100);
+        list.splice(9, 1);
+        compare(titles().join(","), list.join(","), "the title left, and the rest stayed where they were");
+        verify(screen.rows[0] === first);
+        screen.shown = false; screen.shown = true; wait(100);
+        compare(titles().join(","), moved.join(","), "the list's own order when it next comes on");
+    }
+    // In a long list, a title removed above the cursor (on another device): the rows are made a few at a
+    // time from the change down, and the cursor, moved to follow its title, was on the title before it
+    // until its rows were reached.
+    function test_theCursorIsNeverOnAnotherTitle() {
+        var list = ids(700, 1000);
+        account.show(list); settle();
+        wait(300);
+        screen.row = 80; screen.forceActiveFocus();
+        tryVerify(function () { return screen.focusItem && /^t15\d\d$/.test(screen.focusItem.id) });
+        var on = screen.focusItem.id;
+        account.show(list.slice(1));
+        compare(screen.focusItem.id, on, "at once, not when the rows before it have been made");
+        settle();
+        compare(screen.focusItem.id, on);
         screen.row = -1;
     }
 }

@@ -30,8 +30,9 @@ class Account : public QObject {
     Q_PROPERTY(QVariantMap watchedTitles READ watchedTitles NOTIFY libraryChanged)
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
     //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
-    //   items(from, n)   that many of its titles, as the screens show a title
     //   ids()   its titles' ids, in order: what a screen tells a changed list from a longer one by
+    //   itemsOf(ids)   those of its titles, as the screens show a title (a screen keeps the order it
+    //                  shows while it is looked at, so it asks by id)
     Q_PROPERTY(QVariantMap browsing READ browsing NOTIFY browsingChanged)
 public:
     explicit Account(QObject *parent = nullptr) : QObject(parent) {
@@ -63,7 +64,11 @@ public:
     QVariantMap watchedTitles() const { QVariantMap out; for (const QString &id : m_watched) out[id] = true; return out; }
 
     QVariantMap browsing() const { return m_browsing; }
-    Q_INVOKABLE QVariantList items(int from, int n) const { return m_items.mid(from, n); }
+    Q_INVOKABLE QVariantList itemsOf(const QStringList &ids) const {
+        QVariantList out;
+        for (const QString &id : ids) { const int at = m_ids.indexOf(id); if (at >= 0) out << m_items[at]; }
+        return out;
+    }
     Q_INVOKABLE QStringList ids() const { return m_ids; }
     Q_INVOKABLE void browse(const QString &what) {
         if (what == m_browse) return;

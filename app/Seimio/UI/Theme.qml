@@ -44,6 +44,10 @@ QtObject {
     readonly property int fast: 180
     readonly property int base: 280
     readonly property int slow: 420
+    // How long the cursor rests on a title before what follows it (the info above, the backdrop) changes.
+    // The info's swap takes no longer than this (HeroInfo: out, then in): a title taken has finished
+    // coming in before the next can be taken, so moving on never cuts a fade short.
+    readonly property int settle: 280
     readonly property int ease: Easing.OutCubic
     readonly property int spring: Easing.OutBack
 }

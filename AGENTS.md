@@ -253,7 +253,8 @@ a removed one sliding over (`BrowseScreen.take`, `CardGrid.closeUp`), and leaves
 same titles for when it next comes on screen. To check a change on the TV, count: the lab report's
 `redraws` (`Remote.tally`: "grid shown" is a whole page shown again, "grid replaced" rows changed in
 place, "info" and "backdrop" the title above, "page loaded" and "page refreshed" a show page, "home
-taken" Continue Watching's row, "day built" an open calendar day). Read it before and after the action;
+taken" Continue Watching's row, "day built" an open calendar day, "info cut" a title replaced while it
+was still fading in, which is a flicker and should stay at none). Read it before and after the action;
 only what the action is about may have moved. Measured on 2026-11-18 for adding to and removing from
 the library (search, Home, the Anime tab, the Library), marking watched (the Library, an episode on its
 page) and Remove from Continue Watching: none shows a grid again.
@@ -282,6 +283,12 @@ format list differs from the TV, so neither settles anything.
   (a franchise's item is the chart's or the row's own, with its Kitsu id: `Franchise`). A screen gets its data whole: `Live`
   fetches every piece of art and fact it needs before the screen's data is ready. The name stands in only
   when there's no logo at all.
+  A preload only preloads if it asks for the picture exactly as the element that shows it does: Qt
+  keeps a picture by its address, `sourceSize` and `fillMode`, so a hidden `Image` with another fit
+  fetches a copy nothing uses and the visible one is fetched after it (a logo came in a second or more
+  after its title, from fanart.tv at 25 KB/s). And what is on screen stays until its replacement is
+  loaded: `HeroInfo` fades the old title out only then, and its swap takes no longer than the rest a
+  title is taken after (`Theme.settle`), so a fade-in is never cut short by the next title.
 - What fades out keeps showing what it showed until its fade ends: the end of the animation is the end,
   not its start. Things come and go through `Fade`, whose content can only read the value it holds
   (`current`); a panel with its own motion holds what it shows in a `Latch` (`live` while open). Never an

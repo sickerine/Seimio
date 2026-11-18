@@ -16,6 +16,7 @@ Item {
     property string shownName: ""
     property bool hasLogo: false
     width: 640; height: 180
+    function labState() { return { ready: ready, logo: shownLogo, has: hasLogo, name: shownName, picture: picture.status, painted: Math.round(picture.paintedWidth) + "x" + Math.round(picture.paintedHeight), opacity: content.opacity, preload: preload.status } }      // lab
 
     // a cached logo can be Ready at once without a status change, so check right after setting it too
     function load() { preload.source = logo; apply() }
@@ -30,13 +31,18 @@ Item {
     Component.onCompleted: load()
     Image {
         id: preload
-        visible: false; asynchronous: true; sourceSize.width: 780
+        // The size and the fit of the picture below, or it preloads nothing: Qt keeps a picture by its
+        // address, size and fit. With the default fit here the picture was fetched a second time once
+        // this one was in, and the logo came in after the title around it had (a second or more late
+        // from a slow host), without a fade.
+        visible: false; asynchronous: true; sourceSize.width: 780; fillMode: Image.PreserveAspectFit
         onStatusChanged: art.apply()
     }
     Item {
         id: content
         anchors.fill: parent
         Image {
+            id: picture
             anchors.fill: parent
             fillMode: Image.PreserveAspectFit; horizontalAlignment: art.centered ? Image.AlignHCenter : Image.AlignLeft; verticalAlignment: Image.AlignBottom
             asynchronous: true; sourceSize.width: 780

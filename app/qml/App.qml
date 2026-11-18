@@ -88,7 +88,7 @@ WebOSWindow {
         if (layer === "menu" && menuCard && (!focusItem || focusItem.id !== menuCard.id)) layer = "home";      // the card under Home's menu is another title now
         probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move");
     }
-    Timer { id: settle; interval: 280; onTriggered: app.rest() }
+    Timer { id: settle; interval: Theme.settle; onTriggered: app.rest() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
     // the show page for the selected Continue Watching or Anime title is built once Home has been still for a
@@ -583,7 +583,7 @@ WebOSWindow {
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
-                     redraws: Remote.tallies,
+                     redraws: Remote.tallies, header: showPage.headerState(), hero: { target: hero.target.slice(-28), shown: hero.shown.slice(-28), incoming: hero.incoming.slice(-28), fadeIn: hero.fadeIn, opacity: hero.opacity, visible: hero.visible },
                      search: { text: searchBar.text, kind: search.kind, zone: searchBar.zone, cursor: searchBar.kindBar.cursor, row: search.row, found: search.found, counts: app.searchKinds.map(function (k) { return search.count(k[1]) }).join(","), shownLag: app.shownLag },
                      library: { item: app.libraryItem ? app.libraryItem.id : "", "in": !!app.libraryItem && account.inLibrary(app.libraryItem.id), watched: !!app.libraryItem && account.watched(app.libraryItem.id), reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
@@ -686,6 +686,7 @@ WebOSWindow {
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: { probe.act("show " + ["actions", "seasons", "episodes"][zone]); probe.captures() }
+                onEntryIndexChanged: { probe.act("show entry"); probe.captures() }
             }
             TitleScreen {
                 id: titlePage

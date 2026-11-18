@@ -29,56 +29,65 @@ FocusScope {
     onShownChanged: if (shown && account) { account.browse(what); if (stale) take(true) }
     onWhatChanged: if (shown && account) account.browse(what)
 
-    // The rows as they were built: the list they are of (its filters' choices) and its titles' ids, in
-    // order, as far as rows have been made of them. Another list is shown from the top. The same list
-    // with other titles changes where it is, and the page is never shown again for it:
+    // The rows as they were built: the list they are of (its filters' choices) and the ids of the titles
+    // in them, in the order they show (`builtIds`), as far as rows have been made. Another list is shown
+    // from the top. The same list with other titles changes where it is, and the page is never shown again
+    // for it:
     //   - more titles after the ones built (a page more, the rest of this one): rows are added;
-    //   - a title gone or added, here or on another device: the rows from its place on are made again,
-    //     the others staying the objects they are. The cursor stays on its title, or in its place if
-    //     that title is the one that went. One title gone from a list on screen, the cards after it
-    //     slide over to close up (CardGrid.closeUp);
-    //   - the same titles in another order (one marked watched goes to the front of "last watched"):
-    //     left as it is while the list is on screen (`stale`), and taken when it next comes on. A list
-    //     that shuffles under the cursor because of what was just done to one title reads as a refresh.
-    // Three rows are made at a time, a frame apart: fifty titles at once was a 60 to 70 ms stall as a tab
-    // first showed.
+    //   - a title gone or added, here or on another device: the rows that hold other titles for it are
+    //     made again, the others staying the objects they are. The cursor stays on its title, or in its
+    //     place if that title is the one that went. One title gone from a list on screen, the cards
+    //     after it slide over to close up (CardGrid.closeUp);
+    //   - while the list is on screen its titles stay in the order they are in, whatever the list's is
+    //     by now (one marked watched goes to the front of "last watched"): a title gone leaves its
+    //     place, a new one joins at the end. The list's own order is taken when it next comes on
+    //     (`stale`). A list that shuffles under the cursor because of what was just done to one title
+    //     reads as a refresh.
+    // Three rows are made at a time, a frame apart (fifty titles at once was a 60 to 70 ms stall as a tab
+    // first showed), and the rows under the cursor with the first of them: it is never on another title
+    // while the rows before it are made.
     property string built: ""
     property var builtIds: []
     property bool stale: false
     Connections { target: browse.account; onBrowsingChanged: browse.take() }
     Timer { id: rest; interval: 16; onTriggered: browse.take() }
-    function reordered(a, b) {
-        if (a.length !== b.length) return false;
-        var has = {};
-        a.forEach(function (id) { has[id] = true });
-        return b.every(function (id) { return has[id] });
-    }
-    // `now`: the list is coming on screen, so another order is taken too
+    // `now`: the list is coming on screen, so its own order is taken
     function take(now) {
         if (!mine || page.loading && !page.count) return;
         var key = what + "|" + filters.map(function (f) { return f.current }).join(","), ids = account.ids(), per = grid.perRow;
-        var fresh = key !== built;
+        var fresh = key !== built, want = ids;
         if (fresh) builtIds = [];
-        var keep = 0;                                // how far the rows are still this list's
-        while (keep < builtIds.length && keep < ids.length && builtIds[keep] === ids[keep]) keep++;
-        if (!fresh && keep === builtIds.length && keep === ids.length) { stale = false; return }
-        var gone = -1;
-        if (keep < builtIds.length) {
-            if (shown && !now && reordered(builtIds, ids)) { stale = true; return }
-            // one title gone and the rest as they were: its place, for closing up
-            if (ids.indexOf(builtIds[keep]) < 0 && builtIds.slice(keep + 1).join() === ids.slice(keep, builtIds.length - 1).join()) gone = keep;
-            var on = grid.row >= 0 && grid.focusItem ? ids.indexOf(grid.focusItem.id) : -1;
-            if (on >= 0) { grid.row = Math.floor(on / per); grid.column = on % per }
+        else if (shown && !now) {
+            var has = {}, had = {};
+            ids.forEach(function (id) { has[id] = true });
+            builtIds.forEach(function (id) { had[id] = true });
+            want = builtIds.filter(function (id) { return has[id] }).concat(ids.filter(function (id) { return !had[id] }));
         }
-        stale = false;
-        var from = keep - keep % per, to = Math.min(ids.length, from + 3 * per), rows = fresh ? [] : grid.latest.slice();
-        for (var i = from; i < to; i += per) rows[i / per] = { items: account.items(i, per) };
-        if (to === ids.length) rows.length = Math.ceil(to / per);       // a shorter list than the rows were: the ones past its end go
+        stale = want.join() !== ids.join();
+        var keep = 0;                                // how far the rows are still what is wanted
+        while (keep < builtIds.length && keep < want.length && builtIds[keep] === want[keep]) keep++;
+        if (!fresh && keep === builtIds.length && keep === want.length) return;
+        var rows = fresh ? [] : grid.latest.slice(), gone = -1;
+        // a row of the titles wanted in its place: the one there if it holds them already
+        function fill(r) {
+            var its = want.slice(r * per, r * per + per), row = rows[r];
+            if (!row || row.items.map(function (i) { return i.id }).join() !== its.join()) rows[r] = { items: account.itemsOf(its) };
+        }
+        if (keep < builtIds.length) {
+            // one title gone and the rest as they were: its place, for closing up
+            if (want.indexOf(builtIds[keep]) < 0 && builtIds.slice(keep + 1).join() === want.slice(keep, builtIds.length - 1).join()) gone = keep;
+            var on = grid.row >= 0 && grid.focusItem ? want.indexOf(grid.focusItem.id) : -1;
+            if (on >= 0) { grid.row = Math.floor(on / per); grid.column = on % per }
+            for (var r = Math.max(0, grid.row); r < Math.max(0, grid.row) + 3 && r * per < want.length; r++) fill(r);
+        }
+        var from = keep - keep % per, to = Math.min(want.length, from + 3 * per);
+        for (var i = from; i < to; i += per) fill(i / per);
+        if (to === want.length) rows.length = Math.ceil(to / per);      // a shorter list than the rows were: the ones past its end go
         // under the info, or right under the filters: the rows take their place as they come in
         if (fresh) { grid.row = Math.min(grid.row, 0); grid.column = 0; grid.show(rows, "grid", hero ? 650 : 240) } else grid.replace(rows);
         if (gone >= 0 && shown) grid.closeUp(gone);
-        built = key; builtIds = ids.slice(0, to);
-        if (to < ids.length) rest.restart();
+        built = key; builtIds = want.slice(0, to);
+        if (to < want.length) rest.restart();
     }
     onRowChanged: if (mine && page.more && !page.loading && row >= grid.rows.length - 3) account.more()
 

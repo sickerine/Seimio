@@ -72,15 +72,21 @@ FocusScope {
     // An anime franchise's page takes on the entry you're on (Franchise: a season part, a film, a special):
     // the focused episode's, or the one remembered in the season shown. Its logo, facts and description fill
     // the header (HeroInfo: logo loaded first, a fade through the change) and its backdrop the screen's
-    // (App reads `backdrop`). It changes once the selection rests on another entry (280 ms, as Home's
-    // selection commits). A show without entries (not an anime) wears its own.
+    // (App reads `backdrop`). It changes once the selection rests on another entry (Theme.settle, as
+    // Home's selection commits). Every entry's logo is loaded with the page: fetched when its season was
+    // first reached, the header stood empty for a second, and moving on emptied it again.
+    // A show without entries (not an anime) wears its own.
     // on a tile, the season it leads to (its first card) is what the page previews
     readonly property var focusedEp: strip.onTile ? ((seasons[shownSeason + (strip.onTile === "next" ? 1 : -1)] || { episodes: [] }).episodes[0] || null)
                                      : episodes.length ? episodes[Math.max(0, Math.min(strip.currentIndex, episodes.length - 1))] : null
     readonly property int wantedEntry: focusedEp && focusedEp.entry !== undefined ? focusedEp.entry : -1
     property int entryIndex: -1
     onWantedEntryChanged: if (!active || entryIndex < 0) entryIndex = wantedEntry; else entrySettle.restart()
-    Timer { id: entrySettle; interval: 280; onTriggered: page.entryIndex = page.wantedEntry }
+    Timer { id: entrySettle; interval: Theme.settle; onTriggered: page.entryIndex = page.wantedEntry }
+    Repeater {
+        model: page.show && page.show.entries ? page.show.entries.length : 0
+        Image { visible: false; asynchronous: true; sourceSize.width: 780; fillMode: Image.PreserveAspectFit; source: page.show.entries[index].logo || "" }      // (the size and fit HeroInfo and TitleArt ask for: one picture between them)
+    }
     readonly property var entry: show && show.entries && entryIndex >= 0 ? show.entries[entryIndex] || null : null
     readonly property string backdrop: entry ? entry.backdrop || "" : ""
     // what a card shows when its own picture can't be had (an episode still to come has no still): its
@@ -89,6 +95,7 @@ FocusScope {
         var e = ep && show && show.entries && ep.entry !== undefined ? show.entries[ep.entry] : null;
         return e && e.backdrop || (item && item.backdrop) || "";
     }
+    function headerState() { return header.labState() }      // lab
     function relationLabel(r) { return ({ PREQUEL: "Prequel", SEQUEL: "Sequel", SPIN_OFF: "Spin-off", ALTERNATIVE: "Alternative", SIDE_STORY: "Side story", PARENT: "Main story" })[r] || "Related" }
     readonly property var look: {
         if (entry) {
@@ -230,6 +237,7 @@ FocusScope {
         delay: 120
         x: Theme.margin; y: 96
         HeroInfo {
+            id: header
             item: page.look
             logoSize: Qt.size(560, 150); nameSize: 64; chipsY: 172; chipSize: 21
             textY: 230; textWidth: 860; textSize: 25; textLines: 2
