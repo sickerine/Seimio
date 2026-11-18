@@ -57,7 +57,11 @@ WebOSWindow {
     readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? browse.focusItem : searchTab ? search.focusItem : home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
-    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
+    onFocusItemChanged: {
+        if (!displayItem) commit(); else settle.restart();
+        if (layer === "menu" && menuCard && (!focusItem || focusItem.id !== menuCard.id)) layer = "home";      // the card under Home's menu is another title now
+        probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move");
+    }
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
@@ -129,12 +133,16 @@ WebOSWindow {
     // The episode a franchise was picked for: the release's own, by id or (an anime's calendar release) by
     // its number in the entry picked, else where you are in that entry (Franchise's `video`)
     function picked(f, item) {
-        var entries = f.show.entries || [], at = -1, found = "";
-        for (var i = 0; i < entries.length; i++) if (entries[i].id === f.item.id) at = i;
         // by number first: the franchise's own item carries the release's number too, with its `video`
         // already set to where you are in the entry
+        return numbered(f, item) || item.video || f.item.video || "";
+    }
+    // the episode a release names by its number in the entry picked (`item.number`), or ""
+    function numbered(f, item) {
+        var entries = f.show.entries || [], at = -1, found = "";
+        for (var i = 0; i < entries.length; i++) if (entries[i].id === f.item.id) at = i;
         if (item.number > 0) f.show.seasons.forEach(function (s) { s.episodes.forEach(function (e) { if (e.entry === at && e.number === item.number) found = e.id }) });
-        return found || item.video || f.item.video || "";
+        return found;
     }
     // the title a page renders: Home's selection, or the one in hand once a page has it
     readonly property var pageItem: onHome || !held ? displayItem : held.item
@@ -318,20 +326,24 @@ WebOSWindow {
             streamPage.show(app.lookFor(app.playTarget.id), app.playTarget.label, streams.total ? reason + ". Choose a stream to play." : "");
         }
     }
-    // The menu of what was held on a page (a long OK on Play, or on a card of a show's row), over the page.
-    // `menuEpisode` is that card (ShowScreen.target), or null for a title page's Play. What it is says what
-    // the menu has, the same wherever that kind of card is:
-    //   what plays (not a related show: OK opens its page)   Play AI Pick, Play from Stream
-    //   a title (a film, a related show)                      the library's two entries
-    //   an episode                                            watched or not
-    // and nothing is marked that airs later.
+    // The menu of what was held (a long OK on Play, on a card of a show's row, on a title's card in a grid),
+    // over the screen that has it and beside the card. `menuEpisode` is that card, or null for a title
+    // page's Play:
+    //   { id, type, plays, watched, ahead, name, poster, kind }
+    //   type    "series" an episode, "movie" a film, "show" a title with a page (`kind`: "movie" when it is a film)
+    //   plays   OK on it plays it (an episode or a film on a show's row); else OK opens its page
+    // What it is says what the menu has, the same wherever that kind of card is:
+    //   what plays                              Play AI Pick, Play from Stream
+    //   a title (a film, a show)                the library's two entries
+    //   an episode                              watched or not
+    // and nothing is marked that airs later (`ahead`).
     property bool playMenu: false
     property var menuEpisode: null
     property rect menuAnchor: Qt.rect(0, 0, 0, 0)
     function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; playMenu = true }
     readonly property var menuTitle: menuEpisode && menuEpisode.type !== "series"
-        ? { id: menuEpisode.id, type: menuEpisode.type === "movie" ? "movie" : "series", name: menuEpisode.name, poster: menuEpisode.poster } : null
-    readonly property int menuPlays: menuEpisode && menuEpisode.type === "show" ? 0 : 2
+        ? { id: menuEpisode.id, type: (menuEpisode.kind || menuEpisode.type) === "movie" ? "movie" : "series", name: menuEpisode.name, poster: menuEpisode.poster } : null
+    readonly property int menuPlays: menuEpisode && !menuEpisode.plays ? 0 : 2
     readonly property var menuEntries: {
         var e = menuEpisode, entries = menuPlays ? [{ label: "Play AI Pick", icon: "play" }, { label: "Play from Stream", icon: "list" }] : [];
         if (!e) return entries;
@@ -343,6 +355,40 @@ WebOSWindow {
         if (index < menuPlays) { if (index === 0) playAi(e); else openStreams(e); return }
         playMenu = false;
         if (menuTitle) libraryAct(menuTitle, index - menuPlays); else account.markEpisode(e.id, !e.watched);
+    }
+    // A title's card in a grid (the Anime tab, Movies, Series, the Library, a search). A card of the Anime
+    // tab is AniList's until its franchise is in, which says which of Stremio's titles it is (a Kitsu id):
+    // asked for if it isn't, and the menu opens when it comes, if the card still has the focus.
+    property var menuWaiting: null                         // { item, rect }
+    function openTitleMenu(item, r) {
+        var f = /^anilist:/.test(item.id) ? franchises[item.id] : null;
+        if (/^anilist:/.test(item.id) && !f) { menuWaiting = { item: item, rect: r }; loadFranchise(item); return }
+        var t = f ? f.item : item, entry = f && f.show && f.show.entries ? f.show.entries.filter(function (e) { return e.id === t.id })[0] : null;
+        openPlayMenu({ id: t.id, type: "show", plays: false, kind: entry ? (entry.kind === "film" ? "movie" : "series") : t.type,
+                       name: entry ? entry.title : t.name, poster: entry ? entry.poster : t.poster || "" }, r);
+    }
+    // A release's card in an open calendar day. OK opens its show's page, so nothing plays from here: its
+    // episode, watched or not, once it has aired. An anime's release names its episode by number until
+    // its franchise is in.
+    function openReleaseMenu(entry, r) { commit(); if (displayItem) releaseMenu(entry, displayItem, r) }
+    // (`item`: the release as Home has it, with the episode's number)
+    function releaseMenu(entry, item, r) {
+        if (!(entry.released <= today)) return;                             // it airs later: nothing to offer
+        var f = franchiseId(item.id) ? franchises[item.id] : null;
+        if (franchiseId(item.id) && !f) { menuWaiting = { item: item, rect: r, release: entry }; loadFranchise(item); return }
+        // (watched as its franchise has it: a show that is only on the airing schedule has no library state
+        // in the calendar's data)
+        var video = f ? numbered(f, item) : entry.video, at = f && video ? Episodes.find(f.show, video) : null;
+        if (video) openPlayMenu({ id: video, type: "series", plays: false, watched: at ? !!f.show.seasons[at.s].episodes[at.e].watched : entry.watched, ahead: false }, r);
+    }
+    function titleMenuArrived(sourceId, item) {
+        var w = menuWaiting;
+        if (!w || w.item.id !== sourceId) return;
+        menuWaiting = null;
+        if (layer !== "home") return;
+        // still on what was held: that very release (its title has others, a day apart), or that title's card
+        if (w.release) { if (focusItem === w.item) releaseMenu(w.release, w.item, w.rect) }
+        else if (selected(sourceId, item)) openTitleMenu(w.item, w.rect);
     }
     onPlayMenuChanged: probe.captures()                    // lab: captures follow the Play options too
     // a handoff (a switch inside the player) is still watching: the scene behind stays away, or the
@@ -379,7 +425,11 @@ WebOSWindow {
             play(list[app.playIndex].title, list[app.playIndex].url, list[app.playIndex].at);
         }
     }
-    function openMenu() { commit(); playMenu = false; layer = "menu"; probe.captures() }
+    // Home's menu is for the card it opened on (`menuCard`: that title, as the library has it). A list that
+    // changes under it (Continue Watching taken again: a title gone, another order) closes it, so what it
+    // does never lands on the title that took the card's place.
+    property var menuCard: null
+    function openMenu() { commit(); playMenu = false; menuCard = libraryItem; layer = "menu"; probe.captures() }
     onLayerChanged: { Remote.stir(); probe.act(layer); probe.captures() }      // a screen coming or going is movement, whoever asked
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
@@ -449,6 +499,7 @@ WebOSWindow {
             }
             app.shows[item.id] = show;                     // its episodes, for the player's row and what's next
             if (sourceId.indexOf("anilist:") === 0) anime.resolve(sourceId, item);   // the chart's selection becomes the Kitsu item
+            app.titleMenuArrived(sourceId, item);                 // a held card's menu waited for it
             // playing already (Play from Home before it was in): the franchise becomes the title in hand, so
             // the player has its row
             var playing = app.layer === "player" && app.held && app.playTarget && (app.held.item.id === sourceId || app.held.item.id === item.id) ? Episodes.find(show, app.playTarget.id) : null;
@@ -464,6 +515,8 @@ WebOSWindow {
         }
         onFranchiseFailed: {
             delete app.franchiseLoading[sourceId];
+            // a held card's menu waited for it: it has no title of Stremio's, so there is nothing to offer
+            if (app.menuWaiting && app.menuWaiting.item.id === sourceId) { app.menuWaiting = null; if (app.animeTab) anime.say(reason) }
             if (sourceId !== app.franchiseOpening) return;
             app.franchiseOpening = "";
             if (app.animeTab) anime.say(reason); else if (app.onHome && app.focusItem && app.focusItem.id === sourceId) app.openPage();
@@ -612,7 +665,7 @@ WebOSWindow {
             HomeScreen {
                 id: home
                 width: parent.width; height: parent.height
-                focus: app.layer === "home" && app.tab === 0
+                focus: app.layer === "home" && app.tab === 0 && !app.playMenu
                 shown: app.onHome && app.tab === 0
                 holdFocus: app.layer === "menu"
                 continueWatching: catalog.continueWatching
@@ -621,6 +674,7 @@ WebOSWindow {
                 today: app.today
                 onActivated: app.open()
                 onHeld: app.openMenu()
+                onReleaseHeld: app.openReleaseMenu(entry, rect)
                 onExitTop: app.layer = "tabs"
                 onColumnChanged: probe.act("row move")
                 onRowChanged: probe.act("row change")
@@ -628,7 +682,7 @@ WebOSWindow {
             AnimeScreen {
                 id: anime
                 width: parent.width; height: parent.height
-                focus: app.layer === "home" && app.animeTab
+                focus: app.layer === "home" && app.animeTab && !app.playMenu
                 shown: app.onHome && app.animeTab
                 catalog: catalog
                 glassSource: backdropFrost
@@ -639,11 +693,12 @@ WebOSWindow {
                 onSeasonLoadingChanged: probe.captures()
                 // a show from the chart opens once its franchise is in (Catalog.loadFranchise)
                 onActivated: app.open()
+                onHeld: app.openTitleMenu(item, rect)
             }
             BrowseScreen {
                 id: browse
                 width: parent.width; height: parent.height
-                focus: app.layer === "home" && app.browseTab
+                focus: app.layer === "home" && app.browseTab && !app.playMenu
                 shown: app.onHome && app.browseTab
                 account: account
                 what: app.browsed
@@ -651,11 +706,12 @@ WebOSWindow {
                 onExitTop: app.layer = "tabs"
                 onRowChanged: probe.act("browse row")
                 onActivated: app.open()
+                onHeld: app.openTitleMenu(item, rect)
             }
             SearchScreen {
                 id: search
                 width: parent.width; height: parent.height
-                focus: app.layer === "home" && app.searchTab
+                focus: app.layer === "home" && app.searchTab && !app.playMenu
                 shown: app.onHome && app.searchTab
                 catalog: catalog
                 query: searchField.text
@@ -663,6 +719,7 @@ WebOSWindow {
                 onEntered: app.layer = "home"
                 onRowChanged: probe.act("search row")
                 onActivated: app.open()
+                onHeld: app.openTitleMenu(item, rect)
             }
         }
 
@@ -690,7 +747,7 @@ WebOSWindow {
             readonly property bool shown: app.onHome && !app.scrolled
             shadow: shown ? 0.8 : 0
             x: (parent.width - width) / 2; y: shown ? 44 : -100
-            opacity: app.searchTab ? 0 : app.layer === "menu" ? 0.3 : 1      // holds: only dims (or makes way for the search field); its tabs do not change
+            opacity: app.searchTab ? 0 : app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims (or makes way for the search field); its tabs do not change
             Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
             Behavior on opacity { NumberAnimation { duration: 300 } }
             onCurrentIndexChanged: probe.act("tabs")
@@ -715,7 +772,7 @@ WebOSWindow {
             x: Theme.margin; y: tabs.y + (tabs.height - height) / 2
             width: picture.width; height: picture.height
             focus: app.layer === "profile" && !app.profileOpen
-            opacity: app.layer === "menu" ? 0.3 : 1      // holds: only dims; the picture does not change
+            opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims; the picture does not change
             Behavior on opacity { NumberAnimation { duration: 300 } }
             Avatar { id: picture; source: account.avatar; focused: app.layer === "profile" }
             OkPress { id: profileOk; onTapped: app.profileOpen = true }
@@ -803,10 +860,10 @@ WebOSWindow {
             // Play plays the AI pick; then the library's two, as on a page; the last takes the title off
             // Continue Watching (the panel is as wide as that label needs)
             width: 544
-            actions: [{ label: "Play", icon: "play" }].concat(app.libraryButtons, [{ label: "Remove from Continue Watching", icon: "close" }])
+            actions: [{ label: "Play", icon: "play" }].concat(app.libraryEntries(app.menuCard), [{ label: "Remove from Continue Watching", icon: "close" }])
             onTriggered: {
                 if (actionIndex === 0) { app.playAi(null); return }
-                if (actionIndex < 3) app.libraryAct(app.libraryItem, actionIndex - 1); else if (app.libraryItem) account.stopWatching(app.libraryItem.id);
+                if (actionIndex < 3) app.libraryAct(app.menuCard, actionIndex - 1); else if (app.menuCard) account.stopWatching(app.menuCard.id);
                 app.layer = "home";
             }
         }
@@ -816,7 +873,9 @@ WebOSWindow {
             open: app.playMenu
             source: scene
             actions: app.menuEntries
-            x: app.menuAnchor.x + app.menuAnchor.width + 44
+            // beside the card: on its right, or on its left where the right has no room (a grid's last columns)
+            fromRight: app.menuAnchor.x + app.menuAnchor.width + 44 + width > Theme.screenWidth - Theme.margin
+            x: fromRight ? app.menuAnchor.x - 44 - width : app.menuAnchor.x + app.menuAnchor.width + 44
             y: Math.min(app.menuAnchor.y, Theme.screenHeight - height - 60)
             onTriggered: app.menuAct(actionIndex)
         }

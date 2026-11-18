@@ -25,7 +25,15 @@ FocusScope {
     // (Home compares the focused release's title by identity) and each move costs no conversion
     property var dayCache: ({})
     function releases(k) { if (!catalog) return []; if (!dayCache[k]) dayCache[k] = catalog.day(k); return dayCache[k] }
-    Connections { target: section.catalog; onLoaded: section.dayCache = ({}) }
+    Connections {
+        target: section.catalog
+        onLoaded: {
+            section.dayCache = ({});
+            // an open day is built again when what is watched in it changed (a release marked from its menu)
+            if (section.dayOpen && section.watchedIn(section.releasesOf(grid.selected)) !== section.watchedIn(section.openDay)) section.buildDay(grid.selected, dayStrip.currentIndex);
+        }
+    }
+    function watchedIn(list) { return list.map(function (e) { return e.name + e.episode + (e.watched ? " watched" : "") }).join(",") }
     property Item glassSource                // what the month bar's glass blurs
     property real sceneY: 0                  // this section's y in glassSource
     property string today                    // "YYYY-MM-DD"
@@ -34,6 +42,7 @@ FocusScope {
     Behavior on entered { NumberAnimation { duration: 480; easing.type: Theme.ease } }
     readonly property var dayEntries: dayCache && releases(grid.selected)   // re-read when the cache resets
     signal activated(var entry)
+    signal held(var entry, rect rect)        // a long OK on a release of an open day: its menu goes beside `rect`
     width: Theme.screenWidth
     height: grid.y + grid.height
 
@@ -311,6 +320,7 @@ FocusScope {
                 focus: section.zone === 2
                 nextLabels: false; showTitles: false
                 onActivated: section.activated(section.openDay[cardIndex])
+                onHeld: { var p = dayStrip.mapToItem(null, Theme.margin, 0); section.held(section.openDay[cardIndex], Qt.rect(p.x, p.y, cardWidth, cardHeight)) }
                 onTurning: { section.turnDir = dir; rail.sweep(dir); dateRoll.restart() }
                 onTurn: { grid.select(key); section.buildDay(key, land) }
             }

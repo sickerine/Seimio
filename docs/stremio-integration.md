@@ -138,7 +138,11 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
    **Remove from Continue Watching**. A long OK on any card of a show's row opens its menu, and what the
    card is says what the menu has (`App.menuEntries`): Play AI Pick and Play from Stream for what plays
    (an episode, a film), the library's two entries for a title (a film, a related show), watched or not for
-   an episode. Nothing that airs later is marked. A menu lists what it opened with until it has closed
+   an episode. A title's card in a grid (the Anime tab, Movies, Series, the Library, a search) has the
+   library's two entries, on the card's left where its right has no room; an Anime tab card is AniList's
+   until its franchise says which Kitsu title it is, so its menu waits for that. A release in an open
+   calendar day has its episode's entry, by the episode's number in its franchise for an anime.
+   Nothing that airs later is marked. A menu lists what it opened with until it has closed
    (`QuickMenu`'s `Latch`): its labels follow what they did. The page under it is built again where it is
    (`ShowScreen.refresh`): the focus stays on the card and Play names what it named.
 7. **Calendar**: library titles' releases, first in each day.

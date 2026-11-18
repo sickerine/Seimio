@@ -52,6 +52,7 @@ FocusScope {
     function say(text) { notice = text; noticeTimer.restart() }
     Timer { id: noticeTimer; interval: 2600; onTriggered: anime.notice = "" }
     signal activated(var item)
+    signal held(var item, rect rect)         // a long OK on a card: its menu goes beside `rect`
     signal exitTop()
 
     // asked while the tab is up, or once ahead while Home is idle (`warm`): building on the way in was
@@ -297,6 +298,7 @@ FocusScope {
         held: anime.shown
         dim: anime.seasonLoading ? 0.3 : 1               // the season on screen while another is fetched: dimmed, and out of reach (see the controls' Down)
         onActivated: anime.activated(item)
+        onCardHeld: anime.held(item, rect)
     }
 
     // The lists that drop from the controls, by their bar and over the rows: above it while it sits under

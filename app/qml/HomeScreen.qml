@@ -28,6 +28,7 @@ FocusScope {
     readonly property real focusCardWidth: 400
     signal activated(var item)
     signal held(var item)
+    signal releaseHeld(var entry, rect rect)         // a long OK on a release of an open calendar day
     signal exitTop()
 
     readonly property int cwHeight: 56 + 225 + 84
@@ -74,6 +75,7 @@ FocusScope {
             today: home.today
             sceneY: column.y + y
             onActivated: home.activated(entry.item)
+            onHeld: home.releaseHeld(entry, rect)
         }
     }
     Keys.onUpPressed: if (row > 0) row--; else exitTop()

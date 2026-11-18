@@ -20,6 +20,7 @@ FocusScope {
     readonly property bool scrolled: grid.scrolled
     readonly property var focusItem: grid.focusItem
     signal activated(var item)
+    signal held(var item, rect rect)         // a long OK on a card: its menu goes beside `rect`
     signal exitTop()
 
     readonly property var page: account ? account.browsing : ({})
@@ -97,6 +98,7 @@ FocusScope {
         held: browse.shown
         dim: browse.mine && browse.page.loading ? 0.3 : 1      // another list is on its way
         onActivated: browse.activated(item)
+        onCardHeld: browse.held(item, rect)
     }
 
     // the list a filter drops, by its bar; one at a time, starting on what's chosen

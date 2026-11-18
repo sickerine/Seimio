@@ -31,12 +31,13 @@ FocusScope {
     property var extras: []             // the buttons after Play (App's: the library's), and which was pressed
     signal action(int index)
     // { id, label, progress, type } of an episode, for playing it; a film among the Specials plays as a film.
-    // For its menu as well: `watched`; `ahead`, it airs later (an undated special doesn't: it can have been
-    // watched, where Episodes.aired wants a date); and `name` and `poster`, which a film or a related show
-    // (`type` "movie", "show") is in the library by, being a title.
+    // For its menu as well (App.menuEntries): `plays`, OK on it plays it (a related show's opens its page);
+    // `watched`; `ahead`, it airs later (an undated special doesn't: it can have been watched, where
+    // Episodes.aired wants a date); and `name` and `poster`, which a film or a related show (`type` "movie",
+    // "show") is in the library by, being a title.
     function target(sh, season, ep) {
         return { id: ep.id, label: episodeLabel(sh, season, ep), progress: ep.progress || 0, type: ep.type || "series",
-                 watched: !!ep.watched, ahead: ep.released > today, name: ep.title || "", poster: ep.poster || "" };
+                 plays: ep.type !== "show", watched: !!ep.watched, ahead: ep.released > today, name: ep.title || "", poster: ep.poster || "" };
     }
     function episodeLabel(sh, season, ep) {
         var n = sh.seasons[season].season;
@@ -140,7 +141,7 @@ FocusScope {
     // named, or the episode after it once that one is done. (Loaded as a page opened on the focused card,
     // Play was renamed to that card.)
     function refresh(title, seasonsAndEpisodes) {
-        var focusedId = !strip.onTile && focusedEp ? focusedEp.id : "", named = resumeEp, was = { s: shownSeason, e: strip.currentIndex };
+        var tile = strip.onTile, focusedId = !tile && focusedEp ? focusedEp.id : "", named = resumeEp, was = { s: shownSeason, e: Math.max(0, strip.currentIndex) };
         item = title; show = seasonsAndEpisodes; episodes = [];
         var resume = named ? Episodes.find(show, named.id) : null;
         if (resume) {
@@ -149,6 +150,8 @@ FocusScope {
         }
         resumePos = resume || Episodes.resting(show, today);
         place(focusedId && Episodes.find(show, focusedId) || (was.s < seasons.length ? was : resumePos));
+        // on a season's tile it stays on that tile: OK there turns the season, on a card it plays
+        if (tile && shownSeason === was.s) strip.jumpTo(tile === "prev" ? -1 : episodes.length);
     }
     // Play plays what the page rests on: an episode it was opened on (a calendar release, the entry of a
     // franchise that was picked, the one last played) is where you are from then on

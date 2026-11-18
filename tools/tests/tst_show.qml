@@ -35,5 +35,20 @@ Item {
         compare(page.resumeLabel, "Play E4", "Play moves on once the episode it named is done");
         compare(focused(), "t:1:5");
     }
+    // On the tile that leads to the season before, a refresh leaves the focus on the tile: put on a card,
+    // OK played an episode where it had turned the season.
+    function test_refreshKeepsTheTile() {
+        function two() {
+            var s = show([1], 0);
+            s.seasons.push({ season: 2, episodes: [{ id: "t:2:1", episode: 1, title: "E1", released: "2026-02-01", thumb: "", watched: false, progress: 0 }] });
+            return s;
+        }
+        page.open({ id: "u", name: "U" }, two(), "t:2:1");
+        tryVerify(function () { return focused() === "t:2:1" });
+        keyClick(Qt.Key_Left);                                  // onto the tile for season 1, which previews its first card
+        tryVerify(function () { return focused() === "t:1:1" });
+        page.refresh({ id: "u", name: "U" }, two());
+        compare(focused(), "t:1:1", "still on the tile");
+    }
 }
 }

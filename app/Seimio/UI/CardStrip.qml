@@ -46,6 +46,8 @@ FocusScope {
     readonly property int pool: Math.ceil((width + narrowest + spacing) / (narrowest + spacing)) + 1
     readonly property int first: Math.max(0, Math.floor((scroll - inset) / stride))
 
+    // where the focused card rests, in the window: for a menu beside it
+    function focusRect() { var p = mapToItem(null, inset + (slides ? 0 : currentIndex * stride), 0); return Qt.rect(p.x, p.y, cardWidth, cardHeight) }
     // move without animating (a new model, or restoring a position)
     function jumpTo(i) { currentIndex = i; slide.stop(); scroll = slides ? i * stride : 0 }
     onCurrentIndexChanged: if (slides) { slide.to = currentIndex * stride; slide.restart() }

@@ -223,7 +223,11 @@ open menu is for and what it lists (`menuCard`, `menuEntries`).
 
 A card's menu follows what the card is, the same wherever that kind of card is (`App.menuEntries`): Play
 AI Pick and Play from Stream for what plays, the library's two entries for a title, watched or not for an
-episode. A new row of cards takes its menu from there; a kind of card with no menu is a bug.
+episode. Every card has one on a long OK: a show's row (episodes, films, specials, related shows), a
+grid's titles (the Anime tab, Movies, Series, the Library, a search: `CardGrid.cardHeld`), a release in an
+open calendar day, a Continue Watching card. A new row of cards takes its menu from there; a kind of card
+with no menu is a bug. Only what has nothing to offer opens none: a release that airs later, an anime
+that Kitsu doesn't have (it is no title of Stremio's).
 
 ## Playback
 

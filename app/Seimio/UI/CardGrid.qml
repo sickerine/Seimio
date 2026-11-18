@@ -29,6 +29,7 @@ FocusScope {
         return r ? r.items[Math.min(restingColumn(Math.max(0, row)), r.items.length - 1)] || null : null;
     }
     signal activated(var item)
+    signal cardHeld(var item, rect rect)      // a long OK on a card: its menu goes beside `rect` (in the window)
 
     property var pending: null
     property string pendingLayout: "grid"
@@ -169,6 +170,7 @@ FocusScope {
                     showFocus: activeFocus
                     onCurrentIndexChanged: if (activeFocus) { if (slot.titled) grid.rememberColumn(slot.idx, currentIndex); else grid.column = currentIndex }
                     onActivated: grid.activated(model[cardIndex])
+                    onHeld: grid.cardHeld(model[cardIndex], focusRect())
                     onModelChanged: slot.place()
                 }
                 onActiveFocusChanged: if (activeFocus) place()

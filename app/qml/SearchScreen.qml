@@ -14,6 +14,7 @@ FocusScope {
     readonly property var focusItem: grid.focusItem
     readonly property bool any: grid.rows.length > 0
     signal activated(var item)
+    signal held(var item, rect rect)         // a long OK on a card: its menu goes beside `rect`
     signal exitTop()
     signal entered()                         // the remote goes to the rows (`enter`)
 
@@ -51,6 +52,7 @@ FocusScope {
         held: search.shown
         rowTop: 240
         onActivated: search.activated(item)
+        onCardHeld: search.held(item, rect)
     }
     // a search that found nothing says so
     Fade {
