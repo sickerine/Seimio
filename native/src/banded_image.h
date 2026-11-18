@@ -132,16 +132,23 @@ private:
         drop();
         hand(QImage(), ticket);
         setImplicitSize(0, 0);
-        m_stage = 0; m_got = m_total = 0;
+        m_stage = 0; m_got = m_total = 0; m_standIn = false;
         if (m_source.isEmpty()) { setStatus(Null); return; }
         setStatus(Loading);
         fetch(m_source, ticket);
         if (m_fallback.isEmpty()) return;
         QTimer::singleShot(Patience, this, [this, ticket] {
-            if (ticket != m_ticket || m_stage != 1) return;         // another picture by now, or this one is in
-            drop();
-            fetch(m_fallback, ticket);
+            if (ticket == m_ticket && m_stage == 1) standIn(ticket);        // (not another picture by now, and this one not in)
         });
+    }
+    // the fallback in the source's place, if there is one and it isn't there already: the source was slow,
+    // couldn't be fetched, or wasn't a picture
+    bool standIn(int ticket) {
+        if (m_fallback.isEmpty() || m_standIn) return false;
+        m_standIn = true;
+        drop();
+        fetch(m_fallback, ticket);
+        return true;
     }
     void fetch(const QUrl &url, int ticket) {
         m_stage = 1;
@@ -157,7 +164,11 @@ private:
             reply->deleteLater();
             if (ticket != m_ticket || reply != m_reply) return;     // (the source's, when the fallback has taken its place)
             m_reply = nullptr;
-            if (reply->error()) { m_stage = 5; m_why = QString::number(reply->error()) + " " + reply->errorString().left(60) + " " + url.toString().right(40); setStatus(Error); return; }
+            if (reply->error()) {
+                m_why = QString::number(reply->error()) + " " + reply->errorString().left(60) + " " + url.toString().right(40);
+                if (!standIn(ticket)) { m_stage = 5; setStatus(Error); }
+                return;
+            }
             m_stage = 2;
             auto decoded = std::make_shared<QImage>();
             const QByteArray body = reply->readAll();
@@ -172,7 +183,11 @@ private:
             });
             connect(worker, &QThread::finished, this, [this, ticket, decoded] {
                 if (ticket != m_ticket) return;
-                if (decoded->isNull()) { m_stage = 5; m_why = "no picture in " + m_why; setStatus(Error); return; }
+                if (decoded->isNull()) {
+                    m_why = "no picture in " + m_why;
+                    if (!standIn(ticket)) { m_stage = 5; setStatus(Error); }
+                    return;
+                }
                 setImplicitSize(decoded->width(), decoded->height());
                 m_stage = 3;
                 hand(*decoded, ticket);
@@ -252,6 +267,7 @@ private:
 
     enum { Band = 136 };                                    // rows a frame: an eighth of 1080
     QUrl m_source, m_fallback;
+    bool m_standIn = false;                                 // the fallback is what is being fetched or shown
     QSize m_sourceSize;
     int m_status = Null;
     int m_ticket = 0;                                       // which fetch is the one wanted (GUI thread)
