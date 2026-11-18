@@ -34,21 +34,24 @@ public:
     // `cache`: the data thread's, which Franchise shares (a title's meta asked for by both is fetched once)
     explicit Live(query::Queries *cache, QObject *parent = nullptr) : QObject(parent), m_cache(cache), m_net(cache, this) {}
 
-    // Home's documents (rows, cw, series, and the calendar's anime from the season pages), then `home`; the
-    // season's art (a Kitsu meta a show) after, then `anime`: each screen gets its data whole, once
-    void fetch(std::function<void(Docs)> home, std::function<void(Docs)> anime) {
+    // Home's documents, whole: rows, cw, series and library, and the calendar's anime from the season's
+    // list (`airing`). Asked again (the account changed), only Continue Watching's part is new work: the
+    // rows and the season's list are queries that stay fresh for hours, and each title's meta for ten
+    // minutes.
+    void home(std::function<void(Docs)> done) {
         auto docs = std::make_shared<Docs>();
-        auto homeLeft = std::make_shared<int>(3);
-        auto homeDone = [docs, homeLeft, home] { if (--*homeLeft == 0) home(*docs); };
-        rows(docs, homeDone);
-        continueWatching(docs, homeDone);
+        auto left = std::make_shared<int>(3);
+        auto finish = [docs, left, done] { if (--*left == 0) done(*docs); };
+        rows(docs, finish);
+        continueWatching(docs, finish);
         const auto now = seasonAt(QDate::currentDate());
-        chart(now.first, now.second, true, [docs, homeDone, now](std::shared_ptr<QJsonArray> shows) {
+        chartList(now.first, now.second, [docs, finish, now](const QJsonArray &shows) {
             docs->season = QJsonObject { { "season", now.first }, { "year", now.second } };
-            docs->airing = airingOf(*shows);
-            homeDone();
-        }, [docs, anime](const QJsonObject &season) { docs->season = season; anime(*docs); });
+            docs->airing = airingOf(shows);
+            finish();
+        });
     }
+    static constexpr qint64 kHours = 6 * 60 * 60 * 1000;    // how long the lists that change by the day are fresh
     static QString metahub(const QString &kind, const QString &id) { return "https://images.metahub.space/" + kind + "/medium/" + id + "/img"; }
     static QJsonArray firstN(const QJsonArray &a, int n) { QJsonArray out; for (int i = 0; i < a.size() && i < n; i++) out << a[i]; return out; }
     // AniList's fields for a show, and the show as the catalog's documents carry it
@@ -109,15 +112,22 @@ public:
         searchAnime(query, 1, [out, finish](const QJsonArray &shows, bool more) { (*out)["anime"] = shows; (*out)["animeMore"] = more; finish(); });
     }
     // A page of the anime a name finds on AniList, the most popular of the matches first: `done(shows,
-    // more)`, fifty a page, `more` when another page follows
+    // more)`, fifty a page, `more` when another page follows. A page is a query too, kept as long.
     void searchAnime(const QString &query, int page, std::function<void(QJsonArray, bool)> done) {
-        anilist("query ($q: String, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
-                QJsonObject { { "q", query }, { "page", page } }, [this, done](const QJsonObject &data) {
-            const QJsonObject found = data.value("Page").toObject();
-            const bool more = found.value("pageInfo").toObject().value("hasNextPage").toBool();
-            auto shows = std::make_shared<QJsonArray>();
-            for (const QJsonValue &v : found.value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) *shows << shown(v.toObject(), false);
-            kitsuIds(shows, [shows, more, done] { done(*shows, more); });       // (what a result's watched check goes by)
+        query::Options kept; kept.freshMs = kept.keepMs = kKept; kept.retries = 0;
+        m_cache->fetch<QJsonObject>({ "search-anime", query, QString::number(page) }, [this, query, page](query::Call<QJsonObject> call) {
+            anilist("query ($q: String, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
+                    QJsonObject { { "q", query }, { "page", page } }, [this, call](const QJsonObject &data) {
+                const QJsonObject found = data.value("Page").toObject();
+                // (nothing came: not kept, so the next asking tries the network again)
+                if (found.isEmpty()) { query::Failure none; none.reason = "no answer"; none.final = true; call.fail(none); return; }
+                const bool more = found.value("pageInfo").toObject().value("hasNextPage").toBool();
+                auto shows = std::make_shared<QJsonArray>();
+                for (const QJsonValue &v : found.value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) *shows << shown(v.toObject(), false);
+                kitsuIds(shows, [shows, more, call] { call.ok(QJsonObject { { "shows", *shows }, { "more", more } }); });       // (what a result's watched check goes by)
+            });
+        }, kept, [done](std::shared_ptr<const QJsonObject> page, const query::Failure &) {
+            done(page ? page->value("shows").toArray() : QJsonArray(), page && page->value("more").toBool());
         });
     }
     // One title's meta (a film, a series), from the Kitsu addon or Cinemeta by its id, or nothing. Kept ten
@@ -141,10 +151,14 @@ public:
         const int m = day.month();
         return { m == 12 || m <= 2 ? "WINTER" : m <= 5 ? "SPRING" : m <= 8 ? "SUMMER" : "FALL", m == 12 ? day.year() + 1 : day.year() };
     }
-    // any season's chart with its art, whole: { season, year, shows } (no shows: it couldn't be had)
+    // Any season's chart with its art, whole: { season, year, shows } (no shows: it couldn't be had). Its
+    // list is a query of its own (Home's calendar needs only that), which this asks first.
     void seasonChart(const QString &name, int year, std::function<void(QJsonObject)> done) {
-        const auto now = seasonAt(QDate::currentDate());
-        chart(name, year, name == now.first && year == now.second, [](std::shared_ptr<QJsonArray>) {}, done);
+        chartList(name, year, [this, name, year, done](const QJsonArray &list) {
+            if (list.isEmpty()) { done(QJsonObject()); return; }
+            auto shows = std::make_shared<QJsonArray>(list);
+            art(shows, [shows, name, year, done] { done(QJsonObject { { "season", name }, { "year", year }, { "shows", *shows } }); });
+        });
     }
 
 private:
@@ -165,6 +179,11 @@ private:
 
     // ---- Home ----------------------------------------------------------------------------------------------
     void rows(std::shared_ptr<Docs> docs, std::function<void()> done) {
+        query::Options kept; kept.freshMs = kHours; kept.keepMs = 4 * kHours; kept.retries = 0;
+        m_cache->fetch<QJsonArray>({ "rows" }, [this](query::Call<QJsonArray> call) { rows(call); }, kept,
+                                   [docs, done](std::shared_ptr<const QJsonArray> rows, const query::Failure &) { if (rows) docs->rows = *rows; done(); });
+    }
+    void rows(query::Call<QJsonArray> call) {
         auto left = std::make_shared<int>(2);
         auto rows = std::make_shared<QVector<QJsonObject>>(2);
         const QStringList kinds { "movie", "series" }, titles { "Popular movies", "Popular series" };
@@ -182,7 +201,10 @@ private:
                     if (items.size() == 14) break;
                 }
                 (*rows)[k] = QJsonObject { { "title", titles[k] }, { "items", items } };
-                if (--*left == 0) { docs->rows = QJsonArray { (*rows)[0], (*rows)[1] }; done(); }
+                if (--*left) return;
+                // (neither list came: not kept, so the next Home asks again)
+                if ((*rows)[0].value("items").toArray().isEmpty() && (*rows)[1].value("items").toArray().isEmpty()) { query::Failure none; none.reason = "no lists"; none.final = true; call.fail(none); }
+                else call.ok(QJsonArray { (*rows)[0], (*rows)[1] });
             });
     }
     // Stremio's Continue Watching, each title's meta live; a show's meta also gives its episodes, with
@@ -293,44 +315,52 @@ private:
     // ---- the Anime tab ---------------------------------------------------------------------------------------
     // An AniList season as AniChart lists it: its shows from 3000 members up and, for the season now
     // (`leftovers`), the ones still airing from earlier seasons from 9000 up (TV, TV short, ONA). A season
-    // that is over has gathered members since, so it is its 150 most popular. `listed(shows)` once the list
-    // is in (the calendar needs only that), `done(season)` with every show's art.
-    void chart(const QString &name, int year, bool leftovers, std::function<void(std::shared_ptr<QJsonArray>)> listed, std::function<void(QJsonObject)> done) {
-        const int lastPage = leftovers ? 8 : 3;
-        const QByteArray seasonQ = "query ($page: Int, $season: MediaSeason, $year: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }";
-        const QByteArray leftoverQ = "query ($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(status: RELEASING, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }";
-        auto shows = std::make_shared<QJsonArray>();
-        auto seen = std::make_shared<QSet<int>>();
-        auto take = [shows, seen](const QJsonObject &md, bool leftover) {
-            const int id = md.value("id").toInt();
-            const QString format = md.value("format").toString();
-            if (md.value("isAdult").toBool() || seen->contains(id) || (leftover && format != "TV" && format != "TV_SHORT" && format != "ONA")) return;
-            seen->insert(id);
-            shows->append(shown(md, leftover));
-        };
-        // pages until the popularity falls under the floor
-        auto pages = std::make_shared<std::function<void(QByteArray, QJsonObject, int, int, bool, std::function<void()>)>>();
-        *pages = [this, take, pages, lastPage](QByteArray q, QJsonObject vars, int page, int floor, bool leftover, std::function<void()> then) {
-            vars["page"] = page;
-            anilist(q, vars, [=](const QJsonObject &data) {
-                const QJsonObject p = data.value("Page").toObject();
-                bool more = p.value("pageInfo").toObject().value("hasNextPage").toBool();
-                for (const QJsonValue &v : p.value("media").toArray()) {
-                    if (v.toObject().value("popularity").toInt() < floor) { more = false; break; }
-                    take(v.toObject(), leftover);
-                }
-                if (more && page < lastPage) (*pages)(q, vars, page + 1, floor, leftover, then); else then();
-            });
-        };
-        (*pages)(seasonQ, QJsonObject { { "season", name }, { "year", year } }, 1, 3000, false, [=] {
-            // each show's Kitsu id first: the calendar matches the library's anime to their air times by it
-            auto finish = [=] {
-                kitsuIds(shows, [=] {
-                    listed(shows);
-                    art(shows, [=] { done(QJsonObject { { "season", name }, { "year", year }, { "shows", *shows } }); });
-                });
+    // that is over has gathered members since, so it is its 150 most popular. Each show comes with its
+    // Kitsu id (the calendar matches the library's anime to their air times by it). `done(shows)`, none
+    // when it couldn't be had. A query, fresh for hours: Home's calendar and the Anime tab's chart both
+    // start from it, and Home asked for again finds it there.
+    void chartList(const QString &name, int year, std::function<void(QJsonArray)> done) {
+        query::Options kept; kept.freshMs = kHours; kept.keepMs = 4 * kHours; kept.retries = 0;
+        m_cache->fetch<QJsonArray>({ "chart-list", name, QString::number(year) }, [this, name, year](query::Call<QJsonArray> call) {
+            const auto now = seasonAt(QDate::currentDate());
+            const bool leftovers = name == now.first && year == now.second;
+            const int lastPage = leftovers ? 8 : 3;
+            const QByteArray seasonQ = "query ($page: Int, $season: MediaSeason, $year: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }";
+            const QByteArray leftoverQ = "query ($page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(status: RELEASING, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }";
+            auto shows = std::make_shared<QJsonArray>();
+            auto seen = std::make_shared<QSet<int>>();
+            auto take = [shows, seen](const QJsonObject &md, bool leftover) {
+                const int id = md.value("id").toInt();
+                const QString format = md.value("format").toString();
+                if (md.value("isAdult").toBool() || seen->contains(id) || (leftover && format != "TV" && format != "TV_SHORT" && format != "ONA")) return;
+                seen->insert(id);
+                shows->append(shown(md, leftover));
             };
-            if (leftovers) (*pages)(leftoverQ, QJsonObject(), 1, 9000, true, finish); else finish();
+            pages(seasonQ, QJsonObject { { "season", name }, { "year", year } }, 1, 3000, lastPage, [take](const QJsonObject &md) { take(md, false); }, [=] {
+                auto finish = [=] {
+                    kitsuIds(shows, [shows, call] {
+                        if (!shows->isEmpty()) { call.ok(*shows); return; }
+                        query::Failure none; none.reason = "no shows"; none.final = true;      // (not kept: asked again the next time)
+                        call.fail(none);
+                    });
+                };
+                if (leftovers) pages(leftoverQ, QJsonObject(), 1, 9000, lastPage, [take](const QJsonObject &md) { take(md, true); }, finish); else finish();
+            });
+        }, kept, [done](std::shared_ptr<const QJsonArray> shows, const query::Failure &) { done(shows ? *shows : QJsonArray()); });
+    }
+    // AniList's pages of `q` from `page` on, until the popularity falls under `floor` or `lastPage` is
+    // read: each show to `take`, then `then`. (A method that asks for itself: the lambda that did, held
+    // by itself to be able to, was never let go, and each season fetched stayed in memory with it.)
+    void pages(const QByteArray &q, QJsonObject vars, int page, int floor, int lastPage, std::function<void(const QJsonObject &)> take, std::function<void()> then) {
+        vars["page"] = page;
+        anilist(q, vars, [=](const QJsonObject &data) {
+            const QJsonObject p = data.value("Page").toObject();
+            bool more = p.value("pageInfo").toObject().value("hasNextPage").toBool();
+            for (const QJsonValue &v : p.value("media").toArray()) {
+                if (v.toObject().value("popularity").toInt() < floor) { more = false; break; }
+                take(v.toObject());
+            }
+            if (more && page < lastPage) pages(q, vars, page + 1, floor, lastPage, take, then); else then();
         });
     }
     // When the season's episodes air, by the episode's id as Stremio has it ("kitsu:N:E"): { date, time },

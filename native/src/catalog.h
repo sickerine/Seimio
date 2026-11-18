@@ -23,6 +23,7 @@
 #include "franchise.h"
 #include "live.h"
 #include "store.h"
+#include "watch.h"
 #include <algorithm>
 #include <climits>
 #include <memory>
@@ -188,6 +189,8 @@ class Catalog : public QObject {
     // The app's day ("YYYY-MM-DD"): what has aired goes by it, and with that the episode a show rests on
     // (resting.h). Another day (midnight, or a preview's pinned one) takes Home's data again.
     Q_PROPERTY(QString today READ today WRITE setToday NOTIFY todayChanged)
+    struct Data; struct Home; struct Found;                 // (what the queries watched from here hold: at the end)
+    using Season = std::shared_ptr<const Data>;
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
         // Live and Franchise fetch, read and assemble on a thread of their own: a show's meta is hundreds of
@@ -257,37 +260,58 @@ public:
     // its facts come with its page (`loadFranchise`). Only the last search asked for answers. Films and
     // series are all Cinemeta has to give (twenty of each); the anime are the first fifty, and
     // `searchMore()` asks for the next fifty when there are more: `foundMore(query, anime)`.
+    // The search is a watch on the text's query (kept ten minutes): only the text asked for last answers,
+    // and a text typed again answers at once.
     Q_INVOKABLE void search(const QString &query) {
         const QString q = query.trimmed();
-        // the same text asked again (a space typed after it) is answered again, and its anime stay where
-        // their pages are: started over, the next page asked for was one the grid already had
-        const bool again = q == m_searching;
-        m_searching = q;
-        if (!again) { m_animePage = 1; m_animeMore = m_animeAsked = false; }
-        if (q.size() < 2) { emit found(q, QVariantMap()); return; }
-        work([this, q, again] {
-            m_live->search(q, [this, q, again](const QJsonObject &r) {
+        // The same text asked again (a space typed after it) is answered again with what it found, and
+        // its anime stay where their pages are: started over, the next page asked for was one the grid
+        // already had.
+        if (q == m_searching) {
+            if (m_found && q == m_foundFor) QTimer::singleShot(0, this, [this, q] { if (q == m_searching && m_found) emit found(q, m_found->results); });
+            return;
+        }
+        m_searching = q; m_found.reset(); m_foundFor.clear();
+        m_animePage = 1; m_animeMore = false; m_more.stop();
+        if (q.size() < 2) { m_search.stop(); emit found(q, QVariantMap()); return; }
+        query::Options kept; kept.freshMs = kept.keepMs = Live::kKept; kept.retries = 0;
+        m_search.watch({ "search", q }, [this, q](query::Call<Found> call) {
+            m_live->search(q, [call](const QJsonObject &r) {
                 QVariantList movies, series;
                 auto thin = [](const QJsonValue &v) { QVariantMap m = Live::item(v.toObject()); m["thin"] = true; return m; };
                 for (const QJsonValue &v : r.value("movies").toArray()) movies << thin(v);
                 for (const QJsonValue &v : r.value("series").toArray()) series << thin(v);
-                const QVariantMap results { { "anime", shows(r.value("anime").toArray()) }, { "series", series }, { "movie", movies } };
-                const bool more = r.value("animeMore").toBool();
-                back([this, q, results, more, again] { if (q != m_searching) return; if (!again) m_animeMore = more; emit this->found(q, results); });
+                const QVariantList anime = shows(r.value("anime").toArray());
+                // (nothing of any kind: shown as that, and not kept, since a network that was down reads the same)
+                if (movies.isEmpty() && series.isEmpty() && anime.isEmpty()) { query::Failure none; none.reason = "nothing found"; none.final = true; call.fail(none); return; }
+                call.ok(Found { QVariantMap { { "anime", anime }, { "series", series }, { "movie", movies } }, r.value("animeMore").toBool() });
             });
-        });
+        }, kept);
     }
+    void searched(const query::Result<Found> &r) {
+        if (r.status == query::Error) { m_found.reset(); m_foundFor.clear(); m_animeMore = false; emit found(m_searching, QVariantMap()); return; }
+        if (!r.data || r.data == m_found) return;           // on its way, or what is shown already
+        m_found = r.data; m_foundFor = m_searching;
+        m_animePage = 1; m_animeMore = r.data->more; m_moreAsked = false;
+        emit found(m_searching, r.data->results);
+    }
+    void searchedMore(const query::Result<Found> &r) {
+        if (r.fetching || (!r.data && r.status != query::Error)) return;
+        m_moreAsked = false;
+        if (!r.data) { --m_animePage; return; }             // it couldn't be had: asked for again when the rows next reach their end
+        m_animeMore = r.data->more;
+        emit foundMore(m_searching, r.data->results.value("anime").toList());
+    }
+    // the next fifty anime of the text found, when there are more: `foundMore(query, anime)`
     Q_INVOKABLE void searchMore() {
-        if (!m_animeMore || m_animeAsked) return;
-        m_animeAsked = true;
+        if (!m_animeMore || m_moreAsked) return;
+        m_moreAsked = true;
         const QString q = m_searching;
         const int page = ++m_animePage;
-        work([this, q, page] {
-            m_live->searchAnime(q, page, [this, q](const QJsonArray &found, bool more) {
-                const QVariantList anime = shows(found);
-                back([this, q, anime, more] { if (q != m_searching) return; m_animeAsked = false; m_animeMore = more; emit this->foundMore(q, anime); });
-            });
-        });
+        query::Options kept; kept.freshMs = kept.keepMs = Live::kKept; kept.retries = 0;
+        m_more.watch({ "search-more", q, QString::number(page) }, [this, q, page](query::Call<Found> call) {
+            m_live->searchAnime(q, page, [call](const QJsonArray &found, bool more) { call.ok(Found { QVariantMap { { "anime", shows(found) } }, more }); });
+        }, kept);
     }
     QString today() const { return m_today; }
     void setToday(const QString &day) {
@@ -335,44 +359,32 @@ public:
     }
 
     // Home's data arrives first (`loaded`), the Anime tab's season with its art after (`seasonLoaded`).
+    // Home is one query, watched from here. Its documents are fetched and its data made on the data
+    // thread, and what comes over is whole.
     void load() {
-        const int generation = ++m_generation;
-        work([this, generation] {
-            m_live->fetch([this, generation](Live::Docs docs) { built(docs, generation); }, [this](Live::Docs docs) {
-                auto season = std::make_shared<Data>();
-                Data::loadSeason(*season, docs.season);
-                back([this, season] {
-                    m_seasons[season->seasonName] = season;
-                    if (!m_seasonAsked.isEmpty()) return;                                // another was picked while it loaded
-                    m_seasonAsked = season->seasonName; emit seasonAskedChanged();
-                    takeSeason(season->seasonName);
-                });
+        query::Options o; o.retries = 0;                    // (each request under it has its own tries)
+        m_home.watch({ "home" }, [this](query::Call<Home> call) {
+            m_live->home([this, call](const Live::Docs &docs) {
+                // the library first: `loaded` has the page in hand ask for its franchise again, which is put
+                // together from what was fetched at once, with the library the franchise has then
+                m_franchise->setLibrary(docs.library, docs.airing);
+                call.ok(Home { docs, std::make_shared<const Data>(Data::load(docs)) });
             });
-        });
+        }, o);
+        if (m_seasonAsked.isEmpty()) { const auto now = Live::seasonAt(QDate::currentDate()); watchSeason(now.first, now.second); }
     }
-    // Continue Watching and the watch states again (a title played, another device, a sign-in); `loaded` after
+    // Continue Watching and the watch states again (a title played, another device, a sign-in); `loaded`
+    // after. Home's query is invalidated: fetched again at once, a fetch under way replaced (two could
+    // overlap, and the older one finishing last put back an older library and older progress), and one
+    // asked for during the very first is honoured when that one is in (query.h).
     Q_INVOKABLE void reload() { m_again.start(); }
-    void reloadNow() {
-        if (!m_ready) { m_stale = true; return; }                   // the first load is on its way: after it
-        auto docs = std::make_shared<Live::Docs>(m_docs);
-        const int generation = ++m_generation;
-        work([this, docs, generation] { m_live->continueWatching(docs, [this, docs, generation] { built(*docs, generation); }); });
-    }
-    // on the data thread: Home's documents are in, so its data is made there and handed over whole. Only
-    // the newest load's is taken: two can overlap, and the older one finishing last would put back an
-    // older library and older progress.
-    void built(const Live::Docs &docs, int generation) {
-        auto data = std::make_shared<Data>(Data::load(docs));
-        back([this, docs, data, generation] {
-            if (generation != m_generation) return;
-            m_docs = docs;
-            // the library first: `loaded` has the page in hand ask for its franchise again, which is put
-            // together from what was fetched at once, with the library the franchise has then
-            const QJsonObject library = docs.library, airing = docs.airing;
-            work([this, library, airing] { m_franchise->setLibrary(library, airing); });
-            Core::instance()->setAiring(airing);       // (a title marked watched is its episodes out by the same days)
-            take(data);
-        });
+    void reloadNow() { work([this] { m_cache->invalidate({ "home" }); }); }
+    void tookHome(const query::Result<Home> &r) {
+        if (!r.data || r.data == m_homeShown) return;       // on its way, or what is shown already
+        m_homeShown = r.data;
+        m_docs = r.data->docs;
+        Core::instance()->setAiring(m_docs.airing);         // (a title marked watched is its episodes out by the same days)
+        take(std::make_shared<Data>(*r.data->data));
     }
     bool seasonReady() const { return m_seasonReady; }
     QString seasonAsked() const { return m_seasonAsked; }
@@ -394,26 +406,40 @@ public:
     QVariantList seasons() const { return seasonsFrom(QDate::currentDate()); }
     Q_INVOKABLE QVariantList seasonsOn(const QString &day) const { return seasonsFrom(QDate::fromString(day, "yyyy-MM-dd")); }   // tests
     static QString seasonLabel(const QString &season, int year) { return season.left(1) + season.mid(1).toLower() + " " + QString::number(year); }
-    // Shows another season on the Anime tab: at once if it has been fetched this run, else once it is in
-    // whole (its list and every show's art), the one on screen staying until then. `seasonFailed` if it
-    // couldn't be had, and the season shown stays.
+    // Shows another season on the Anime tab: as soon as it is in whole (its list and every show's art; at
+    // once if it was fetched in the last hours), the one on screen staying until then. `seasonFailed` if
+    // it couldn't be had, and the season shown stays.
     Q_INVOKABLE void showSeason(const QString &season, int year) {
         const QString name = seasonLabel(season, year);
         if (name == m_seasonAsked) return;
         m_seasonAsked = name; emit seasonAskedChanged();
-        if (m_seasons.contains(name)) { takeSeason(name); return; }
-        work([this, season, year, name] {
-            m_live->seasonChart(season, year, [this, name](QJsonObject doc) {
+        watchSeason(season, year);
+    }
+    // the season's chart is a query, watched from here: only the season asked for last answers
+    void watchSeason(const QString &season, int year) {
+        query::Options kept; kept.freshMs = Live::kHours; kept.keepMs = 4 * Live::kHours; kept.retries = 0;
+        m_season.watch({ "season", season, QString::number(year) }, [this, season, year](query::Call<Season> call) {
+            m_live->seasonChart(season, year, [call](const QJsonObject &doc) {
                 auto data = std::make_shared<Data>();
                 Data::loadSeason(*data, doc);
-                back([this, data, name] {
-                    if (!data->season.isEmpty()) m_seasons[name] = data;
-                    if (m_seasonAsked != name) return;                                  // another was picked since
-                    if (data->season.isEmpty()) { m_seasonAsked = seasonName(); emit seasonAskedChanged(); emit seasonFailed(name); }
-                    else takeSeason(name);
-                });
+                if (!data->season.isEmpty()) { call.ok(Season(data)); return; }
+                query::Failure none; none.reason = "no shows"; none.final = true;      // (not kept: picked again, it is asked for again)
+                call.fail(none);
             });
-        });
+        }, kept);
+    }
+    void tookSeason(const query::Result<Season> &r) {
+        if (r.status == query::Error) {
+            // it couldn't be had: the one on screen stays, and is what is asked for again
+            const QString name = m_seasonAsked;
+            if (name.isEmpty() || name == seasonName()) return;
+            m_seasonAsked = seasonName(); emit seasonAskedChanged(); emit seasonFailed(name);
+            return;
+        }
+        if (!r.data || r.data == m_seasonShown) return;     // on its way, or what is shown already
+        m_seasonShown = r.data;
+        if (m_seasonAsked.isEmpty()) { m_seasonAsked = (*r.data)->seasonName; emit seasonAskedChanged(); }      // the one the app starts on
+        takeSeason(**r.data);
     }
 
     // a show's seasons and episodes, for the show page (empty if it isn't a library show)
@@ -434,6 +460,28 @@ public:
         return out;
     }
     Q_INVOKABLE int releaseCount(const QString &key) const { return m_data ? m_data->calendar.value(key).size() : 0; }
+
+    // ---- the lab's view of the data thread's queries ----------------------------------------------------
+    // What the cache held when last asked, and asks again for the next time: { counts, held (every entry
+    // in use or being fetched, and how many others are kept), history (the last fetches that ended, and
+    // how long each took) }. Read over there and brought back, so a report costs the screen nothing.
+    Q_INVOKABLE QVariantMap queries() {
+        work([this] {
+            QVariantList held; int kept = 0;
+            for (const QVariant &v : m_cache->lab()) { const QVariantMap e = v.toMap(); if (e["observers"].toInt() || e["fetching"].toBool()) held << e; else kept++; }
+            const query::Counts c = m_cache->counts();
+            const QVariantMap out { { "held", held }, { "kept", kept }, { "history", m_cache->history().mid(qMax(0, m_cache->history().size() - 40)) },
+                                    { "counts", QVariantMap { { "fetches", c.fetches }, { "joined", c.joined }, { "fresh", c.fresh }, { "retries", c.retries },
+                                                              { "cancelled", c.cancelled }, { "dropped", c.dropped }, { "failed", c.failed } } } };
+            back([this, out] { m_queries = out; });
+        });
+        return m_queries;
+    }
+    // The queries whose key holds `match` take `delayMs` longer and, with `fail`, fail (query.h); an empty
+    // `match` ends it. For seeing on the TV what a screen does with a slow or a failed answer.
+    Q_INVOKABLE void fault(const QString &match, int delayMs, bool fail) {
+        work([this, match, delayMs, fail] { if (match.isEmpty()) m_cache->clearFaults(); else m_cache->fault(match, delayMs, fail); });
+    }
 
 signals:
     void loaded();
@@ -632,25 +680,21 @@ private:
         m_ready = true;
         m_model->setCalendar(&m_data->calendar);
         emit loaded();
-        if (m_stale) { m_stale = false; reloadNow(); }
     }
 
     QString m_searching;                                   // the last search asked for
+    QString m_foundFor;                                    // the text `m_found` is the answer to
     int m_animePage = 1;                                   // its anime: the last page asked for, whether one follows, and whether it is on its way
-    bool m_animeMore = false, m_animeAsked = false;
+    bool m_animeMore = false, m_moreAsked = false;
     QString m_searchKind, m_today;
     JsonStore m_choices { "choices.json" };                // what was last picked where the app remembers it
-    int m_generation = 0;                                  // the newest load of Home's documents
     Live::Docs m_docs;                                     // Home's documents as last fetched
     QTimer m_again;
-    bool m_stale = false;
     bool m_ready = false, m_seasonReady = false;
     QString m_seasonAsked;
-    QHash<QString, std::shared_ptr<Data>> m_seasons;       // the seasons fetched this run, by name ("Fall 2026")
-    void takeSeason(const QString &name) {
-        const auto s = m_seasons.value(name);
+    void takeSeason(const Data &s) {
         if (!m_data) m_data = std::make_shared<Data>();
-        m_data->season = s->season; m_data->seasonName = s->seasonName; m_data->seasonGenres = s->seasonGenres;
+        m_data->season = s.season; m_data->seasonName = s.seasonName; m_data->seasonGenres = s.seasonGenres;
         m_seasonReady = true;
         emit seasonLoaded();
     }
@@ -658,6 +702,18 @@ private:
     query::Queries *m_cache = new query::Queries;          // the data thread's cache; these three live on m_thread
     Live *m_live = new Live(m_cache);
     Franchise *m_franchise = new Franchise(m_cache);
+    // What the screens watch of the data thread's queries (watch.h), and what each showed last. Home's
+    // documents and data; a season's chart; what a text found; a page more of its anime.
+    struct Home { Live::Docs docs; std::shared_ptr<const Data> data; };
+    struct Found { QVariantMap results; bool more = false; };
+    Watch<Home> m_home { m_cache, this, [this](const query::Result<Home> &r) { tookHome(r); } };
+    Watch<Season> m_season { m_cache, this, [this](const query::Result<Season> &r) { tookSeason(r); } };
+    Watch<Found> m_search { m_cache, this, [this](const query::Result<Found> &r) { searched(r); } };
+    Watch<Found> m_more { m_cache, this, [this](const query::Result<Found> &r) { searchedMore(r); } };
+    QVariantMap m_queries;                                  // the lab's last look at the cache (`queries`)
+    std::shared_ptr<const Home> m_homeShown;
+    std::shared_ptr<const Season> m_seasonShown;
+    std::shared_ptr<const Found> m_found;
     // AniList's shows (Live::shown) as the screens show a title: a search's anime, as a season's chart has them
     static QVariantList shows(const QJsonArray &found) {
         Data d; Data::loadSeason(d, QJsonObject { { "shows", found } });

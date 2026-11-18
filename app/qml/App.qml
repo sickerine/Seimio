@@ -575,6 +575,8 @@ WebOSWindow {
         stateOf: function () {
             function id(x) { return x ? x.id || x.name || "?" : null }
             return { layer: app.layer, row: home.row, dayOpen: home.dayOpen, scrolled: home.scrolled,
+                     queries: catalog.queries(),            // what the data thread's cache holds and fetched (Catalog.queries)
+                     season: { asked: catalog.seasonAsked, shown: catalog.seasonName },
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem), held: id(app.held ? app.held.item : null),
                      video: app.playTarget ? app.playTarget.id : "", trail: app.trail.map(function (t) { return t.layer }).join(">"),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
@@ -599,6 +601,8 @@ WebOSWindow {
         onVariantChanged: {
             if (variant.signIn && account.ready && !account.signedIn) account.signInWith(variant.signIn[0], variant.signIn[1]);   // lab: a tour can't approve a code
             if (variant.signOut && account.signedIn) account.signOut();
+            // lab: { "queryFault": ["search", 3000, false] } makes the queries with that in their key 3 s slower (true: fail)
+            if (variant.queryFault) catalog.fault(variant.queryFault[0], variant.queryFault[1] || 0, !!variant.queryFault[2]);
             if (variant.clearTrackChoices) trackChoice.clearPreferences(typeof variant.clearTrackChoices === "string" ? variant.clearTrackChoices : "");
             // lab: { "playId": { "type": "series", "id": "tt…:2:3" } } plays that video's ranked pick
             if (variant.playId) { app.playTarget = variant.playId; player.prepare({ name: variant.playId.id }, ""); app.layer = "player"; streams.play(variant.playId.type, variant.playId.id, variant.playId.id) }
