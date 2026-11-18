@@ -11,10 +11,11 @@
 # and Subtitles lists, the Streams sheet, the episode row; nothing is chosen, so no track choice is
 # saved), anime (the Anime tab: moving along the chart crossfades its fanart; a show opening and
 # closing; the filters walked, one chosen and undone), schedule (the Anime tab's schedule: down through
-# the days and along them). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
+# the days and along them), browse (the Movies tab: into its rows, along and down them, a film opening and
+# closing; then Series and the Library, each walked a little). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
 # plays the best stream by rank) and never tell Stremio what they played ("unreported": the account's own
 # progress stays where it was).
-# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule   (VARIANT: LabProbe switches)
+# usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule|browse   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
@@ -43,6 +44,8 @@ case $route in
   streams) p RIGHT 1 5000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
   schedule) p UP 1 900; p RIGHT 1 2500; p DOWN 1 900; p RIGHT 1 400; p ENTER 1 2000; p DOWN 1 1200; p RIGHT 3 400; p DOWN 1 900
             p DOWN 1 900; p DOWN 1 900; p RIGHT 2 400; p UP 1 900; p UP 1 900; p DOWN 3 500; p UP 4 600 ;;
+  browse) p UP 1 900; p RIGHT 2 2000; p DOWN 1 900; p DOWN 1 900; p RIGHT 3 350; p DOWN 3 700; p UP 2 700; p ENTER 1 2000; p BACK 1 1500
+          p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 2 400; p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 3 350 ;;
   anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p ENTER 1 2500; p BACK 1 1500
          p UP 1 900; p RIGHT 3 300; p ENTER 1 1500; p LEFT 1 300; p ENTER 1 1500; p UP 1 900 ;;
 esac

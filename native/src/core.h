@@ -19,6 +19,7 @@ void seimio_core_fetched(quint64 id, quint16 status, const uchar *body, size_t l
 char *seimio_core_dispatch(const char *model, const char *action);
 char *seimio_core_state(const char *model);
 char *seimio_core_view(const char *name);
+char *seimio_core_select(const char *what, const char *choice);
 void seimio_core_free(char *);
 }
 
@@ -42,6 +43,10 @@ public:
             qWarning("core: %s not sent to %s: %s", qPrintable(action.value("action").toString()), model, why);
             seimio_core_free(why);
         }
+    }
+    // one choice of a browsable model's filters (`select` in core/src/lib.rs)
+    void select(const QByteArray &what, const QByteArray &choice) {
+        if (char *why = seimio_core_select(what.constData(), choice.constData())) { qWarning("core: %s = %s: %s", what.constData(), choice.constData(), why); seimio_core_free(why); }
     }
     static QJsonDocument state(const char *model) { return taken(seimio_core_state(model)); }
     static QJsonDocument view(const char *name) { return taken(seimio_core_view(name)); }

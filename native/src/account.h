@@ -11,8 +11,10 @@
 // when a series moves on to its next episode, and syncs it. A seek is said as a seek: time jumped over is
 // not time watched.
 #include <QSet>
+#include <QThread>
 #include <QTimer>
 #include <QVariantMap>
+#include <memory>
 #include "core.h"
 
 class Account : public QObject {
@@ -23,6 +25,10 @@ class Account : public QObject {
     Q_PROPERTY(QString avatar READ avatar NOTIFY changed)
     Q_PROPERTY(QVariantMap link READ link NOTIFY linkChanged)
     Q_PROPERTY(int libraryRevision READ libraryRevision NOTIFY libraryChanged)   // read with inLibrary() or watched(), so a binding follows
+    // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
+    //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
+    //   items(from, n)   that many of its titles, as the screens show a title
+    Q_PROPERTY(QVariantMap browsing READ browsing NOTIFY browsingChanged)
 public:
     explicit Account(QObject *parent = nullptr) : QObject(parent) {
         Core *core = Core::instance();
@@ -31,6 +37,7 @@ public:
             if (models.contains("ctx")) refresh();
             if (models.contains("link")) linked();
             if (models.contains("continue_watching")) emit watchingChanged();
+            if (models.contains(m_browse == "library" ? "library" : "discover") && !m_browse.isEmpty()) browsed();
         });
         connect(core, &Core::event, this, [this](const QString &name, const QJsonObject &) { if (name == "UserAuthenticated") sync(); });
         // an unapproved code answers "not yet" until it is approved; a code left on screen is renewed
@@ -49,6 +56,27 @@ public:
     int libraryRevision() const { return m_revision; }
     Q_INVOKABLE bool inLibrary(const QString &id) const { return m_library.contains(id); }
     Q_INVOKABLE bool watched(const QString &id) const { return m_watched.contains(id); }
+
+    QVariantMap browsing() const { return m_browsing; }
+    Q_INVOKABLE QVariantList items(int from, int n) const { return m_items.mid(from, n); }
+    Q_INVOKABLE void browse(const QString &what) {
+        if (what == m_browse) return;
+        m_browse = what; m_items.clear(); m_browsing = QVariantMap { { "what", what }, { "filters", QVariantList() }, { "count", 0 }, { "more", false }, { "loading", true } };
+        emit browsingChanged();
+        if (what.isEmpty()) return;
+        // the library keeps the choice it had; Discover is asked for the type (a list and a genre are that type's)
+        if (what != "library") Core::instance()->select("discover.type", what.toUtf8());
+        else if (!m_libraryAsked) { m_libraryAsked = true; Core::instance()->select("library.sort", "0"); }
+        else browsed();
+    }
+    Q_INVOKABLE void choose(const QString &filter, int option) {
+        if (!m_browse.isEmpty()) Core::instance()->select(((m_browse == "library" ? "library." : "discover.") + filter).toUtf8(), QByteArray::number(option));
+    }
+    Q_INVOKABLE void more() {
+        if (m_browse.isEmpty() || !m_browsing.value("more").toBool() || m_browsing.value("loading").toBool()) return;
+        const bool library = m_browse == "library";
+        Core::instance()->dispatch(library ? "library" : "discover", Core::action(library ? "LibraryWithFilters" : "CatalogWithFilters", Core::action("LoadNextPage")));
+    }
 
     // asks for a code and waits for it to be approved; signed in, `signedIn` turns true
     Q_INVOKABLE void signIn() {
@@ -89,6 +117,7 @@ public:
 signals:
     void changed();
     void linkChanged();
+    void browsingChanged();
     void libraryChanged();
     void watchingChanged();
 
@@ -138,6 +167,49 @@ private:
         else if (type == "Err") { link = { { "state", "failed" } }; QTimer::singleShot(5000, this, [this] { if (m_link.value("state") == "failed") signIn(); }); }
         if (link != m_link) { m_link = link; emit linkChanged(); }
     }
+    // The grid's page as the core has it now, read and shaped on a worker: a list of Cinemeta series is
+    // half a megabyte of JSON.
+    void browsed() {
+        const QString what = m_browse;
+        const int ticket = ++m_ticket;
+        auto out = std::make_shared<QPair<QVariantMap, QVariantList>>();
+        QThread *worker = QThread::create([out, what] {
+            const QJsonObject page = Core::view(what == "library" ? "library.page" : "discover.page").object();
+            QVariantList filters;
+            for (const char *key : { "type", "sort", "list", "genre" }) {
+                const QJsonArray options = page.value(key).toArray();
+                if (options.isEmpty()) continue;
+                QStringList names; int current = 0;
+                for (int i = 0; i < options.size(); i++) { names << options[i].toObject().value("name").toString(); if (options[i].toObject().value("selected").toBool()) current = i; }
+                filters << QVariantMap { { "key", key }, { "options", names }, { "current", current } };
+            }
+            for (const QJsonValue &v : page.value("items").toArray()) {
+                const QJsonObject i = v.toObject();
+                QStringList chips { i.value("year").toString(), i.value("runtime").toString() };
+                const QJsonArray genres = i.value("genres").toArray();
+                for (int g = 0; g < genres.size() && g < 2; g++) chips << genres[g].toString();
+                chips.removeAll(QString());
+                out->second << QVariantMap { { "id", i.value("id").toString() }, { "type", i.value("type").toString() }, { "name", i.value("name").toString() },
+                    { "title", i.value("name").toString() }, { "art", i.value("poster").toString() }, { "poster", i.value("poster").toString() },
+                    { "backdrop", i.value("backdrop").toString() }, { "logo", i.value("logo").toString() }, { "description", i.value("description").toString().left(220) },
+                    { "chips", chips }, { "rating", i.value("rating").toString() }, { "episode", QString() }, { "progress", -1 } };
+            }
+            out->first = QVariantMap { { "what", what }, { "filters", filters }, { "count", out->second.size() },
+                                       { "more", page.value("more").toBool() }, { "loading", page.value("loading").toBool() } };
+        });
+        connect(worker, &QThread::finished, this, [this, out, ticket] {
+            if (ticket != m_ticket) return;                 // a newer page is on its way
+            m_items = out->second; m_browsing = out->first;
+            emit browsingChanged();
+        });
+        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+        worker->start();
+    }
+    QString m_browse;
+    QVariantMap m_browsing;
+    QVariantList m_items;
+    int m_ticket = 0;
+    bool m_libraryAsked = false;
     bool m_signedIn = false, m_reporting = false;
     QString m_email, m_avatar;
     QVariantMap m_link;

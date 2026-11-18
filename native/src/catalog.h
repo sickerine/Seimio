@@ -201,7 +201,30 @@ public:
     // (Franchise); `source` is what the screen showed, with an AniList or Kitsu id. Ends in
     // `franchiseReady(sourceId, item, show)` (item: the title as the screen showed it, id "kitsu:N", `video`
     // where its page opens) or `franchiseFailed`.
-    Q_INVOKABLE void loadFranchise(const QVariantMap &source) { m_franchise.load(source); }
+    // A Cinemeta title (a film or a series from a list, the library or a search) answers the same way:
+    // its facts and art filled in, and a series' seasons with the library's watch state.
+    Q_INVOKABLE void loadFranchise(const QVariantMap &source) {
+        const QString id = source.value("id").toString(), type = source.value("type").toString() == "movie" ? "movie" : "series";
+        if (!id.startsWith("tt")) { m_franchise.load(source); return; }
+        m_live.title(type, id, [this, source, id, type](const QJsonObject &meta) {
+            if (meta.isEmpty()) { emit franchiseFailed(id, "Couldn't load it"); return; }
+            const QJsonObject show = type == "series" ? Live::show(meta, m_docs.library.value(id).toObject()) : QJsonObject();
+            QString year = meta.value("releaseInfo").toVariant().toString();
+            while (year.endsWith('-') || year.endsWith(QChar(0x2013))) year.chop(1);
+            QStringList chips { year, meta.value("runtime").toString() };
+            for (const QJsonValue &g : Live::firstN(meta.value("genres").toArray(), 2)) chips << g.toString();
+            chips.removeAll(QString());
+            QVariantMap item = source;
+            item["type"] = type; item["name"] = item["title"] = meta.value("name").toString(source.value("name").toString());
+            item["backdrop"] = meta.value("background").toString(Live::metahub("background", id));
+            item["logo"] = meta.value("logo").toString(Live::metahub("logo", id));
+            item["description"] = meta.value("description").toString().left(220);
+            item["chips"] = chips; item["rating"] = meta.value("imdbRating").toVariant().toString();
+            if (!item.contains("episode")) item["episode"] = QString();
+            if (!item.contains("progress")) item["progress"] = -1;
+            emit franchiseReady(id, item, show.toVariantMap());
+        });
+    }
     // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
     // items }], each item's `label` its local air time
     Q_INVOKABLE QVariantList seasonSchedule(const QString &format, const QString &genre, qint64 now) const {
@@ -305,6 +328,8 @@ public:
     // a show's seasons and episodes, for the show page (empty if it isn't a library show)
     Q_INVOKABLE QVariantMap show(const QString &id) const { return m_data ? m_data->shows.value(id).toMap() : QVariantMap(); }
     Q_INVOKABLE int episodeCount(const QString &id) const { return m_data ? m_data->episodeCounts.value(id, 0) : 0; }
+    // whether a title is one the catalog has whole (Continue Watching's, with their seasons); any other is fetched
+    Q_INVOKABLE bool holds(const QString &id) const { return m_data && m_data->held.contains(id); }
     // a day's releases, library shows first
     Q_INVOKABLE QVariantList day(const QString &key) const {
         QVariantList out;
@@ -324,6 +349,7 @@ signals:
 private:
     struct Data {
         QVariantList continueWatching, popular;
+        QSet<QString> held;                     // Continue Watching's ids
         QHash<QString, QVariant> shows;
         QHash<QString, int> episodeCounts;
         Calendar calendar;
@@ -353,6 +379,7 @@ private:
                                   {"description", i["description"].toString()}, {"chips", chips}, {"rating", QString()},
                                   {"episode", i["episode"].toString()}, {"progress", i["progress"].toDouble()} };
                 d.continueWatching.append(item);
+                d.held << item["id"].toString();
                 byId[item["id"].toString()] = item;
             }
             for (const QJsonValue &row : docs.rows) {

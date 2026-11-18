@@ -131,3 +131,7 @@ F. Performance and polish across all of it, against the budgets.
   handlers that the lab can't attribute yet (the handlers themselves measure 0 to 18 ms).
 - Opening a franchise page that wasn't built ahead is a ~50 ms GUI stall (the row's cards and the season
   bar). A staged load (header, then row) would halve it.
+- The browse tour (Movies, Series, Library): the rows themselves scroll without a late frame. A title
+  opened 700 ms after a move, before it was fetched ahead, opens while the backdrop crossfades and the
+  grid fades: 6 to 10 frames at 30 fps. Opened a second later it costs one or two. A tab's first show
+  is a 60 to 70 ms GUI stall (its rows' first cards).

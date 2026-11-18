@@ -42,9 +42,17 @@ WebOSWindow {
     property bool profileOpen: false                       // the account's menu, under its picture
     onProfileOpenChanged: probe.captures()
     // the Anime tab has its own screen; Home's rows, selection and scroll belong to whichever is up
-    readonly property bool animeTab: tabs.currentIndex === 1
-    readonly property bool scrolled: animeTab ? anime.scrolled : home.scrolled
-    readonly property var focusItem: animeTab ? anime.focusItem : home.focusItem
+    property alias tab: tabs.currentIndex                  // 0 Home, 1 Anime, 2 Movies, 3 Series, 4 Library, 5 search
+    readonly property bool animeTab: tab === 1
+    // Movies, Series and the Library are one screen (BrowseScreen), each a list of Account's; `browsed` is
+    // the last one up, which the screen goes on showing while it fades
+    readonly property string browsing: ["", "", "movie", "series", "library"][tab] || ""
+    readonly property bool browseTab: browsing !== ""
+    property string browsed: ""
+    onBrowsingChanged: if (browsing) browsed = browsing
+    readonly property bool bare: onHome && browsing === "library"     // a tab with no title above its grid: no info, the backdrop frosted
+    readonly property bool scrolled: animeTab ? anime.scrolled : browseTab ? browse.scrolled : home.scrolled
+    readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? browse.focusItem : home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
     onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
@@ -58,9 +66,9 @@ WebOSWindow {
     Timer {
         id: prepareShow; interval: 1200
         onTriggered: {
-            if (!app.displayItem || !app.onHome || !(app.animeTab || home.row === 0)) return;
-            // an anime's franchise is fetched ahead (its page is built when it's in), so OK opens it at once
-            if (app.franchiseId(app.displayItem.id)) { app.loadFranchise(app.displayItem); return }
+            if (!app.displayItem || !app.onHome || !(app.animeTab || app.browseTab || home.row === 0)) return;
+            // a title that has to be fetched is fetched ahead (its page is built when it's in), so OK opens it at once
+            if (app.fetched(app.displayItem)) { app.loadFranchise(app.displayItem); return }
             if (app.episodeCount(app.displayItem.id) > 1) app.buildAhead(app.displayItem.id, app.displayItem, app.showData(app.displayItem.id));
         }
     }
@@ -74,7 +82,7 @@ WebOSWindow {
     // one piece of work a quiet second: the selection's page, then (once) the Anime tab
     function builtAhead() {
         var a = ahead; ahead = null;
-        if (a && onHome && selected(a.source, a.item)) { showPage.load(a.item, a.show); if (!anime.rows.length) still.restart() }
+        if (a && onHome && selected(a.source, a.item)) { if (episodesIn(a.show) > 1) showPage.load(a.item, a.show); if (!anime.rows.length) still.restart() }   // (a film has no page to build)
         else if (onHome && started) anime.warm();
     }
     Timer { id: still; interval: 1000; onTriggered: app.builtAhead() }
@@ -90,7 +98,7 @@ WebOSWindow {
     // Home's selection as the title in hand: an anime's franchise when it's in
     function holdSelection() {
         commit();
-        var f = displayItem && franchiseId(displayItem.id) ? franchises[displayItem.id] : null;
+        var f = displayItem && fetched(displayItem) ? franchises[displayItem.id] : null;
         if (f) hold(f.item, f.show, picked(f, displayItem)); else hold(displayItem, displayItem ? showData(displayItem.id) : null);
     }
     // The episode a franchise was picked for: the release's own, by id or (an anime's calendar release) by
@@ -170,7 +178,7 @@ WebOSWindow {
     function refreshHeld() {
         shows = ({}); franchises = ({});
         if (!held || onHome || layer === "player" || layer === "signin") return;
-        if (franchiseId(held.item.id)) { franchiseRefresh = held.item.id; loadFranchise(held.item) }
+        if (fetched(held.item)) { franchiseRefresh = held.item.id; loadFranchise(held.item) }
         else if (held.show) rehold(held.item, showData(held.item.id));
     }
     // the same title with new data: the page stays where it is
@@ -198,8 +206,8 @@ WebOSWindow {
     function open() {
         commit();
         // an anime opens as its whole franchise, wherever it was picked (Continue Watching, the calendar, the
-        // Anime tab)
-        if (displayItem && franchiseId(displayItem.id)) { openFranchise(displayItem); return }
+        // Anime tab); a title from a list, the library or a search is fetched the same way
+        if (displayItem && fetched(displayItem)) { openFranchise(displayItem); return }
         openPage();
     }
     function openPage() { hold(displayItem, showData(displayItem.id)); showHeld(null) }
@@ -338,6 +346,9 @@ WebOSWindow {
     // (Whether a video is anime, for the pick's rules and the track choices, is Streams' to say and nobody
     // else's: `streams.anime`. This is only whether an id is one a franchise can be fetched for.)
     function franchiseId(id) { return /^(kitsu|anilist):/.test(id || "") }
+    // whether a title's page is fetched (Catalog.loadFranchise): an anime, and anything the catalog doesn't
+    // hold whole already (it holds Continue Watching's titles with their seasons)
+    function fetched(item) { return franchiseId(item.id) || !catalog.holds(item.id) }
     property var franchises: ({})
     property var franchiseLoading: ({})
     property string franchiseOpening: ""
@@ -410,6 +421,7 @@ WebOSWindow {
                      playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
+                     tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
                      library: { item: app.libraryItem ? app.libraryItem.id : "", "in": app.inLibrary, watched: app.watchedTitle, reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
@@ -461,7 +473,7 @@ WebOSWindow {
                 frozen: true; sourceBusy: hero.settling; sourceMoving: hero.fading
                 // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
                 hideCovered: true
-                opacity: (app.onHome && app.scrolled && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
+                opacity: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
@@ -477,13 +489,13 @@ WebOSWindow {
                 // hidden on the calendar, so it doesn't swap to every day there (logo loads, text layout)
                 // Home's selection; on the title page, the title in hand. Under a show page it is away, and
                 // keeps what it showed (the page has its own header)
-                item: app.scrolled && app.onHome && !home.dayOpen ? null : app.layer === "title" && app.held ? app.held.item : app.displayItem
+                item: (app.scrolled || app.bare) && app.onHome && !home.dayOpen ? null : app.layer === "title" && app.held ? app.held.item : app.displayItem
                 // on the title page it moves down to sit just above the actions
                 y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (app.scrolled ? 90 : 150)
                 // it only glides while on screen; hidden, it takes its new place at once and fades in there
                 Behavior on y { enabled: info.visible; NumberAnimation { duration: 460; easing.type: Theme.ease } }
                 // below Home's first row, and on the show page, the info steps aside
-                property real away: (app.scrolled && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
+                property real away: ((app.scrolled || app.bare) && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
                 Behavior on away { NumberAnimation { duration: 380; easing.type: Theme.ease } }
                 opacity: 1 - away
                 visible: away < 1
@@ -513,8 +525,8 @@ WebOSWindow {
             HomeScreen {
                 id: home
                 width: parent.width; height: parent.height
-                focus: app.layer === "home" && !app.animeTab
-                shown: app.onHome && !app.animeTab
+                focus: app.layer === "home" && !app.animeTab && !app.browseTab
+                shown: app.onHome && !app.animeTab && !app.browseTab
                 holdFocus: app.layer === "menu"
                 continueWatching: catalog.continueWatching
                 catalog: catalog
@@ -539,6 +551,18 @@ WebOSWindow {
                 onMenuChanged: probe.captures()            // lab: captures follow its lists, and a season on its way
                 onSeasonLoadingChanged: probe.captures()
                 // a show from the chart opens once its franchise is in (Catalog.loadFranchise)
+                onActivated: app.open()
+            }
+            BrowseScreen {
+                id: browse
+                width: parent.width; height: parent.height
+                focus: app.layer === "home" && app.browseTab
+                shown: app.onHome && app.browseTab
+                account: account
+                what: app.browsed
+                glassSource: backdropFrost
+                onExitTop: app.layer = "tabs"
+                onRowChanged: probe.act("browse row")
                 onActivated: app.open()
             }
         }

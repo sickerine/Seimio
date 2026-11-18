@@ -61,6 +61,15 @@ pub extern "C" fn seimio_core_state(field: *const c_char) -> *mut c_char {
     crate::state(&text(field)).map_or(std::ptr::null_mut(), |s| c(&s).into_raw())
 }
 
+/// One choice of a browsable model (`select` in lib.rs). Null when sent; otherwise why not (freed by the caller).
+#[no_mangle]
+pub extern "C" fn seimio_core_select(what: *const c_char, choice: *const c_char) -> *mut c_char {
+    match crate::select(&text(what), &text(choice)) {
+        Ok(()) => std::ptr::null_mut(),
+        Err(why) => c(&why).into_raw(),
+    }
+}
+
 /// State shaped for the app (`view` in lib.rs), or null.
 #[no_mangle]
 pub extern "C" fn seimio_core_view(name: *const c_char) -> *mut c_char {

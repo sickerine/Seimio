@@ -22,10 +22,9 @@ FocusScope {
     property double now: Date.now() / 1000   // epoch seconds; previews fix it
     property bool live: true                 // previews turn the clock off
 
-    // -1 the controls, 0.. the rows
-    property int row: -1
-    property int column: 0
-    readonly property bool scrolled: row > 0
+    // -1 the controls, 0.. the rows (CardGrid)
+    property alias row: grid.row
+    readonly property bool scrolled: grid.scrolled
     property string view: "chart"
     property string format: "all"
     property string sort: "popular"
@@ -42,13 +41,10 @@ FocusScope {
     readonly property int perRow: 7
 
     // [{ title, date, items }]: the chart cut into rows, or the days that have episodes
-    property var rows: []
+    readonly property alias rows: grid.rows
     property int total: 0
     // the focused show; once opened, its Kitsu version (playable), which App's selection then follows
-    readonly property var focusItem: {
-        var r = rows.length ? rows[Math.max(0, row)] || rows[0] : null, raw = r ? r.items[Math.min(restingColumn(Math.max(0, row)), r.items.length - 1)] || null : null;
-        return raw && resolved[raw.id] ? resolved[raw.id] : raw;
-    }
+    readonly property var focusItem: { var raw = grid.focusItem; return raw && resolved[raw.id] ? resolved[raw.id] : raw }
     property var resolved: ({})
     function resolve(sourceId, item) { var r = Object.assign({}, resolved); r[sourceId] = item; resolved = r }
     // a moment's word when a show can't open (not on Kitsu yet, its episodes didn't load)
@@ -75,35 +71,16 @@ FocusScope {
         }
         return out;
     }
-    function warm() { if (!shown && !rows.length && catalog && catalog.seasonReady) { pending = build(); pendingView = view; apply() } }
+    function warm() { if (!shown && !rows.length && catalog && catalog.seasonReady) grid.show(build(), view) }
     property bool stale: false                       // a season came in while the tab was away
+    // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
+    // the view they're laid out for (CardGrid.show)
     function refresh() {
         if (!catalog || !catalog.seasonReady) return;
         if (!shown) { stale = rows.length > 0; return }
         stale = false;
-        var out = build();
-        // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
-        // the view they're laid out for (cards keep the old shape until then)
-        pending = out; pendingView = view;
-        if (shown && rows.length) { swap.restart(); return }
-        apply();
+        grid.show(build(), view);
     }
-    property var pending: null
-    property string pendingView: "chart"
-    property string rowsView: "chart"                // the view the rows on screen are laid out for
-    // new rows reach the row slots a slot a frame, top first (`staggering`): handing every slot its
-    // cards at once (28 cards resized and rebound) stalled ~90 ms; they arrive while the list fades in
-    property bool staggering: false
-    Timer { id: staggerEnd; interval: 120; onTriggered: anime.staggering = false }
-    function apply() {
-        staggering = rows.length > 0 || pending.length > 0; staggerEnd.restart();
-        rowColumns = ({}); rows = pending; rowsView = pendingView; pending = null; if (row >= rows.length) row = rows.length - 1;
-    }
-    // where each row rests along itself: the chart's rows line up as a grid and share `column`; each of
-    // the schedule's days slides on its own and keeps its own place (by row), starting at its first card
-    property var rowColumns: ({})
-    function restingColumn(rowIdx) { return rowsView === "schedule" ? (rowColumns[rowIdx] || 0) : column }
-    function rememberColumn(rowIdx, i) { var c = Object.assign({}, rowColumns); c[rowIdx] = i; rowColumns = c }
     Connections {
         target: anime.catalog
         // another season: its own genres, from its top, and the chart if nothing in it airs any more
@@ -116,7 +93,7 @@ FocusScope {
         }
         onSeasonFailed: anime.say("Couldn't load " + name)
     }
-    onShownChanged: { if (shown && (!rows.length || stale)) refresh(); holdCovers() }
+    onShownChanged: if (shown && (!rows.length || stale)) refresh()
     // a choice (OK on a bar) asks again, once for changes made together
     onViewChanged: Qt.callLater(anime.refresh)
     onFormatChanged: Qt.callLater(anime.refresh)
@@ -128,10 +105,9 @@ FocusScope {
     Timer { interval: 60000; running: anime.live && anime.shown; repeat: true; onTriggered: anime.tick() }
     function tick() {
         now = Date.now() / 1000;
-        if (!catalog || !catalog.seasonReady || !rows.length || rowsView !== view || swap.running) return;
+        if (!catalog || !catalog.seasonReady || !rows.length || grid.layout !== view || grid.swapping) return;
         var out = build();
-        rows = out.map(function (n, i) { var o = rows[i]; return o && rowKey(o) === rowKey(n) ? o : n });
-        if (row >= rows.length) row = rows.length - 1;
+        grid.replace(out.map(function (n, i) { var o = rows[i]; return o && rowKey(o) === rowKey(n) ? o : n }));
     }
     function rowKey(r) { return r.title + "|" + r.date + "|" + r.items.map(function (x) { return x.id + "/" + x.label + "/" + x.episode }).join(",") }
 
@@ -306,118 +282,14 @@ FocusScope {
         Keys.onDownPressed: if (anime.rows.length && !anime.seasonLoading) anime.row = 0
     }
 
-    // ---- covers kept decoded -------------------------------------------------------------------------------
-    // Every cover of the view is held decoded ahead (ArtCache.keep), as the cards decode it, so a row
-    // scrolled to for the first time has its covers too: ~40 MB for the chart's covers, ~55 MB for the
-    // schedule's stills, of ArtCache's budget.
-    readonly property var covers: {
-        var out = [];
-        for (var i = 0; i < rows.length; i++) for (var j = 0; j < rows[i].items.length; j++) out.push(rows[i].items[j].art || "");
-        return out;
-    }
-    // the cards: the chart's covers, the schedule's episode stills
-    // The page spans the margins, as the countdown does: the chart's 7 covers and their gaps fill the width
-    // exactly (204 px covers, 42 px gaps), and the genre control's right edge sits on the right margin.
-    readonly property int contentWidth: Theme.screenWidth - 2 * Theme.margin
-    readonly property size chartCard: Theme.posterCard
-    readonly property int chartGap: (contentWidth - perRow * chartCard.width) / (perRow - 1)
-    readonly property size scheduleCard: Theme.stillCard
-    readonly property size coverSize: { var c = rowsView === "schedule" ? scheduleCard : chartCard; return Theme.cardDecodeSize(c.width, c.height) }
-    // once the tab has been up: warmed ahead, only the rows on screen decode theirs
-    function holdCovers() { if (shown) ArtCache.keep(covers, coverSize.width, coverSize.height) }
-    onCoversChanged: holdCovers()
-
     // ---- the rows --------------------------------------------------------------------------------------------
-    SequentialAnimation {
-        id: swap
-        NumberAnimation { target: list; property: "opacity"; to: 0; duration: 140; easing.type: Easing.InQuad }
-        ScriptAction { script: { anime.apply(); list.rise = 28 } }
-        ParallelAnimation {
-            NumberAnimation { target: list; property: "opacity"; to: 1; duration: 320; easing.type: Theme.ease }
-            NumberAnimation { target: list; property: "rise"; to: 0; duration: 420; easing.type: Theme.ease }
-        }
-    }
-    Item {
-        id: list
-        property real rise: 0
-        transform: Translate { y: list.rise }
+    CardGrid {
+        id: grid
         width: anime.width; height: anime.height
-        // the season on screen while another is fetched: dimmed, and out of reach (see the controls' Down)
-        property real dim: anime.seasonLoading ? 0.3 : 1
-        Behavior on dim { NumberAnimation { duration: Theme.base } }
-        layer.enabled: dim < 1                  // faded as one piece, only while it is
-        layer.effect: ShaderEffect { property real dim: list.dim; fragmentShader: "varying highp vec2 qt_TexCoord0; uniform sampler2D source; uniform lowp float dim; uniform lowp float qt_Opacity; void main() { gl_FragColor = texture2D(source, qt_TexCoord0) * dim * qt_Opacity; }" }
-        readonly property int stride: 430
-        readonly property int rowTop: 650
-        // once the controls have gone up, the focused row sits just under them with two more below it,
-        // and the rows above have gone
-        readonly property real scrollTarget: anime.row <= 0 ? 0 : rowTop + anime.row * stride - 160
-        property real scrollY: scrollTarget
-        Behavior on scrollY { NumberAnimation { id: scrolling; duration: 480; easing.type: Theme.ease } }
-        readonly property int slots: 4
-        readonly property int first: Math.max(0, Math.floor((scrollY - rowTop) / stride))
-        Repeater {
-            model: list.slots
-            FocusScope {
-                id: slot
-                readonly property int idx: list.first + ((index - list.first) % list.slots + list.slots) % list.slots
-                // the row this slot shows: at once when the slot is recycled while scrolling, a frame per
-                // place down the screen when new rows arrive (anime.staggering); its layout comes with it
-                readonly property var wanted: idx < anime.rows.length ? anime.rows[idx] : null
-                property var r: null
-                Component.onCompleted: r = wanted
-                // recycled mid-scroll into a place that's hidden once the scroll ends (past the bottom, or
-                // above the focused row, which fades out), it rebinds its cards after the scroll: 7 cards at
-                // once cost 40-60 ms, a hitch in the slide
-                readonly property bool shownAtRest: { var y = list.rowTop + idx * list.stride - list.scrollTarget; return y < anime.height && y + height > 0 && (anime.row <= 0 || idx >= anime.row) }
-                onWantedChanged: {
-                    if (anime.staggering) { take.interval = 16 * (1 + Math.max(0, idx - list.first)); take.restart() }
-                    else if (scrolling.running && !shownAtRest) take.stop();          // taken when the scroll ends
-                    else r = wanted;
-                }
-                Connections { target: scrolling; onRunningChanged: if (!scrolling.running && slot.r !== slot.wanted) slot.r = slot.wanted }
-                // another press moved where the scroll ends and brought it on screen: it takes its row now
-                // (waiting for the scroll to end left it empty, then snapping in, while presses kept coming)
-                onShownAtRestChanged: if (shownAtRest && !take.running && r !== wanted) r = wanted
-                Timer { id: take; onTriggered: slot.r = slot.wanted }
-                readonly property bool schedule: !!(r && r.schedule)
-                // a slot fully off screen isn't drawn (Qt draws what's off screen)
-                visible: r !== null && y < anime.height && y + height > 0
-                y: list.rowTop + idx * list.stride - list.scrollY
-                // a slot handed another row (the pool recycles as the list scrolls) takes that row's place
-                // along itself, not the place of the row it showed before
-                function place() { strip.jumpTo(Math.max(0, Math.min(anime.restingColumn(idx), (strip.model || []).length - 1))) }
-                width: anime.width; height: list.stride
-                focus: anime.row === idx
-                opacity: anime.row > 0 && idx < anime.row ? 0 : 1      // holds: the row's cards stay
-                Behavior on opacity { NumberAnimation { duration: Theme.base } }
-                Row {
-                    x: Theme.margin
-                    visible: slot.schedule
-                    spacing: 16
-                    Text { text: slot.r ? slot.r.title : ""; color: Theme.ink; font.family: Theme.face; font.pixelSize: 30; font.weight: Font.DemiBold }
-                    Text { anchors.baseline: parent.children[0].baseline; text: slot.r ? slot.r.date : ""; color: Theme.inkDim; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
-                }
-                CardStrip {
-                    id: strip
-                    y: slot.schedule ? 108 : 54
-                    width: anime.width
-                    focus: true
-                    model: slot.r ? slot.r.items : []
-                    slides: slot.schedule
-                    nextLabels: false
-                    cardWidth: slot.schedule ? anime.scheduleCard.width : anime.chartCard.width
-                    cardHeight: slot.schedule ? anime.scheduleCard.height : anime.chartCard.height
-                    narrowest: anime.chartCard.width
-                    spacing: slot.schedule ? 36 : anime.chartGap
-                    showFocus: activeFocus
-                    onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) anime.rememberColumn(slot.idx, currentIndex); else anime.column = currentIndex }
-                    onActivated: anime.activated(model[cardIndex])
-                    onModelChanged: slot.place()
-                }
-                onActiveFocusChanged: if (activeFocus) place()
-            }
-        }
+        focus: anime.row >= 0
+        held: anime.shown
+        dim: anime.seasonLoading ? 0.3 : 1               // the season on screen while another is fetched: dimmed, and out of reach (see the controls' Down)
+        onActivated: anime.activated(item)
     }
 
     // The lists that drop from the controls, by their bar and over the rows: above it while it sits under
@@ -460,8 +332,6 @@ FocusScope {
         Chip { kind: "solid"; size: 24; text: parent.current || "" }
     }
 
-    Keys.onUpPressed: if (row > 0) row--; else if (row === 0) row = -1
-    Keys.onDownPressed: if (row < rows.length - 1) row++
     Keys.onPressed: {
         if (!Remote.isBack(event.key)) return;
         if (menu) { menu = ""; event.accepted = true }

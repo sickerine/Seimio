@@ -43,6 +43,12 @@ public:
             homeDone();
         }, [docs, anime](const QJsonObject &season) { docs->season = season; anime(*docs); });
     }
+    static QString metahub(const QString &kind, const QString &id) { return "https://images.metahub.space/" + kind + "/medium/" + id + "/img"; }
+    static QJsonArray firstN(const QJsonArray &a, int n) { QJsonArray out; for (int i = 0; i < a.size() && i < n; i++) out << a[i]; return out; }
+    // one Cinemeta title's meta (a film, a series), or nothing
+    void title(const QString &type, const QString &id, std::function<void(QJsonObject)> done) {
+        get(QString(kCinemeta) + "/meta/" + type + "/" + id + ".json", [done](const QJsonDocument &d, bool) { done(d.object().value("meta").toObject()); });
+    }
     // the season a day is in, as AniList names it: Winter is December to February, under the year it ends in
     static QPair<QString, int> seasonAt(const QDate &day) {
         const int m = day.month();
@@ -74,8 +80,6 @@ private:
             done(QJsonDocument::fromJson(data).object().value("data").toObject());
         });
     }
-    static QString metahub(const QString &kind, const QString &id) { return "https://images.metahub.space/" + kind + "/medium/" + id + "/img"; }
-    static QJsonArray firstN(const QJsonArray &a, int n) { QJsonArray out; for (int i = 0; i < a.size() && i < n; i++) out << a[i]; return out; }
 
     // ---- Home ----------------------------------------------------------------------------------------------
     void rows(std::shared_ptr<Docs> docs, std::function<void()> done) {

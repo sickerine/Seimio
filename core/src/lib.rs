@@ -10,14 +10,18 @@ use once_cell::sync::OnceCell;
 use stremio_core::{
     constants::*,
     models::{
-        catalog_with_filters::CatalogWithFilters,
+        catalog_with_filters::{CatalogWithFilters, Selected as CatalogSelected},
+        common::Loadable,
         continue_watching_preview::ContinueWatchingPreview,
         ctx::Ctx,
-        library_with_filters::{LibraryWithFilters, NotRemovedFilter},
+        library_with_filters::{LibraryWithFilters, NotRemovedFilter, Selected as LibrarySelected, Sort},
         link::Link,
         player::Player,
     },
-    runtime::{msg::Action, Env, Runtime, RuntimeAction, RuntimeEvent},
+    runtime::{
+        msg::{Action, ActionLoad},
+        Env, Runtime, RuntimeAction, RuntimeEvent,
+    },
     types::{
         api::LinkAuthKey, events::DismissedEventsBucket, library::LibraryBucket, notifications::NotificationsBucket,
         profile::Profile, resource::MetaItemPreview, search_history::SearchHistoryBucket, server_urls::ServerUrlsBucket,
@@ -155,13 +159,80 @@ pub fn state(field_name: &str) -> Option<String> {
     .ok()
 }
 
+/// One choice of a browsable model, by its place in the view's list: the library's `library.type` and
+/// `library.sort`, Discover's `discover.type` (by name: "movie", "series"), `discover.list` and
+/// `discover.genre`. Each choice carries the request that shows it, so choosing is loading that.
+pub fn select(what: &str, choice: &str) -> Result<(), String> {
+    let runtime = RUNTIME.get().ok_or("the core hasn't started")?;
+    let index = choice.parse::<usize>().unwrap_or(usize::MAX);
+    let (field, load) = {
+        let model = runtime.model().map_err(|_| "the model is locked")?;
+        let (library, discover) = (&model.library.selectable, &model.discover.selectable);
+        let library_load = |request| ActionLoad::LibraryWithFilters(LibrarySelected { request });
+        let discover_load = |request| ActionLoad::CatalogWithFilters(Some(CatalogSelected { request }));
+        match what {
+            "library.type" => (TvModelField::Library, library.types.get(index).map(|t| library_load(t.request.to_owned()))),
+            "library.sort" => (TvModelField::Library, library.sorts.get(index).map(|t| library_load(t.request.to_owned()))),
+            "discover.type" => (TvModelField::Discover, discover.types.iter().find(|t| t.r#type == choice).map(|t| discover_load(t.request.to_owned()))),
+            "discover.list" => (TvModelField::Discover, discover.catalogs.get(index).map(|t| discover_load(t.request.to_owned()))),
+            "discover.genre" => (
+                TvModelField::Discover,
+                discover.extra.iter().find(|e| e.name == "genre").and_then(|e| e.options.get(index)).map(|t| discover_load(t.request.to_owned())),
+            ),
+            _ => return Err("no such choice".into()),
+        }
+    };
+    runtime.dispatch(RuntimeAction { field: Some(field), action: Action::Load(load.ok_or("no such choice")?) });
+    Ok(())
+}
+
+fn named(choices: impl Iterator<Item = (String, bool)>) -> serde_json::Value {
+    choices.map(|(name, selected)| serde_json::json!({ "name": name, "selected": selected })).collect()
+}
+
 /// State shaped for the app where a model's own JSON is more than it needs:
 /// - `account`: { signedIn, email, avatar }
 /// - `watching`: Continue Watching, newest first: [{ id, type, name, poster, videoId, progress, notifications }]
 /// - `library`: every library item, with its state: [{ _id, name, type, poster, removed, temp, state }]
+/// - `library.page`, `discover.page`: a grid's worth: { filters by name: [{ name, selected }], items, more, loading }
 pub fn view(name: &str) -> Option<String> {
     let model = RUNTIME.get()?.model().ok()?;
     let value = match name {
+        "library.page" => {
+            let library = &model.library;
+            serde_json::json!({
+                "type": named(library.selectable.types.iter().map(|t| (match t.r#type.as_deref() {
+                    None => "All".to_owned(), Some("movie") => "Movies".to_owned(), Some("series") => "Series".to_owned(), Some(other) => other.to_owned(),
+                }, t.selected))),
+                "sort": named(library.selectable.sorts.iter().map(|t| (match t.sort {
+                    Sort::LastWatched => "Last watched", Sort::Name => "A to Z", Sort::NameReverse => "Z to A",
+                    Sort::TimesWatched => "Most watched", Sort::Watched => "Watched", Sort::NotWatched => "Not watched",
+                }.to_owned(), t.selected))),
+                "items": library.catalog.iter().map(|i| serde_json::json!({ "id": i.id, "type": i.r#type, "name": i.name, "poster": i.poster })).collect::<Vec<_>>(),
+                "more": library.selectable.next_page.is_some(),
+                "loading": false,
+            })
+        }
+        "discover.page" => {
+            let discover = &model.discover;
+            let pages = discover.catalog.iter().map(|page| page.content.as_ref());
+            serde_json::json!({
+                "list": named(discover.selectable.catalogs.iter().map(|c| (c.catalog.to_owned(), c.selected))),
+                "genre": named(discover.selectable.extra.iter().filter(|e| e.name == "genre").flat_map(|e| e.options.iter())
+                    .map(|o| (o.value.to_owned().unwrap_or_else(|| "All genres".to_owned()), o.selected))),
+                "items": discover.catalog.iter().filter_map(|page| match &page.content { Some(Loadable::Ready(items)) => Some(items), _ => None }).flatten()
+                    .map(|i| {
+                        let links = |category: &str| i.links.iter().filter(|l| l.category == category).map(|l| l.name.to_owned()).collect::<Vec<_>>();
+                        serde_json::json!({
+                            "id": i.id, "type": i.r#type, "name": i.name, "poster": i.poster, "backdrop": i.background, "logo": i.logo,
+                            "description": i.description, "year": i.release_info, "runtime": i.runtime,
+                            "rating": links("imdb").into_iter().next(), "genres": links("Genres"),
+                        })
+                    }).collect::<Vec<_>>(),
+                "more": discover.selectable.next_page.is_some(),
+                "loading": pages.clone().any(|content| matches!(content, Some(Loadable::Loading))),
+            })
+        }
         "account" => {
             let user = model.ctx.profile.auth.as_ref().map(|a| &a.user);
             serde_json::json!({

@@ -30,9 +30,12 @@ js() {
     menu) echo 'win.openMenu()' ;;
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
     profile) echo 'win.layer = "profile"; win.profileOpen = true' ;;
+    anime) echo 'win.tab = 1' ;;
+    movies) echo 'win.tab = 2' ;;
+    library) echo 'win.tab = 4' ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title profile signin gallery gallery2)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title profile signin anime movies library gallery gallery2)
 fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; day="$DAY"; case "$s" in gallery*) screen="$P/$s.qml"; day="";; esac
