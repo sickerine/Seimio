@@ -481,21 +481,6 @@ private:
                                   {"art", art(i["backdrop"].toString())}, {"backdrop", art(i["backdrop"].toString())}, {"logo", art(i["logo"].toString())},
                                   {"description", i["description"].toString()}, {"chips", chips}, {"rating", QString()},
                                   {"episode", QString()}, {"progress", i["progress"].toDouble()} };
-                // A show's card is the episode it rests on (`rest`, resting.h: the one its page opens on and
-                // Play names there): that episode's still, with the title's backdrop when it has none, its
-                // name on the chip and how far through it you are. `video` is what the page opens on.
-                const QJsonObject resting = docs.series.value(i["id"].toString()).toObject();
-                for (const QJsonValue &sv : resting["seasons"].toArray()) {
-                    for (const QJsonValue &ev : sv.toObject()["episodes"].toArray()) {
-                        const QJsonObject e = ev.toObject();
-                        if (e["id"] != resting["rest"]) continue;
-                        const QString chip = episodeChip(e["episode"].toInt());
-                        item["video"] = e["id"].toString();
-                        item["episode"] = item["id"].toString().startsWith("kitsu:") ? chip : "S" + QString::number(sv.toObject()["season"].toInt()) + " " + chip;
-                        item["progress"] = e["progress"].toDouble();
-                        if (!e["thumb"].toString().isEmpty()) { item["art"] = art(e["thumb"].toString()); item["fallback"] = item["backdrop"]; }
-                    }
-                }
                 // a library show that isn't being watched: on the calendar, not on Continue Watching
                 if (!i["kept"].toBool()) d.continueWatching.append(item);
                 d.held[item["id"].toString()] = item["backdrop"].toString();
@@ -552,8 +537,30 @@ private:
                 }
                 QVariantMap m = show.toVariantMap();
                 m["seasons"] = seasons;
+                // (where it rests, again: with AniList's days in, as the page's franchise has them. By
+                // Kitsu's guess of a day an episode that is out counted as still to come.)
+                m["rest"] = Episodes::rest(seasons, m["current"].toString());
                 d.shows[it.key()] = m;
                 d.episodeCounts[it.key()] = count;
+            }
+            // A show's card is the episode it rests on (`rest`, resting.h: the one its page opens on and
+            // Play names there): that episode's still, with the title's backdrop when it has none, its
+            // name on the chip and how far through it you are. `video` is what the page opens on.
+            for (QVariant &card : d.continueWatching) {
+                QVariantMap item = card.toMap();
+                const QVariantMap show = d.shows.value(item["id"].toString()).toMap();
+                for (const QVariant &sv : show["seasons"].toList()) {
+                    for (const QVariant &ev : sv.toMap()["episodes"].toList()) {
+                        const QVariantMap e = ev.toMap();
+                        if (e["id"] != show["rest"]) continue;
+                        const QString chip = episodeChip(e["episode"].toInt());
+                        item["video"] = e["id"];
+                        item["episode"] = item["id"].toString().startsWith("kitsu:") ? chip : "S" + QString::number(sv.toMap()["season"].toInt()) + " " + chip;
+                        item["progress"] = e["progress"];
+                        if (!e["thumb"].toString().isEmpty()) { item["art"] = e["thumb"]; item["fallback"] = item["backdrop"]; }
+                    }
+                }
+                card = item;
             }
             return d;
         }

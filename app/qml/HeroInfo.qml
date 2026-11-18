@@ -40,9 +40,10 @@ Item {
     transform: Translate { y: info.rise }
 
     onItemChanged: {
-        if (item === m || (!pending && same(item, m))) { m = item; pending = null; fadeOut.stop(); if (fadeIn < 1) fadeInAnim.restart(); return }
+        if (item === m || (!pending && same(item, m))) { m = item; pending = null; gone = false; fadeOut.stop(); if (fadeIn < 1) fadeInAnim.restart(); return }
         if (item && m && fadeIn > 0 && fadeIn < 1) Remote.tally("info cut");      // lab: a title replaced by another while it was still fading in, which is a flicker
         pending = item;
+        gone = !item;
         if (!item) { out(); return }
         preload.source = item.logo || "";
         apply();                                 // (a cached logo is Ready at once, with no change of status to say so)
@@ -64,11 +65,17 @@ Item {
     NumberAnimation { id: fadeOut; target: info; property: "fadeIn"; to: 0; duration: info.outTime; easing.type: Easing.InQuad; onFinished: info.apply() }
     // the pending title once its logo is in (or it has none, or it can't be had): the one on screen goes
     // out, and it comes in when that one has
+    property bool gone: false                // out for having no item to show, not on the way to another
     function apply() {
         if (!pending || fadeOut.running) return;
-        if (preload.source.toString() !== "" && preload.status === Image.Loading) return;
+        if (preload.source.toString() !== "" && preload.status === Image.Loading) {
+            // The one on screen went out for a title that was replaced before it came in, by one whose
+            // logo isn't in yet: it comes back and stays until that one is (the panel stood empty).
+            if (m && !gone && fadeIn < 1 && !fadeInAnim.running) fadeInAnim.restart();
+            return;
+        }
         if (m && fadeIn > 0) { out(); return }
-        m = pending; pending = null; rise = 18;
+        m = pending; pending = null; gone = false; rise = 18;
         Remote.tally("info");
         fadeInAnim.restart();
     }

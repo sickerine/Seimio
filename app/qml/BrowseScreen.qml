@@ -29,9 +29,9 @@ FocusScope {
     onShownChanged: if (shown && account) { account.browse(what); if (stale) take(true) }
     onWhatChanged: if (shown && account) account.browse(what)
 
-    // The rows as they were built: the list they are of (its filters' choices) and the ids of the titles
-    // in them, in the order they show (`builtIds`), as far as rows have been made. Another list is shown
-    // from the top. The same list with other titles changes where it is, and the page is never shown again
+    // The rows as they were built: the list they are of (its filters' choices), the ids of its titles in
+    // the order the rows show them (`order`), and how many of those have their rows (`made`). Another list
+    // is shown from the top. The same list with other titles changes where it is, and the page is never shown again
     // for it:
     //   - more titles after the ones built (a page more, the rest of this one): rows are added;
     //   - a title gone or added, here or on another device: the rows that hold other titles for it are
@@ -47,7 +47,8 @@ FocusScope {
     // first showed), and the rows under the cursor with the first of them: it is never on another title
     // while the rows before it are made.
     property string built: ""
-    property var builtIds: []
+    property var order: []                   // the titles' ids in the order the rows show them, or are to
+    property int made: 0                     // how many of them have their rows
     property bool stale: false
     Connections { target: browse.account; onBrowsingChanged: browse.take() }
     Timer { id: rest; interval: 16; onTriggered: browse.take() }
@@ -56,26 +57,26 @@ FocusScope {
         if (!mine || page.loading && !page.count) return;
         var key = what + "|" + filters.map(function (f) { return f.current }).join(","), ids = account.ids(), per = grid.perRow;
         var fresh = key !== built, want = ids;
-        if (fresh) builtIds = [];
+        if (fresh) { order = []; made = 0 }
         else if (shown && !now) {
             var has = {}, had = {};
             ids.forEach(function (id) { has[id] = true });
-            builtIds.forEach(function (id) { had[id] = true });
-            want = builtIds.filter(function (id) { return has[id] }).concat(ids.filter(function (id) { return !had[id] }));
+            order.forEach(function (id) { had[id] = true });
+            want = order.filter(function (id) { return has[id] }).concat(ids.filter(function (id) { return !had[id] }));
         }
         stale = want.join() !== ids.join();
-        var keep = 0;                                // how far the rows are still what is wanted
-        while (keep < builtIds.length && keep < want.length && builtIds[keep] === want[keep]) keep++;
-        if (!fresh && keep === builtIds.length && keep === want.length) return;
+        var keep = 0;                                // how far the rows made are still what is wanted
+        while (keep < made && keep < want.length && order[keep] === want[keep]) keep++;
+        if (!fresh && keep === made && made === want.length) { order = want; return }
         var rows = fresh ? [] : grid.latest.slice(), gone = -1;
         // a row of the titles wanted in its place: the one there if it holds them already
         function fill(r) {
             var its = want.slice(r * per, r * per + per), row = rows[r];
             if (!row || row.items.map(function (i) { return i.id }).join() !== its.join()) rows[r] = { items: account.itemsOf(its) };
         }
-        if (keep < builtIds.length) {
+        if (keep < made) {
             // one title gone and the rest as they were: its place, for closing up
-            if (want.indexOf(builtIds[keep]) < 0 && builtIds.slice(keep + 1).join() === want.slice(keep, builtIds.length - 1).join()) gone = keep;
+            if (want.indexOf(order[keep]) < 0 && order.slice(keep + 1).join() === want.slice(keep).join()) gone = keep;
             var on = grid.row >= 0 && grid.focusItem ? want.indexOf(grid.focusItem.id) : -1;
             if (on >= 0) { grid.row = Math.floor(on / per); grid.column = on % per }
             for (var r = Math.max(0, grid.row); r < Math.max(0, grid.row) + 3 && r * per < want.length; r++) fill(r);
@@ -86,7 +87,7 @@ FocusScope {
         // under the info, or right under the filters: the rows take their place as they come in
         if (fresh) { grid.row = Math.min(grid.row, 0); grid.column = 0; grid.show(rows, "grid", hero ? 650 : 240) } else grid.replace(rows);
         if (gone >= 0 && shown) grid.closeUp(gone);
-        built = key; builtIds = want.slice(0, to);
+        built = key; order = want; made = to;
         if (to < want.length) rest.restart();
     }
     onRowChanged: if (mine && page.more && !page.loading && row >= grid.rows.length - 3) account.more()

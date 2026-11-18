@@ -103,6 +103,24 @@ Item {
         screen.shown = false; screen.shown = true; wait(100);
         compare(titles().join(","), moved.join(","), "the list's own order when it next comes on");
     }
+    // The same in a list longer than the rows made at once: the order kept was only that of the rows
+    // made in the pass, and the titles after them came back in the list's own.
+    function test_theOrderStaysPastTheRowsMadeAtOnce() {
+        var list = ids(100, 2000);
+        account.show(list); settle();
+        wait(300);
+        screen.row = 10; screen.forceActiveFocus();
+        tryVerify(function () { return screen.focusItem && /^t20\d\d$/.test(screen.focusItem.id) });
+        var on = screen.focusItem.id;
+        var moved = [list[90]].concat(list.slice(0, 90), list.slice(91));     // one near the end to the front: left for later
+        account.show(moved); wait(50);
+        moved.splice(moved.indexOf("t2005"), 1);            // then one near the top removed
+        account.show(moved);
+        list.splice(5, 1);
+        tryVerify(function () { return titles().join(",") === list.join(",") }, 3000, "every row is the list as it was, less the one that left");
+        compare(screen.focusItem.id, on, "and the cursor is on its title");
+        screen.row = -1;
+    }
     // In a long list, a title removed above the cursor (on another device): the rows are made a few at a
     // time from the change down, and the cursor, moved to follow its title, was on the title before it
     // until its rows were reached.

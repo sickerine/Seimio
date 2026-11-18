@@ -25,6 +25,20 @@ Item {
             verify(info.m === again);
             compare(info.fadeIn, 1);
         }
+        // A goes out for B, whose logo is in; before B comes in it is replaced by C, whose logo is still
+        // on its way. The panel stood empty until C's logo arrived: A comes back and stays until then.
+        function test_theTitleOnScreenComesBackWhileItsReplacementLoads() {
+            var a = { name: "A", logo: logo, chips: [], description: "a" };
+            info.item = a; wait(1200);
+            info.item = { name: "B", logo: logo, chips: [], description: "b" };      // (the same picture: in at once)
+            info.item = { name: "C", logo: "http://192.0.2.1/never.png", chips: [], description: "c" };   // an address that doesn't answer
+            wait(60);
+            if (info.labState().preload !== Image.Loading) skip("the address that should not answer did");
+            wait(Theme.settle + 300);
+            compare(info.m, a, "A is still the title on screen");
+            compare(info.fadeIn, 1, "and is fully in while C's logo is fetched");
+            info.item = a; wait(600);
+        }
         // Titles are taken a rest apart (Theme.settle). The swap took longer than the rest, so a title
         // taken was still fading in when the next was: along a show's seasons the logo flickered in and
         // out and never came in whole.
