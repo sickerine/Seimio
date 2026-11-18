@@ -175,7 +175,7 @@ public:
             const QJsonObject i = v.toObject();
             const QString id = i.value("_id").toString();
             library[id] = i.value("state").toObject();
-            if (!i.value("removed").toBool() && i.value("type") == "series" && !listed.contains(id) && list.size() < 40)
+            if (!i.value("removed").toBool() && i.value("type") == "series" && !listed.contains(id))
                 list << QJsonObject { { "id", id }, { "type", "series" }, { "name", i.value("name") }, { "kept", true } };
         }
         docs->cw = QJsonArray(); docs->series = QJsonObject(); docs->library = QJsonObject();
@@ -183,7 +183,12 @@ public:
         if (list.isEmpty()) { done(); return; }
         auto left = std::make_shared<int>(list.size());
         auto out = std::make_shared<QVector<QJsonObject>>(list.size());
-        for (int n = 0; n < list.size(); n++) {
+        // eight metas at a time, however long the library is
+        auto at = std::make_shared<int>(0);
+        auto ask = std::make_shared<std::function<void()>>();
+        *ask = [=] {
+            if (*at >= list.size()) return;
+            const int n = (*at)++;
             const QJsonObject i = list[n].toObject();
             const QString id = i.value("id").toString(), type = i.value("type").toString();
             get((id.startsWith("kitsu:") ? QString(kKitsu) : QString(kCinemeta)) + "/meta/" + type + "/" + id + ".json", [=](const QJsonDocument &d, bool) {
@@ -199,11 +204,13 @@ public:
                                           { "description", m.value("description").toString().left(220) }, { "genres", firstN(m.value("genres").toArray(), 2) },
                                           { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() } };
                 if (type == "series" && !m.isEmpty()) docs->series[id] = show(m, library.value(id));
-                if (--*left) return;
+                if (--*left) { (*ask)(); return; }
                 for (const QJsonObject &o : *out) docs->cw << o;
+                *ask = nullptr;                             // (it holds itself)
                 done();
             });
-        }
+        };
+        for (int k = 0; k < 8; k++) (*ask)();
     }
     // a show's seasons from its meta: watched episodes from Stremio's bitfield, progress on the current one
     static QJsonObject show(const QJsonObject &meta, const QJsonObject &state) {

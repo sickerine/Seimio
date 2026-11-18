@@ -7,6 +7,12 @@ QtObject {
     // LG's remote sends its own code for Back (0x1200003); Escape and Back cover keyboards and the Mac
     function isBack(k) { return k === Qt.Key_Escape || k === Qt.Key_Back || k === 0x1200003 }
     function isOk(k) { return k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Select }
+    // nothing pressed and nothing set moving for a second (the app says so): what only moves by itself
+    // (Ambient) runs on the render thread meanwhile. Whatever starts moving without a key press (rows
+    // that came in, a backdrop crossfading) says so with stir()
+    property bool resting: false
+    signal stirred()
+    function stir() { resting = false; stirred() }
 
     // OK tap or hold (Apple TV's long press). LG's remote doesn't auto-repeat a held key the usual way:
     // it sends release and press pairs about 40 ms apart. So a hold is timed (500 ms from the press),

@@ -17,12 +17,10 @@ FIND_JS='function f(o, t) { if (o && t(o)) return o; for (var i = 0; o && i < o.
 var home = f(win.canvas, function (o) { return o.continueWatching !== undefined && o.catalog !== undefined });'
 # every state renders on the same day, so the calendar and its baselines don't change with the date; the
 # app starts on that day, so nothing rebuilds when it's set (gallery.qml takes no properties)
-DAY='{"today": "2026-11-16"}'
-# the backdrops' slow zoom rests, so a state looks the same whenever it's captured (the quick menu's frost
-# froze a different moment of it each run)
-STILL_JS='(function s(o) { if (o.decodeSize !== undefined) o.still = true; for (var i = 0; i < o.children.length; i++) s(o.children[i]) })(win.canvas || win.contentItem);'
+# ("still": the backdrop's slow zoom and the light around today rest at their start, so a state looks the
+# same whenever it's captured; the quick menu's frost froze a different moment of the zoom each run)
+DAY='{"today": "2026-11-16", "lab": false, "still": true}'
 js() {
-  case "$1" in gallery*) ;; *) printf '%s ' "$STILL_JS";; esac
   case $1 in
     calendar) echo "$FIND_JS home.row = 1; var g = f(home, function (o) { return o.cellWidth !== undefined && o.today !== undefined });"\
                    ' g.showFocus = true; g.select("2026-11-17")' ;;

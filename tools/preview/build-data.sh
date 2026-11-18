@@ -5,7 +5,7 @@ set -euo pipefail
 P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); QT=/opt/homebrew/opt/qt@5
 OUT="$P/imports/Seimio/Data"; TMP=$(mktemp -d); mkdir -p "$OUT"
 INC="-I$QT/include -I$QT/include/QtCore -I$QT/include/QtQml -I$QT/include/QtGui -I$QT/include/QtNetwork -I$REPO/native/src -I$TMP"
-(cd "$REPO/core" && cargo build --release --lib 2>&1 | grep -E "^(error|warning: unused)|^ *--> " || true)
+out=$(cd "$REPO/core" && cargo build --release --lib 2>&1) || { echo "$out" | grep -E "^(error|warning: unused)|^ *--> " | head -20; echo "the core didn't build"; exit 1; }
 for h in catalog franchise live streams tracks skip http core account; do "$QT/bin/moc" $INC "$REPO/native/src/$h.h" -o "$TMP/moc_$h.cpp"; done
 "$QT/bin/moc" $INC "$REPO/native/src/data_plugin.cpp" -o "$TMP/data_plugin.moc"
 clang++ -std=c++17 -O2 -fPIC -shared -o "$OUT/libseimiodata.dylib" "$REPO/native/src/data_plugin.cpp" "$TMP"/moc_*.cpp $INC \

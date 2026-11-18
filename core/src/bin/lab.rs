@@ -34,7 +34,9 @@ fn main() {
     let drain = |ms: u64| {
         let until = Instant::now() + Duration::from_millis(ms);
         while let Ok((kind, json)) = rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
-            eprintln!("{:6} ms  {kind} {}", t0.elapsed().as_millis(), &json[..json.len().min(160)]);
+            // an event by its name only: UserAuthenticated and SessionDeleted carry the account's key
+            let what = if kind == "event" { json.split('"').nth(3).unwrap_or_default() } else { &json[..json.len().min(160)] };
+            eprintln!("{:6} ms  {kind} {what}", t0.elapsed().as_millis());
         }
     };
     drain(300);

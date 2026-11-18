@@ -4,6 +4,9 @@ pragma Singleton
 import QtQuick 2.12
 
 QtObject {
+    // previews: what moves by itself (Ambient) holds at its start, so a capture is the same at any moment
+    property bool still: false
+
     // type: Instrument Sans, bundled as static weights (Qt 5.12 handles variable fonts poorly)
     readonly property FontLoader regular: FontLoader { source: "assets/InstrumentSans-400.ttf" }
     readonly property FontLoader medium: FontLoader { source: "assets/InstrumentSans-500.ttf" }

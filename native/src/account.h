@@ -19,27 +19,26 @@
 
 class Account : public QObject {
     Q_OBJECT
-    Q_PROPERTY(bool ready READ ready NOTIFY changed)            // the stored account is loaded
+    Q_PROPERTY(bool ready READ ready NOTIFY changed)            // the stored account is loaded and read
     Q_PROPERTY(bool signedIn READ signedIn NOTIFY changed)
     Q_PROPERTY(QString email READ email NOTIFY changed)
     Q_PROPERTY(QString avatar READ avatar NOTIFY changed)
     Q_PROPERTY(QVariantMap link READ link NOTIFY linkChanged)
     Q_PROPERTY(int libraryRevision READ libraryRevision NOTIFY libraryChanged)   // read with inLibrary() or watched(), so a binding follows
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
-    //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
+    //   browsing   { what, filters: [{ key, options: [names], current }], count, stamp (of which titles, in order), more, loading }
     //   items(from, n)   that many of its titles, as the screens show a title
     Q_PROPERTY(QVariantMap browsing READ browsing NOTIFY browsingChanged)
 public:
     explicit Account(QObject *parent = nullptr) : QObject(parent) {
         Core *core = Core::instance();
-        connect(core, &Core::readyChanged, this, [this] { refresh(); sync(); });
+        connect(core, &Core::readyChanged, this, &Account::refresh);
         connect(core, &Core::changed, this, [this](const QStringList &models) {
             if (models.contains("ctx")) refresh();
             if (models.contains("link")) linked();
             if (models.contains("continue_watching")) emit watchingChanged();
             if (models.contains(m_browse == "library" ? "library" : "discover") && !m_browse.isEmpty()) browsed();
         });
-        connect(core, &Core::event, this, [this](const QString &name, const QJsonObject &) { if (name == "UserAuthenticated") sync(); });
         // an unapproved code answers "not yet" until it is approved; a code left on screen is renewed
         m_poll.setInterval(3000);
         connect(&m_poll, &QTimer::timeout, this, [this] { if (m_link.value("state") == "waiting") Core::instance()->dispatch("link", Core::action("Link", Core::action("ReadData"))); });
@@ -48,7 +47,7 @@ public:
         core->start();
         if (core->ready()) refresh();
     }
-    bool ready() const { return Core::instance()->ready(); }
+    bool ready() const { return m_read; }
     bool signedIn() const { return m_signedIn; }
     QString email() const { return m_email; }
     QString avatar() const { return m_avatar; }
@@ -133,23 +132,38 @@ private:
         if (!m_reporting || duration <= 0) return;
         Core::instance()->dispatch("player", Core::action("Player", Core::action(action, QJsonObject { { "time", qint64(position) }, { "duration", qint64(duration) }, { "device", "tv" } })));
     }
-    // the account's addons and library as Stremio has them now (other devices change them)
+    // the account's addons and library as Stremio has them now (other devices change them): once it is
+    // known to be signed in, at the start and after a sign-in
     void sync() {
-        if (!m_signedIn || Http::replaying()) return;
+        if (Http::replaying()) return;
         for (const char *what : { "PullAddonsFromAPI", "SyncLibraryWithAPI" }) ctx(what);
     }
+    // The account and the library's ids as the core has them now, read on a worker (the library is 70 KB
+    // of JSON for 125 titles, and the core says it changed at every sync and every push)
+    struct Read { bool signedIn = false; QString email, avatar; QSet<QString> library, watched; };
     void refresh() {
-        const QJsonObject a = Core::view("account").object();
-        m_signedIn = a.value("signedIn").toBool(); m_email = a.value("email").toString(); m_avatar = a.value("avatar").toString();
-        QSet<QString> library, watched;
-        for (const QJsonValue &v : Core::view("library").array()) {
-            const QJsonObject i = v.toObject();
-            if (!i.value("removed").toBool()) library << i.value("_id").toString();
-            if (i.value("state").toObject().value("timesWatched").toInt() > 0) watched << i.value("_id").toString();
-        }
-        if (m_signedIn && m_poll.isActive()) cancelSignIn();
-        emit changed();
-        if (library != m_library || watched != m_watched) { m_library = library; m_watched = watched; m_revision++; emit libraryChanged(); }
+        const int ticket = ++m_refresh;
+        auto out = std::make_shared<Read>();
+        QThread *worker = QThread::create([out] {
+            const QJsonObject a = Core::view("account").object();
+            out->signedIn = a.value("signedIn").toBool(); out->email = a.value("email").toString(); out->avatar = a.value("avatar").toString();
+            for (const QJsonValue &v : Core::view("library").array()) {
+                const QJsonObject i = v.toObject();
+                if (!i.value("removed").toBool()) out->library << i.value("_id").toString();
+                if (i.value("state").toObject().value("timesWatched").toInt() > 0) out->watched << i.value("_id").toString();
+            }
+        });
+        connect(worker, &QThread::finished, this, [this, out, ticket] {
+            if (ticket != m_refresh) return;                // a newer read is on its way
+            const bool was = m_signedIn;
+            m_signedIn = out->signedIn; m_email = out->email; m_avatar = out->avatar; m_read = true;
+            if (m_signedIn && m_poll.isActive()) cancelSignIn();
+            emit changed();
+            if (out->library != m_library || out->watched != m_watched) { m_library = out->library; m_watched = out->watched; m_revision++; emit libraryChanged(); }
+            if (m_signedIn && !was) sync();
+        });
+        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+        worker->start();
     }
     void linked() {
         const QJsonObject l = Core::state("link").object(), code = l.value("code").toObject(), data = l.value("data").toObject();
@@ -194,7 +208,8 @@ private:
                     { "backdrop", i.value("backdrop").toString() }, { "logo", i.value("logo").toString() }, { "description", i.value("description").toString().left(220) },
                     { "chips", chips }, { "rating", i.value("rating").toString() }, { "episode", QString() }, { "progress", -1 } };
             }
-            out->first = QVariantMap { { "what", what }, { "filters", filters }, { "count", out->second.size() },
+            QString ids; for (const QVariant &v : out->second) ids += v.toMap().value("id").toString() + ',';
+            out->first = QVariantMap { { "what", what }, { "filters", filters }, { "count", out->second.size() }, { "stamp", qHash(ids) },
                                        { "more", page.value("more").toBool() }, { "loading", page.value("loading").toBool() } };
         });
         connect(worker, &QThread::finished, this, [this, out, ticket] {
@@ -214,6 +229,7 @@ private:
     QString m_email, m_avatar;
     QVariantMap m_link;
     QSet<QString> m_library, m_watched;                    // ids in the library; ids watched (Stremio's `timesWatched`)
-    int m_revision = 0;
+    int m_revision = 0, m_refresh = 0;
+    bool m_read = false;
     QTimer m_poll, m_renew;
 };

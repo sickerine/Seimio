@@ -1,6 +1,5 @@
-// A card for a title or an episode: portrait poster or landscape tile. Rounded corners, the border,
-// the dimming and the sheen are all drawn in one shader over the art, so nothing separate sits on the
-// card to drift out of line when it tilts. `focused` lifts it with a slight overshoot, tilts it toward
+// A card for a title or an episode: portrait poster or landscape tile. Its picture, with the rounded
+// corners, the border, the dimming and the sheen, is CardArt. `focused` lifts it with a slight overshoot, tilts it toward
 // `moveDir`, sweeps a sheen across, drops a shadow and fades the title in underneath. Landscape cards
 // carry an episode chip and a progress bar that fills in when the card appears.
 import QtQuick 2.12
@@ -23,7 +22,7 @@ Item {
     property int moveDir: 0             // -1 left, 1 right: the tilt leans into the move
     property bool showTitle: true
     property real radius: 16
-    readonly property bool artReady: img.status === Image.Ready
+    readonly property bool artReady: picture.artReady
     // darkens the bottom half for text over the art; on by default when there's a chip or progress bar
     property real shade: progress >= 0 || episode ? 0.7 : 0
     // children go on the card face, so they lift and tilt with it (a calendar day's date, for example)
@@ -56,88 +55,16 @@ Item {
         anchors.fill: parent
         scale: card.lift
         transform: Rotation { origin.x: card.width / 2; origin.y: card.height / 2; axis { x: 0; y: 1; z: 0 } angle: card.tilt }
-        Image {
-            id: img; anchors.fill: parent; visible: false
-            // the art, or the fallback once the art has failed to load
-            property bool failed: false
-            source: (failed || !card.art) && card.fallback ? card.fallback : card.art
-            // ArtCache holds it decoded from here on, so a card that comes back to it finds it ready; art
-            // that loads although it is held ready there means the two decode differently
-            onSourceChanged: ArtCache.hold(source, sourceSize.width, sourceSize.height)
-            onStatusChanged: {
-                if (status === Image.Error && !failed) failed = true;
-                else if (status === Image.Ready) ArtCache.hold(source, sourceSize.width, sourceSize.height);
-                else if (status === Image.Loading) {
-                    ArtCache.loads++;
-                    if (ArtCache.ready(source, sourceSize.width, sourceSize.height)) { ArtCache.reloads++; console.warn("card art decoded again though it is held: " + source) }
-                }
-            }
-            Connections { target: card; onArtChanged: img.failed = false }
-            asynchronous: true; fillMode: Image.PreserveAspectCrop
-            sourceSize: Theme.cardDecodeSize(card.width, card.height)
-        }
-        ShaderEffect {
-            // drawn 3px larger than the card: the rounded edge is antialiased inside this rectangle,
-            // so no hard rectangle edge is left to step when the card tilts
-            anchors.fill: parent; anchors.margins: -3
-            property var tex: img
-            // the art covers the card and is cropped to its shape (the texture is the whole image, so
-            // the crop happens here: uv scale per axis from the image's and the card's aspect ratios)
-            readonly property real imageAspect: img.implicitHeight > 0 ? img.implicitWidth / img.implicitHeight : 1
-            readonly property real cardAspect: card.width / Math.max(1, card.height)
-            property size crop: imageAspect > cardAspect ? Qt.size(cardAspect / imageAspect, 1) : Qt.size(1, imageAspect / cardAspect)
-            property real pad: 3
-            property size box: Qt.size(width, height)
-            property real radius: card.radius
-            // sheen: a soft diagonal band of light that crosses the card when it takes focus; computed
-            // per pixel here so the band can enter and leave the card cleanly
-            property real sheen: card.sheen
-            // the border and the light along the top edge are drawn here too, from the same rounded
-            // shape, so nothing separate can drift out of line while the card tilts
-            property real focusAmt: card.focused ? 1 : 0
-            // darkening, also in the shader so no separate layer sits on the tilting card:
-            // dim for watched or upcoming episodes, and a bottom shade under the chip and progress bar
-            property real dim: Math.max(card.fade, card.upcoming ? 0.55 : (card.watched ? 0.25 : 0))
-            property real bottomShade: card.caption !== "" ? Math.max(card.shade, 0.85) : card.shade
-            // where the shade starts, as a fraction of the height: higher for a caption over the art
-            property real shadeTop: card.caption !== "" ? 0.25 : 0.5
-            Behavior on focusAmt { NumberAnimation { duration: 220 } }
-            // fade the art in once decoded instead of popping
-            opacity: img.status === Image.Ready ? 1 : 0      // holds: only ever fades in, once decoded
-            Behavior on opacity { NumberAnimation { duration: 260 } }
-            fragmentShader: "
-                varying highp vec2 qt_TexCoord0;
-                uniform sampler2D tex;
-                uniform highp vec2 crop;
-                uniform highp vec2 box;
-                uniform highp float pad;
-                uniform highp float radius;
-                uniform highp float sheen;
-                uniform lowp float focusAmt;
-                uniform lowp float dim;
-                uniform lowp float bottomShade;
-                uniform highp float shadeTop;
-                uniform lowp float qt_Opacity;
-                void main() {
-                    highp vec2 size = box - vec2(2.0 * pad);
-                    highp vec2 p = qt_TexCoord0 * box - vec2(pad);        // card pixels; outside the card near the rim
-                    highp vec2 q = abs(p - size * 0.5) - (size * 0.5 - vec2(radius));
-                    highp float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
-                    lowp vec4 c = texture2D(tex, clamp(0.5 + (p / size - 0.5) * crop, 0.0, 1.0));
-                    // band position along a diagonal in pixels, so it has the same slant on any card shape
-                    highp float along = (p.x + p.y * 0.35) / (size.x + size.y * 0.35);
-                    highp float b = (along - sheen) / 0.16;
-                    c.rgb *= (1.0 - dim) * (1.0 - bottomShade * smoothstep(shadeTop, 1.0, p.y / size.y));
-                    c.rgb += vec3(0.13 * exp(-b * b)) * c.a;
-                    // border: a 1.5px ring just inside the edge, brighter when focused
-                    highp float ring = smoothstep(-2.0, -0.5, d);
-                    c.rgb = mix(c.rgb, vec3(1.0), ring * (0.10 + 0.12 * focusAmt));
-                    // light along the top edge when focused, fading toward the sides
-                    highp float topBand = smoothstep(-2.5, -0.5, d) * (1.0 - smoothstep(0.0, 6.0, p.y));
-                    highp float mid = 1.0 - abs(p.x / size.x - 0.5) * 2.0;
-                    c.rgb = mix(c.rgb, vec3(1.0), topBand * mid * 0.55 * focusAmt);
-                    gl_FragColor = c * clamp(0.5 - d, 0.0, 1.0) * qt_Opacity;
-                }"
+        CardArt {
+            id: picture
+            anchors.fill: parent
+            art: card.art; fallback: card.fallback; title: card.title; radius: card.radius
+            focused: card.focused; sheen: card.sheen
+            // dim for watched or upcoming episodes, and a bottom shade under the chip and progress bar,
+            // starting higher for a caption over the art
+            dim: Math.max(card.fade, card.upcoming ? 0.55 : (card.watched ? 0.25 : 0))
+            shade: card.caption !== "" ? Math.max(card.shade, 0.85) : card.shade
+            shadeTop: card.caption !== "" ? 0.25 : 0.5
         }
         // watched: dim slightly; upcoming: dim more and show the air date
         Rectangle {
@@ -150,22 +77,6 @@ Item {
             visible: card.upcoming !== ""
             anchors.centerIn: parent; height: 40; radius: 20; width: upText.implicitWidth + 32; color: "#33ffffff"
             Text { id: upText; anchors.centerIn: parent; text: card.upcoming; color: "white"; font.family: Theme.face; font.pixelSize: 20; font.weight: Font.DemiBold }
-        }
-        // a placeholder of the card's exact shape while the art decodes, so nothing shifts
-        // (also the whole card when it has no art, so it brightens when focused)
-        Rectangle {
-            anchors.fill: parent; radius: card.radius; visible: img.status !== Image.Ready
-            color: card.focused ? "#40ffffff" : "#1affffff"
-            border.width: card.focused ? 2 : 0; border.color: "#59ffffff"
-            Behavior on color { ColorAnimation { duration: Theme.fast } }
-            // a title with no art at all carries its name (never while art is on its way: it would be a
-            // name that a picture then replaces)
-            Text {
-                visible: card.title !== "" && (card.art === "" || (img.status === Image.Error && img.failed))
-                anchors.centerIn: parent; width: parent.width - 36
-                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; maximumLineCount: 4; elide: Text.ElideRight
-                text: card.title; color: Theme.inkSoft; font.family: Theme.face; font.pixelSize: 22; font.weight: Font.DemiBold
-            }
         }
         Text {
             visible: card.caption !== ""

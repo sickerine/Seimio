@@ -79,15 +79,35 @@ WebOSWindow {
     // ahead waits until nothing has moved for a second (`still`: any key press, whoever takes it, and a
     // backdrop crossfade start it over), and is built only if its title is still the selection. The latest
     // one asked for is the one that waits.
+    //
+    // The quiet takes three things, one at a time and a few frames apart, so no two make one long stall:
+    // the Anime tab (once), the selection's page, and last the JavaScript engine's garbage (the other two
+    // leave some). A collection stops the GUI thread for 22 to 35 ms on the TV, and left to the engine it
+    // came in the middle of a move; collected at rest, the engine has room for the next moves. At rest
+    // what moves by itself is on the render thread (Ambient), so none of this costs a frame.
     property var ahead: null                               // { source, item, show }
-    function buildAhead(source, item, show) { ahead = { source: source, item: item, show: show }; if (!still.running) builtAhead() }
-    // one piece of work a quiet second: the selection's page, then (once) the Anime tab
-    function builtAhead() {
-        var a = ahead; ahead = null;
-        if (a && onHome && selected(a.source, a.item)) { if (episodesIn(a.show) > 1) showPage.load(a.item, a.show); if (!anime.rows.length) still.restart() }   // (a film has no page to build)
-        else if (onHome && started) anime.warm();
+    property bool littered: false                          // something has moved since the last collection
+    function moved() { littered = true; quiet.stop(); still.restart() }
+    Connections { target: Remote; onStirred: app.moved() }
+    function buildAhead(source, item, show) { ahead = { source: source, item: item, show: show }; if (!still.running && !quiet.running) quietWork() }
+    function quietWork() {
+        var a = ahead;
+        // the Anime tab first: shown unbuilt, its rows are a 180 ms stall on the way in
+        if (onHome && started && anime.warm()) { }
+        else if (a && onHome && selected(a.source, a.item) && episodesIn(a.show) > 1) { ahead = null; showPage.load(a.item, a.show) }      // (a film has no page to build)
+        else {
+            ahead = null;
+            // not over a video: its overlay moves on its own clock
+            if (littered && !watching) { littered = false; gc() }
+            return;
+        }
+        littered = true; quiet.restart();
     }
-    Timer { id: still; interval: 1000; onTriggered: app.builtAhead() }
+    // the season came in after the quiet began: the Anime tab doesn't wait for the next one
+    Connections { target: catalog; onSeasonLoaded: if (!still.running && !quiet.running) app.quietWork() }
+    // (the work a few frames after the rest begins: what moves by itself has gone to the render thread by then)
+    Timer { id: still; interval: 1000; onTriggered: { Remote.resting = !probe.variant.noRest; quiet.restart() } }
+    Timer { id: quiet; interval: 64; onTriggered: app.quietWork() }
     // Home's own start (its art decodes for about 5 s after launch) is not idleness: the Anime tab waits it out
     property bool started: false
     Timer { interval: 2500; running: !app.warming; onTriggered: { app.started = true; if (!still.running) still.start() } }
@@ -175,7 +195,9 @@ WebOSWindow {
     // The account's watch state changed (a title played, another device, a sign-in): Home takes it again,
     // but never under the video (it would rebuild rows behind the film); the page in hand follows.
     property bool watchingStale: false
-    Connections { target: account; onWatchingChanged: if (app.layer === "player") app.watchingStale = true; else catalog.reload() }
+    // (a title added to the library changes the calendar though Continue Watching stays as it was)
+    function accountChanged() { if (layer === "player") watchingStale = true; else catalog.reload() }
+    Connections { target: account; onWatchingChanged: app.accountChanged(); onLibraryChanged: app.accountChanged() }
     property string franchiseRefresh: ""                   // the franchise asked for again, for the page in hand
     function refreshHeld() {
         shows = ({}); franchises = ({});
@@ -325,11 +347,11 @@ WebOSWindow {
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
     // compile before anyone opens them
     property bool warming: true
-    Timer { running: catalog.continueWatching.length > 0; interval: 600; onTriggered: app.warming = false }
+    Timer { running: catalog.ready; interval: 600; onTriggered: app.warming = false }      // (an account with nothing watched has Home's data too)
 
     // the data, held natively (Seimio.Data); a show's seasons come over to QML once and are kept, so the
     // show page sees the same object again and needn't rebuild
-    // everything comes live from the services; `base` is the Stremio account's stand-in (Live, app/stremio/)
+    // everything comes live from the services, and the account from Stremio's core (Account)
     Catalog { id: catalog; onLoaded: app.refreshHeld() }
     Account { id: account }
     property var shows: ({})
@@ -399,7 +421,7 @@ WebOSWindow {
             if (app.animeTab) anime.say(reason); else if (app.onHome && app.focusItem && app.focusItem.id === sourceId) app.openPage();
         }
     }
-    WindowTools { id: tools; onKeyPressed: still.restart() }
+    WindowTools { id: tools; onKeyPressed: Remote.stir() }
     // keys out of git: app/qml/Secrets.qml (gitignored)
     Loader { id: secrets; source: "Secrets.qml" }
     Tracks { id: trackChoice }
@@ -410,8 +432,11 @@ WebOSWindow {
         // the lab's tours run without the AI pick (LabProbe "noAi")
         openrouter: probe.variant.noAi || !secrets.item ? "" : secrets.item.openrouter
     }
+    property bool lab: true                                // previews turn the lab off (LabProbe.on)
+    property bool still: false                             // and hold what moves by itself (Theme.still)
+    Binding { target: Theme; property: "still"; value: app.still }
     LabProbe {
-        id: probe; window: app
+        id: probe; window: app; on: app.lab
         stateOf: function () {
             function id(x) { return x ? x.id || x.name || "?" : null }
             return { layer: app.layer, row: home.row, dayOpen: home.dayOpen, scrolled: home.scrolled,
@@ -463,7 +488,7 @@ WebOSWindow {
                 // parallax: the backdrop drifts a little against moves along a row
                 pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
                 Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
-                onCrossfadeStarted: { still.restart(); probe.act("hero crossfade") }   // a crossfade is movement too
+                onCrossfadeStarted: { Remote.stir(); probe.act("hero crossfade") }   // a crossfade is movement too
                 covered: backdropFrost.covering
             }
             // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
@@ -733,6 +758,7 @@ WebOSWindow {
             else if (Remote.isBack(event.key) && app.playMenu) { event.accepted = true; app.playMenu = false }
             else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; app.leavePlayer() }
             else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.back() }
+            else if (Remote.isBack(event.key) && app.layer === "signin") event.accepted = true                       // nowhere to go back to: signed out, the app is this screen
             else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; app.tab = 0; app.layer = "home" }   // out of the search
             else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }

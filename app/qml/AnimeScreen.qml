@@ -71,7 +71,12 @@ FocusScope {
         }
         return out;
     }
-    function warm() { if (!shown && !rows.length && catalog && catalog.seasonReady) grid.show(build(), view) }
+    // built ahead of its first show; true when it had rows to build
+    function warm() {
+        if (shown || rows.length || !catalog || !catalog.seasonReady) return false;
+        grid.show(build(), view);
+        return true;
+    }
     property bool stale: false                       // a season came in while the tab was away
     // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
     // the view they're laid out for (CardGrid.show)

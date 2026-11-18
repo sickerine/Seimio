@@ -16,6 +16,7 @@ FocusScope {
     property string what: ""
     readonly property bool hero: what !== "library"
     property alias row: grid.row             // -1 the filters, 0.. the rows
+    readonly property alias rows: grid.rows
     readonly property bool scrolled: grid.scrolled
     readonly property var focusItem: grid.focusItem
     signal activated(var item)
@@ -27,19 +28,28 @@ FocusScope {
     onShownChanged: if (shown && account) account.browse(what)
     onWhatChanged: if (shown && account) account.browse(what)
 
-    // The rows as they were built, and the list they are of (its filters' choices): the same list with
-    // more titles adds rows where they are; another list replaces them from its top.
+    // The rows as they were built: the list they are of (its filters' choices), how many titles and which
+    // (`stamp`). The same titles again change nothing; the same list with more after the ones built (a
+    // page more, or the rest of this one) adds rows where they are; anything else (another list, a title
+    // gone, another order) replaces them from the top. Three rows are built at a time, a frame apart:
+    // fifty titles at once was a 60 to 70 ms stall as a tab first showed.
     property string built: ""
     property int builtCount: 0
+    property var builtStamp
+    property string builtLast: ""
     Connections { target: browse.account; onBrowsingChanged: browse.take() }
+    Timer { id: rest; interval: 16; onTriggered: browse.take() }
     function take() {
         if (!mine || page.loading && !page.count) return;
-        var key = what + "|" + filters.map(function (f) { return f.current }).join(","), from = key === built ? builtCount : 0, rows = from ? grid.rows.slice() : [];
-        if (key === built && page.count === builtCount) return;
-        for (var i = from - from % grid.perRow; i < page.count; i += grid.perRow) rows[i / grid.perRow] = { items: account.items(i, grid.perRow) };
+        var key = what + "|" + filters.map(function (f) { return f.current }).join(",");
+        if (key === built && page.stamp === builtStamp && builtCount === page.count) return;
+        var more = key === built && page.count > builtCount && builtCount > 0 && (account.items(builtCount - 1, 1)[0] || {}).id === builtLast;
+        var from = more ? builtCount - builtCount % grid.perRow : 0, to = Math.min(page.count, from + 3 * grid.perRow), rows = more ? grid.latest.slice() : [];
+        for (var i = from; i < to; i += grid.perRow) rows[i / grid.perRow] = { items: account.items(i, grid.perRow) };
         // under the info, or right under the filters: the rows take their place as they come in
-        if (from) grid.replace(rows); else { grid.row = Math.min(grid.row, 0); grid.column = 0; grid.show(rows, "grid", hero ? 650 : 240) }
-        built = key; builtCount = page.count;
+        if (more) grid.replace(rows); else { grid.row = Math.min(grid.row, 0); grid.column = 0; grid.show(rows, "grid", hero ? 650 : 240) }
+        built = key; builtCount = to; builtStamp = page.stamp; builtLast = to ? account.items(to - 1, 1)[0].id : "";
+        if (to < page.count) rest.restart();
     }
     onRowChanged: if (mine && page.more && !page.loading && row >= grid.rows.length - 3) account.more()
 

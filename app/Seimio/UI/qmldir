@@ -21,6 +21,8 @@ SegmentedBar 1.0 SegmentedBar.qml
 FilterBar 1.0 FilterBar.qml
 SearchField 1.0 SearchField.qml
 BarRow 1.0 BarRow.qml
+Ambient 1.0 Ambient.qml
+CardArt 1.0 CardArt.qml
 MediaCard 1.0 MediaCard.qml
 Avatar 1.0 Avatar.qml
 MonthGrid 1.0 MonthGrid.qml

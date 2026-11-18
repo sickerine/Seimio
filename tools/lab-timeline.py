@@ -14,7 +14,7 @@ def lab_log(since):
     out = []
     for f in sorted(os.listdir(REPORTS), key=lambda f: os.path.getmtime(os.path.join(REPORTS, f))):
         path = os.path.join(REPORTS, f)
-        if "design" not in f or os.path.getmtime(path) < since: continue
+        if not f.endswith("-log.json") or os.path.getmtime(path) < since: continue
         try: out += json.load(open(path)).get("log", [])
         except ValueError: pass
     return out

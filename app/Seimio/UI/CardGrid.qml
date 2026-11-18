@@ -7,7 +7,7 @@
 //   row    -1 above the rows (the owner's controls have the remote), 0.. the rows; `scrolled` past the first
 //   show(rows, layout, top)   on screen, the old rows fade out and the new take their place and rise in,
 //          as one piece, at `top` if given (`rowTop` from then on); `replace(rows)` swaps them where they
-//          are (a countdown ticking, a page more)
+//          are (a countdown ticking, a page more), `latest` being the rows to start from
 // Up and Down walk the rows; Up from the first hands the remote back (`row` -1). `held`: the owner is up,
 // so every card's art is kept decoded ahead (ArtCache), and a row scrolled to has its art already.
 import QtQuick 2.12
@@ -35,9 +35,12 @@ FocusScope {
     property int pendingTop: rowTop
     function show(next, nextLayout, top) {
         pending = next; pendingLayout = nextLayout || "grid"; pendingTop = top === undefined ? rowTop : top;
+        if (visible) Remote.stir();
         if (visible && rows.length) swap.restart(); else apply();
     }
-    function replace(next) { rows = next; if (row >= rows.length) row = rows.length - 1 }
+    // the rows it shows, or the ones on their way in while the old ones fade out: what `replace` replaces
+    readonly property var latest: pending || rows
+    function replace(next) { if (pending) pending = next; else { rows = next; if (row >= rows.length) row = rows.length - 1 } }
     // new rows reach the row slots a slot a frame, top first (`staggering`): handing every slot its
     // cards at once (28 cards resized and rebound) stalled ~90 ms; they arrive while the list fades in
     property bool staggering: false
@@ -73,10 +76,10 @@ FocusScope {
 
     SequentialAnimation {
         id: swap
-        NumberAnimation { target: list; property: "opacity"; to: 0; duration: 140; easing.type: Easing.InQuad }
+        NumberAnimation { target: list; property: "shown"; to: 0; duration: 140; easing.type: Easing.InQuad }
         ScriptAction { script: { grid.apply(); list.rise = 28 } }
         ParallelAnimation {
-            NumberAnimation { target: list; property: "opacity"; to: 1; duration: 320; easing.type: Theme.ease }
+            NumberAnimation { target: list; property: "shown"; to: 1; duration: 320; easing.type: Theme.ease }
             NumberAnimation { target: list; property: "rise"; to: 0; duration: 420; easing.type: Theme.ease }
         }
     }
@@ -85,10 +88,12 @@ FocusScope {
         property real rise: 0
         transform: Translate { y: list.rise }
         width: grid.width; height: grid.height
+        // how much of it shows: the swap's fade and the dimming together. (Dimmed through a layer of its
+        // own, as one piece, the screen-sized texture was made anew each time a list loaded: a 13 ms frame.)
+        property real shown: 1
         property real dim: grid.dim
         Behavior on dim { NumberAnimation { duration: Theme.base } }
-        layer.enabled: dim < 1                  // faded as one piece, only while it is
-        layer.effect: ShaderEffect { property real dim: list.dim; fragmentShader: "varying highp vec2 qt_TexCoord0; uniform sampler2D source; uniform lowp float dim; uniform lowp float qt_Opacity; void main() { gl_FragColor = texture2D(source, qt_TexCoord0) * dim * qt_Opacity; }" }
+        opacity: shown * dim
         readonly property int stride: 430
         // once the controls have gone up, the focused row sits just under them with two more below it,
         // and the rows above have gone

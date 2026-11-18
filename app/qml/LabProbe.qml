@@ -8,6 +8,10 @@
 // per-frame render loop timing (GUI-thread sync vs render thread) to each report, along with stamped
 // key presses, late frames and GUI-thread stalls; a string instead of true sets other Qt log rules
 // (e.g. "qt.scenegraph.time.texture.debug=true"). { "bench": true } times card creation on the TV.
+// With timing, { "sample": true } also logs what the GUI thread is running, every 4 ms while it runs
+// (tools/lab-stacks.py reads each stall's); { "sample": "render" } the render thread as well ("rstack" lines). { "gc": true } runs a full JS collection before each report and reports how long it took (gcMs);
+// { "reportEvery": ms } changes how often it reports. { "noRest": true } keeps what moves by itself on the
+// GUI thread at rest too (Ambient), to compare.
 import QtQuick 2.12
 import Seimio.Native 1.0
 import Seimio.UI 1.0
@@ -33,7 +37,7 @@ Item {
     FrameStats { id: frames; phase: probe.phase; heartbeat: Object.keys(probe.variant).length > 0 }
     LunaClient { id: luna; property var log: []; onResponse: log.push(payload.slice(0, 400)) }
     LogTap { id: tap }
-    onVariantChanged: if (variant.timing) tap.start(probe.variant.timing === true ? "qt.scenegraph.time.renderloop.debug=true" : probe.variant.timing)
+    onVariantChanged: if (variant.timing) { tap.start(probe.variant.timing === true ? "qt.scenegraph.time.renderloop.debug=true" : probe.variant.timing); if (variant.sample) tap.sample(variant.sample === "render" ? probe.window : null) }
 
     // captures of the TV's screen at variant.captureAt ms after each call to captures()
     function capture(path) {
@@ -77,24 +81,31 @@ Item {
         }
     }
 
+    // off, it neither reports nor takes switches: a preview on the Mac is not the TV (rendered during a
+    // tour, it took the tour's switches and added its own reports to the tour's)
+    property bool on: true
     Timer {
-        running: true; interval: 3000; repeat: true
+        running: probe.on; interval: probe.variant.reportEvery || 3000; repeat: true
         onTriggered: {
-            var out = { latency: lat.stats(), rssMb: frames.rssMb(), variant: probe.variant, luna: luna.log, bench: probe.benchOut, state: probe.stateOf ? probe.stateOf() : null };
+            // { "gc": true }: how long a full JS collection takes now (it stops the GUI thread, and grows with what's alive)
+            var gcMs = -1; if (probe.variant.gc) { var g = Date.now(); gc(); gcMs = Date.now() - g }
+            var out = { gcMs: gcMs, latency: lat.stats(), rssMb: frames.rssMb(), variant: probe.variant, luna: luna.log, bench: probe.benchOut, state: probe.stateOf ? probe.stateOf() : null };
             luna.log = [];
             var fs = frames.take();
             for (var q in fs) out["rt " + q] = fs[q];
-            if (probe.variant.timing) out.log = tap.take().map(function (l) { return probe.phase + " | " + l }).slice(-600);
             // what went wrong since the last report (LogTap.watch): always sent, so a handler that threw on
             // the TV shows up in the reports (tools/lab-errors.py, and a tour fails on any)
             var errors = tap.errors();
             if (errors.length) out.errors = errors;
             var x = new XMLHttpRequest(); x.open("POST", probe.server + "/design"); x.send(JSON.stringify(out));
+            // the log goes apart, from its own thread (LogTap.send): it is 85 KB every 3 s with timing on
+            tap.send(probe.server + "/log");
         }
     }
     Component.onCompleted: {
         tap.watch();
         lat.attach(window); frames.attach(window); luna.init("");
+        if (!on) return;
         var x = new XMLHttpRequest();
         x.open("GET", server + "/variant.json");
         x.onreadystatechange = function () { if (x.readyState === 4 && x.status === 200) { try { probe.variant = JSON.parse(x.responseText) } catch (e) {} } };

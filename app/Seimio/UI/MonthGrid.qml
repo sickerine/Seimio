@@ -150,9 +150,10 @@ FocusScope {
         ScriptAction { script: { grid.firstWeek = -1; grid.month = grid.nextMonth; grid.fade = 1; grid.turned() } }
     }
 
-    // a light running around today's day
-    property real sweep: 0
-    NumberAnimation on sweep { from: 0; to: 6.2832; duration: 3600; loops: Animation.Infinite; running: grid.visible }
+    // a light running around today's day (the day in the month on screen that is today says which it is)
+    property Item todayLight: null
+    function light(effect, on) { if (on) todayLight = effect; else if (todayLight === effect) todayLight = null }
+    property Ambient sweep: Ambient { effect: grid.todayLight; uniform: "turn"; period: 3600; running: grid.visible }
 
     Item {
         id: content
@@ -242,6 +243,10 @@ FocusScope {
                 Item {
                     id: grow
                     anchors.fill: parent
+                    // (it stays on at no opacity, in the weeks a peek leaves out: hidden, a day drew its
+                    // texture and sent its art to the GPU only as the month opened, 28 days in one 134 ms
+                    // frame, where at no opacity they do it one by one as the art comes in at launch. The
+                    // price is that all 42 are drawn again in the frame Home comes back in, 13 to 15 ms.)
                     Item {
                         id: face
                         anchors.fill: parent
@@ -276,7 +281,7 @@ FocusScope {
                                 // no cards (creating them per month cost about 100 ms on the TV)
                                 Repeater {
                                     model: 2
-                                    MediaCard {
+                                    CardArt {
                                         visible: index < cell.count - 1
                                         readonly property real inset: (index + 1) * cell.width * 0.05
                                         z: -1 - index
@@ -286,19 +291,14 @@ FocusScope {
                                         Behavior on y { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
                                         radius: 12
                                         art: index ? cell.art2 : cell.art1
-                                        showTitle: false
-                                        fade: 0.4 + index * 0.25
+                                        dim: 0.4 + index * 0.25
                                     }
                                 }
                                 // the day's first release
-                                MediaCard {
-                                    id: top
+                                Item {
                                     visible: cell.count > 0
                                     y: cell.stackRoom; width: cell.width; height: cell.height - cell.stackRoom
-                                    radius: 14
-                                    art: cell.art0
-                                    showTitle: false
-                                    shade: 0.8
+                                    CardArt { anchors.fill: parent; radius: 14; art: cell.art0; shade: 0.8 }
                                     Text {
                                         x: 12; y: parent.height - height - 10; width: parent.width - 70
                                         elide: Text.ElideRight
@@ -334,18 +334,23 @@ FocusScope {
 
                         // today: a light runs around the top card
                         ShaderEffect {
+                            id: ring
                             visible: cell.isToday
                             x: -2; y: cell.stackRoom - 2; width: cell.width + 4; height: cell.height - cell.stackRoom + 4
                             property size box: Qt.size(width, height)
                             property real radius: 16
-                            property real angle: grid.sweep
+                            property real turn: 0                 // once around, 0 to 1 (grid.sweep)
+                            readonly property bool lit: cell.isToday
+                            onLitChanged: grid.light(ring, lit)
+                            Component.onCompleted: if (lit) grid.light(ring, true)
                             fragmentShader: "
                                 varying highp vec2 qt_TexCoord0;
                                 uniform highp vec2 box;
                                 uniform highp float radius;
-                                uniform highp float angle;
+                                uniform highp float turn;
                                 uniform lowp float qt_Opacity;
                                 void main() {
+                                    highp float angle = 6.28318 * turn;
                                     highp vec2 p = qt_TexCoord0 * box - box * 0.5;
                                     highp vec2 q = abs(p) - (box * 0.5 - vec2(radius));
                                     highp float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;

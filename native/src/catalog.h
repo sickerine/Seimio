@@ -168,8 +168,13 @@ class Catalog : public QObject {
     Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY seasonLoaded)    // most common first
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
-        connect(&m_franchise, &Franchise::ready, this, &Catalog::franchiseReady);
-        connect(&m_franchise, &Franchise::failed, this, &Catalog::franchiseFailed);
+        // Live and Franchise fetch, read and assemble on a thread of their own: a show's meta is hundreds of
+        // kilobytes of JSON, and reading it where it arrived, on the GUI thread, stalled it 20 to 60 ms
+        // whenever the network answered. `work` runs something there; what it produces comes `back` here.
+        m_live->moveToThread(&m_thread); m_franchise->moveToThread(&m_thread);
+        connect(m_franchise, &Franchise::ready, this, &Catalog::franchiseReady);
+        connect(m_franchise, &Franchise::failed, this, &Catalog::franchiseFailed);
+        m_thread.start();
         Core *core = Core::instance();
         connect(core, &Core::readyChanged, this, &Catalog::load);
         m_again.setSingleShot(true); m_again.setInterval(400);          // a sign-in changes it several times over
@@ -177,6 +182,7 @@ public:
         core->start();
         if (core->ready()) load();
     }
+    ~Catalog() override { m_thread.quit(); m_thread.wait(); delete m_live; delete m_franchise; }
     bool ready() const { return m_ready; }
     QVariantList continueWatching() const { return m_data ? m_data->continueWatching : QVariantList(); }
     QVariantList popular() const { return m_data ? m_data->popular : QVariantList(); }
@@ -205,16 +211,19 @@ public:
     // its facts and art filled in, and a series' seasons with the library's watch state.
     Q_INVOKABLE void loadFranchise(const QVariantMap &source) {
         const QString id = source.value("id").toString(), type = source.value("type").toString() == "movie" ? "movie" : "series";
-        if (!id.startsWith("tt")) { m_franchise.load(source); return; }
-        m_live.title(type, id, [this, source, id, type](const QJsonObject &meta) {
-            if (meta.isEmpty()) { emit franchiseFailed(id, "Couldn't load it"); return; }
-            const QJsonObject show = type == "series" ? Live::show(meta, m_docs.library.value(id).toObject()) : QJsonObject();
-            // what the screen showed, with the meta's facts and art; its own place in the title stays
-            QVariantMap item = source;
-            const QVariantMap fresh = Live::item(meta);
-            for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
-            item["type"] = type;
-            emit franchiseReady(id, item, show.toVariantMap());
+        if (!id.startsWith("tt")) { work([this, source] { m_franchise->load(source); }); return; }
+        const QJsonObject state = m_docs.library.value(id).toObject();
+        work([this, source, id, type, state] {
+            m_live->title(type, id, [this, source, id, type, state](const QJsonObject &meta) {
+                if (meta.isEmpty()) { back([this, id] { emit franchiseFailed(id, "Couldn't load it"); }); return; }
+                const QVariantMap show = type == "series" ? Live::show(meta, state).toVariantMap() : QVariantMap();
+                // what the screen showed, with the meta's facts and art; its own place in the title stays
+                QVariantMap item = source;
+                const QVariantMap fresh = Live::item(meta);
+                for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
+                item["type"] = type;
+                back([this, id, item, show] { emit franchiseReady(id, item, show); });
+            });
         });
     }
     // Titles by name (Live::search), as rows for a CardGrid: `found(query, rows)`, each row { title, shelf,
@@ -223,16 +232,17 @@ public:
         const QString q = query.trimmed();
         m_searching = q;
         if (q.size() < 2) { emit found(q, QVariantList()); return; }
-        m_live.search(q, [this, q](const QJsonObject &r) {
-            if (q != m_searching) return;
-            QVariantList rows, movies, series, anime;
-            for (const QJsonValue &v : r.value("movies").toArray()) movies << Live::item(v.toObject());
-            for (const QJsonValue &v : r.value("series").toArray()) series << Live::item(v.toObject());
-            Data d; Data::loadSeason(d, QJsonObject { { "shows", r.value("anime") } });
-            for (const QVariantMap &m : d.season) anime << m;
-            const QList<QPair<QString, QVariantList>> found { { "Movies", movies }, { "Series", series }, { "Anime", anime } };
-            for (const auto &f : found) if (!f.second.isEmpty()) rows << QVariantMap { { "title", f.first }, { "shelf", true }, { "items", f.second } };
-            emit this->found(q, rows);
+        work([this, q] {
+            m_live->search(q, [this, q](const QJsonObject &r) {
+                QVariantList rows, movies, series, anime;
+                for (const QJsonValue &v : r.value("movies").toArray()) movies << Live::item(v.toObject());
+                for (const QJsonValue &v : r.value("series").toArray()) series << Live::item(v.toObject());
+                Data d; Data::loadSeason(d, QJsonObject { { "shows", r.value("anime") } });
+                for (const QVariantMap &m : d.season) anime << m;
+                const QList<QPair<QString, QVariantList>> found { { "Movies", movies }, { "Series", series }, { "Anime", anime } };
+                for (const auto &f : found) if (!f.second.isEmpty()) rows << QVariantMap { { "title", f.first }, { "shelf", true }, { "items", f.second } };
+                back([this, q, rows] { if (q == m_searching) emit this->found(q, rows); });
+            });
         });
     }
     // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
@@ -262,17 +272,18 @@ public:
 
     // Home's data arrives first (`loaded`), the Anime tab's season with its art after (`seasonLoaded`).
     void load() {
-        m_live.fetch([this](Live::Docs docs) { m_docs = docs; build(); }, [this](Live::Docs docs) {
-            auto season = std::make_shared<Data>();
-            QThread *worker = QThread::create([season, docs] { Data::loadSeason(*season, docs.season); });
-            connect(worker, &QThread::finished, this, [this, season] {
-                m_seasons[season->seasonName] = season;
-                if (!m_seasonAsked.isEmpty()) return;                                // another was picked while it loaded
-                m_seasonAsked = season->seasonName; emit seasonAskedChanged();
-                takeSeason(season->seasonName);
+        const int generation = ++m_generation;
+        work([this, generation] {
+            m_live->fetch([this, generation](Live::Docs docs) { built(docs, generation); }, [this](Live::Docs docs) {
+                auto season = std::make_shared<Data>();
+                Data::loadSeason(*season, docs.season);
+                back([this, season] {
+                    m_seasons[season->seasonName] = season;
+                    if (!m_seasonAsked.isEmpty()) return;                                // another was picked while it loaded
+                    m_seasonAsked = season->seasonName; emit seasonAskedChanged();
+                    takeSeason(season->seasonName);
+                });
             });
-            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-            worker->start();
         });
     }
     // Continue Watching and the watch states again (a title played, another device, a sign-in); `loaded` after
@@ -280,18 +291,20 @@ public:
     void reloadNow() {
         if (!m_ready) { m_stale = true; return; }                   // the first load is on its way: after it
         auto docs = std::make_shared<Live::Docs>(m_docs);
-        m_live.continueWatching(docs, [this, docs] { m_docs = *docs; build(); });
+        const int generation = ++m_generation;
+        work([this, docs, generation] { m_live->continueWatching(docs, [this, docs, generation] { built(*docs, generation); }); });
     }
-    void build() {
-        m_franchise.setLibrary(m_docs.library);
-        // results come back through queued connections with this object as their context, so Qt drops them
-        // if the catalog is gone by then (no pointer to it crosses threads)
-        auto data = std::make_shared<Data>();
-        const Live::Docs docs = m_docs;
-        QThread *worker = QThread::create([data, docs] { *data = Data::load(docs); });
-        connect(worker, &QThread::finished, this, [this, data] { take(data); });
-        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-        worker->start();
+    // on the data thread: Home's documents are in, so its data is made there and handed over whole. Only
+    // the newest load's is taken: two can overlap, and the older one finishing last would put back an
+    // older library and older progress.
+    void built(const Live::Docs &docs, int generation) {
+        auto data = std::make_shared<Data>(Data::load(docs));
+        back([this, docs, data, generation] {
+            if (generation != m_generation) return;
+            m_docs = docs; take(data);
+            const QJsonObject library = docs.library;
+            work([this, library] { m_franchise->setLibrary(library); });
+        });
     }
     bool seasonReady() const { return m_seasonReady; }
     QString seasonAsked() const { return m_seasonAsked; }
@@ -321,17 +334,17 @@ public:
         if (name == m_seasonAsked) return;
         m_seasonAsked = name; emit seasonAskedChanged();
         if (m_seasons.contains(name)) { takeSeason(name); return; }
-        m_live.seasonChart(season, year, [this, name](QJsonObject doc) {
-            auto data = std::make_shared<Data>();
-            QThread *worker = QThread::create([data, doc] { Data::loadSeason(*data, doc); });
-            connect(worker, &QThread::finished, this, [this, data, name] {
-                if (!data->season.isEmpty()) m_seasons[name] = data;
-                if (m_seasonAsked != name) return;                                  // another was picked since
-                if (data->season.isEmpty()) { m_seasonAsked = seasonName(); emit seasonAskedChanged(); emit seasonFailed(name); }
-                else takeSeason(name);
+        work([this, season, year, name] {
+            m_live->seasonChart(season, year, [this, name](QJsonObject doc) {
+                auto data = std::make_shared<Data>();
+                Data::loadSeason(*data, doc);
+                back([this, data, name] {
+                    if (!data->season.isEmpty()) m_seasons[name] = data;
+                    if (m_seasonAsked != name) return;                                  // another was picked since
+                    if (data->season.isEmpty()) { m_seasonAsked = seasonName(); emit seasonAskedChanged(); emit seasonFailed(name); }
+                    else takeSeason(name);
+                });
             });
-            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-            worker->start();
         });
     }
 
@@ -490,14 +503,6 @@ private:
             for (const auto &g : ranked) d.seasonGenres << g.second;
         }
     };
-    template <typename F> void get(const QUrl &url, F done) {
-        QNetworkRequest r(url);
-        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
-        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-        QNetworkReply *reply = m_net.get(r);
-        QTimer::singleShot(15000, reply, &QNetworkReply::abort);
-        connect(reply, &QNetworkReply::finished, this, [reply, done] { reply->deleteLater(); done(reply->readAll(), reply->error() == QNetworkReply::NoError); });
-    }
     static bool fits(const QVariantMap &m, const QString &format, const QString &genre) {
         const QString f = m["format"].toString();
         if (format == "tv" && f != "TV" && f != "TV_SHORT") return false;
@@ -528,6 +533,7 @@ private:
     }
 
     QString m_searching;                                   // the last search asked for
+    int m_generation = 0;                                  // the newest load of Home's documents
     Live::Docs m_docs;                                     // Home's documents as last fetched
     QTimer m_again;
     bool m_stale = false;
@@ -541,9 +547,11 @@ private:
         m_seasonReady = true;
         emit seasonLoaded();
     }
-    Live m_live { this };
-    Franchise m_franchise { this };
+    QThread m_thread;
+    Live *m_live = new Live;                               // both live on m_thread
+    Franchise *m_franchise = new Franchise;
+    template <typename F> void work(F f) { QMetaObject::invokeMethod(m_live, f, Qt::QueuedConnection); }
+    template <typename F> void back(F f) { QMetaObject::invokeMethod(this, f, Qt::QueuedConnection); }
     std::shared_ptr<Data> m_data;
-    QNetworkAccessManager m_net { this };
     CalendarModel *m_model;
 };

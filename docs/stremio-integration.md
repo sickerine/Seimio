@@ -126,12 +126,27 @@ F. Performance and polish across all of it, against the budgets.
 
 ## Open performance items (from the 2026-11-18 round)
 
-- The Home tour runs 9 to 13 late frames against 8 on a day when the last commit measures 8 to 15. What
-  is left is single frames a few ms late at crossfade starts and tab changes, and GUI time outside our
-  handlers that the lab can't attribute yet (the handlers themselves measure 0 to 18 ms).
+What the second pass found (the lab can now say what the GUI thread ran in a stall, `tools/lab-stacks.py`):
+
+- The "GUI time outside our handlers" was the JavaScript engine collecting its garbage, 25 to 34 ms a
+  time, in the middle of moves. It is collected in the quiet second now, takes 22 ms with a lighter
+  calendar, and what moves by itself runs on the render thread at rest, so nothing is held up by it.
+- Timed runs had been measuring themselves: the lab's report cost the GUI thread 30 ms every 3 s.
+
+Late frames a tour, one full check each (budget 8; 40 for play and player), before and after:
+home 22 → 11 (three more runs: 8, 10, 16), calendar 17 → 11, show 6 → 2, menu 4 → 3, play 22 → 14,
+streams 11 → 12, player 40 → 40, browse 17 → 12. Still open:
+
+- A title or a show opened from a scrolled grid (the backdrop frosted) runs at 30 fps for about 300 ms:
+  seven late frames, the largest cluster left. The backdrop and its frost are both drawn across the
+  screen while the frost fades out (520 ms); with the backdrop hidden the same frames draw in 2.5 ms,
+  and from the first row (no frost) none is late. One pass that draws the picture and its frost
+  together (the frost as an input of `Backdrop`'s shader) would end it.
+- A backdrop's first frame is late by up to 10 ms: its 1920 x 1080 texture reaches the GPU in that frame
+  (15 to 18 ms of the frame). One a crossfade; nothing moves but the drift when it happens.
+- Passing along the tab bar at 400 ms a tab costs one or two frames a tab on some runs and none on
+  others. Each screen coming back draws its layers again (the calendar's 42 days: 13 to 15 ms).
 - Opening a franchise page that wasn't built ahead is a ~50 ms GUI stall (the row's cards and the season
-  bar). A staged load (header, then row) would halve it.
-- The browse tour (Movies, Series, Library): the rows themselves scroll without a late frame. A title
-  opened 700 ms after a move, before it was fetched ahead, opens while the backdrop crossfades and the
-  grid fades: 6 to 10 frames at 30 fps. Opened a second later it costs one or two. A tab's first show
-  is a 60 to 70 ms GUI stall (its rows' first cards).
+  bar), 127 ms once with a collection on top. A staged load (header, then row) would halve it.
+- About a third of the frames counted late are 20 to 21 ms apart, just over the line the tours draw at
+  20 ms: the stamp's own jitter, not a missed frame (a missed one is 25 or 33 ms).

@@ -36,7 +36,7 @@ docker run --rm -v ~/Library/Caches/webos-sdk:/sdk -v "$REPO":/repo -w /repo/nat
     -Isrc -Iout/moc -I$Q -I$Q/QtCore -I$Q/QtGui -I$Q/QtQml -I$Q/QtNetwork \
     -DQT_NO_DEBUG -DQT_PLUGIN -DQT_QML_LIB -DQT_NETWORK_LIB -DQT_CORE_LIB \
     -L/repo/tvlibs -l:libQt5Qml.so.5 -l:libQt5Network.so.5 -l:libQt5Core.so.5 -lpthread -ldl -lm -Wl,--allow-shlib-undefined -Wl,--gc-sections -Wl,--exclude-libs,ALL
-  arm-webos-linux-gnueabi-strip --strip-unneeded out/libseimiodata.so      # the core's static library comes with its symbols: 26 MB unstripped
+  arm-webos-linux-gnueabi-strip --strip-unneeded out/libseimiodata.so      # the static library of the core comes with its symbols: 26 MB unstripped (no apostrophe in here: this script is one quoted string)
   cp src/qmldir out/
   cp /repo/third_party/libass/out/lib/libass.so.9.*.* out/libass.so.9
   arm-webos-linux-gnueabi-readelf -d out/libseimionative.so | grep -c NEEDED

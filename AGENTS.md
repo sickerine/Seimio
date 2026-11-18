@@ -22,11 +22,23 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   2. With Qt's renderer timing in the variant, `tools/lab-frames.py` says whether slow frames are
      JavaScript-bound (short render, long GUI stall), draw-call bound (long render, one pass) or
      capture-bound (many passes).
+  3. With `"sample": true` beside the timing, `tools/lab-stacks.py` lists what the GUI thread was
+     running in each stall (a sample every 4 ms while it runs): `MemoryManager::mark` is a JavaScript
+     collection, `QQmlObjectCreator` items being made, `QTextEngine` text laid out, `fromVariant` data
+     converted for QML. `"sample": "render"` samples the render thread too (`rstack` lines: where it
+     is and its caller only, since unwinding through the GPU driver crashes the app).
+  4. To find which layer makes a transition heavy, hide one before the transition and time it again;
+     hide nothing that has to take the key (a hidden grid can't be pressed, and the transition then
+     never happens).
   A GUI stall line ends with `busy`, the GUI thread's own CPU time in the gap: close to the gap means
   our code (JavaScript, bindings, item creation) ran; a few ms means the thread was blocked or starved,
   which under the video is the TV holding the swap (the threaded loop's sync waits for it), not
-  something to fix in QML. A forced JS collection measured 19 ms, so a 100 ms stall isn't the GC.
-  Timing logs perturb the TV; take counts from runs without them. Raise a budget only with
+  something to fix in QML. A stream of 33 ms ticks with `busy 1` is the GUI thread getting its turn
+  every other frame: something is animating on the render thread (see `Ambient`). The time a tick
+  waited to hand its frame over is measured and doesn't count as a stall.
+  Timing logs perturb the TV; take counts from runs without them. The lab's own report must stay cheap:
+  the timing log goes to the lab server from a thread of its own (`LogTap.send`), because turned into
+  JSON by the GUI thread it was a 30 ms stall at every report of a timed run. Raise a budget only with
   measurements showing why. A frame counts as late only when it breaks a run of on-time frames: under
   the video nothing animates, and Qt draws only when a subtitle line or the overlay changes, so the gap
   before a frame after a pause isn't lateness. GUI stalls are counted apart, by a 16 ms heartbeat on
@@ -43,12 +55,25 @@ Each rule comes from a measured stall on the C5.
   50-65 ms stall. A list on a hidden screen takes its model only while the screen is up.
 - Create items once. `CardStrip` recycles a fixed pool of cards; a Repeater takes `model: array.length`
   and reads `array[index]`, so a new array of the same length rebinds instead of rebuilding. A
-  MediaCard costs about 1.3 ms to create on the TV.
+  MediaCard costs about 2 ms to create on the TV (`{"bench": true}` measures it).
 - Hidden screens take their data through an explicit call (`ShowScreen.load()`, `showSeason()`), never
   a binding to the Home selection. Build expensive screens ahead of time while Home is idle: `App.still`
-  fires once nothing has moved for a second (a key, a tab, a backdrop crossfade all restart it) and does
-  one piece of work a firing (the selection's page, then the Anime tab once). A page built the moment its
-  franchise arrived landed on the tab bar as a 90 ms frame.
+  fires once nothing has moved for a second (a key, rows coming in, a backdrop crossfade all restart it
+  through `Remote.stir()`), and the quiet then takes its work a piece at a time, a few frames apart
+  (`App.quietWork`): the Anime tab once, the selection's page, then the garbage. A page built the moment
+  its franchise arrived landed on the tab bar as a 90 ms frame.
+- The JavaScript engine's garbage is collected in that quiet (`gc()`), not when the engine decides to: a
+  collection stops the GUI thread for 22 to 35 ms on the TV and came in the middle of a move, sometimes
+  twice as a page opened. Its length follows the number of QML objects alive (it walks every one that
+  JavaScript has touched), not the data: 11,400 objects took 25 to 34 ms, 8,800 take 22. So what a screen
+  keeps many of is made of as few objects as it needs: a calendar day stacks `CardArt` (12 objects), not
+  `MediaCard` (45).
+- What moves by itself and never ends (the backdrop's drift, the light around today) goes through
+  `Ambient`: on the render thread at rest (`Remote.resting`), where a busy GUI thread can't hold it up,
+  and on the GUI thread while anything else moves. Never leave an animation on the render thread while
+  the GUI thread animates: the render loop then runs by itself and the GUI thread's animations tick every
+  other frame (33 ms ticks) on frames that all arrive on time, which the tours can't see. The price is
+  one frame more before the first key after a rest shows.
 - A component that shows a page of data takes it as one value (`PagedStrip.show(page, index)`, an
   explicit `load()`): as separate inputs set one after another, every card was rebound for each. A page
   that opens on an episode is built once, for the place it lands on.
@@ -57,7 +82,8 @@ Each rule comes from a measured stall on the C5.
 - Card art stays decoded. Qt keeps ~2 MB of images nothing shows, so a card that a row hands other data
   lets its art go and decodes it again on the way back (covers that came back empty and faded in).
   `ArtCache` holds every `MediaCard`'s art, decoded as the card decodes it; a screen can hold a view's art
-  ahead (`ArtCache.keep`). Art goes through `MediaCard`, never a bare `Image` in a row or a grid.
+  ahead (`ArtCache.keep`). Art goes through `CardArt` (a `MediaCard`'s picture), never a bare `Image` in a
+  row or a grid.
   `ArtCache.loads` in the lab state counts cards that had to wait for art: a walk back adds none.
 - One shader per full-screen layer, and glass and frost only through `Glass`, `Frost` and `BlurChain`,
   which capture only while visible (`frozen` captures once, and again while `sourceBusy`). A small glass
@@ -71,6 +97,10 @@ Each rule comes from a measured stall on the C5.
   Expect handlers to re-enter: setting a property can emit a signal synchronously (a cached image turns
   Ready inside the assignment), so change your own state before the assignment that may call back. A
   state bug gets a QtQuick test in `tools/tests` that fails before the fix; `check.sh` runs them.
+- A network answer is read off the GUI thread. `Live` and `Franchise` fetch, parse and assemble on
+  `Catalog`'s data thread and hand over finished data; `Account` reads the core's views on a worker;
+  `Streams` parses its list on one. A show's meta is hundreds of kilobytes of JSON, and reading it where
+  it arrived stalled the screen whenever the network answered, at moments no key press explains.
 - Data lives in C++ (`Seimio.Data`, `native/src/catalog.h`), parsed on a worker thread. QML asks for
   what a screen needs when it needs it (`Catalog.show(id)`, `Catalog.day(key)`) and keeps the answer
   if identity matters. JavaScript is glue: QML bindings and handlers run in a JS engine whose
@@ -112,6 +142,12 @@ Each rule comes from a measured stall on the C5.
   off-screen cards (below) it held the Anime schedule at 30 fps (55 late frames a tour, now ~10).
 - Off screen is not free: a strip's cards and a list's rows that are fully off screen are `visible:
   false`. A sliding row keeps cards past both edges, and a recycled row slot sits below the screen.
+- A layer is drawn again whenever its item comes back on screen, at any opacity: the calendar's 42 days
+  (a texture each) cost 13 to 15 ms in the frame Home returns in. Hiding the days a peek doesn't show is
+  worse: they then draw, and send their art to the GPU, only as the month opens (28 days in one 134 ms
+  frame) instead of one by one as the art arrives at launch. And no layer the size of the screen for a
+  passing effect: a grid dimmed through one made the texture anew each time a list loaded (a 13 ms
+  frame); it dims by opacity.
 - A recycled row slot rebinds its cards (7 at once, 40-60 ms) when nothing shows it: right away if
   it will be on screen when the scroll ends, else once the scroll ends. New rows reach the slots a frame
   apart, top first, while the list fades in, and a row's layout (card size) travels with its data.

@@ -72,23 +72,16 @@ Item {
         source: url; visible: false; asynchronous: true; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(1, status === Image.Ready)
     }
-    property real zoom: 1
-    // previews hold the zoom at rest, so a still captured at any moment is the same
-    property bool still: false
-    // under something opaque (a covering frost): the drift pauses where it is, so nothing redraws for it,
-    // and resumes from there once it shows again
+    // The drift: the picture zooms from 1 to 1.07 and back on a sine, 36 s the round (`drift` goes once
+    // around and the shader makes the zoom of it). Under something opaque (`covered`, a covering frost) it
+    // stops where it is, so nothing redraws for it, and goes on from there once it shows again.
     property bool covered: false
-    onStillChanged: if (still) zoom = 1
-    SequentialAnimation on zoom {
-        running: root.visible && !root.still
-        paused: running && root.covered
-        loops: Animation.Infinite
-        NumberAnimation { from: 1.0; to: 1.07; duration: 18000; easing.type: Easing.InOutSine }
-        NumberAnimation { from: 1.07; to: 1.0; duration: 18000; easing.type: Easing.InOutSine }
-    }
+    property Ambient drifting: Ambient { effect: picture; uniform: "drift"; period: 36000; running: root.visible && !root.covered }
 
     ShaderEffect {
+        id: picture
         anchors.fill: parent
+        property real drift: 0
         blending: root.radius > 0
         property size box: Qt.size(width, height)
         property real radius: root.radius
@@ -100,7 +93,6 @@ Item {
         property real front: root.front
         property real frontOn: root.shown ? 1 : 0
         property real fadeIn: root.fadeIn
-        property real zoom: root.zoom
         property real pan: root.pan / root.width
         fragmentShader: "
             varying highp vec2 qt_TexCoord0;
@@ -111,12 +103,13 @@ Item {
             uniform lowp float front;
             uniform lowp float frontOn;
             uniform lowp float fadeIn;
-            uniform highp float zoom;
+            uniform highp float drift;
             uniform highp float pan;
             uniform highp vec2 box;
             uniform highp float radius;
             uniform lowp float qt_Opacity;
             void main() {
+                highp float zoom = 1.0 + 0.035 * (1.0 - cos(6.2831853 * drift));
                 highp vec2 p = (qt_TexCoord0 - 0.5 + vec2(pan, 0.0)) / zoom;
                 lowp vec3 a = texture2D(tex0, clamp(0.5 + p * crop0, 0.0, 1.0)).rgb;
                 lowp vec3 b = texture2D(tex1, clamp(0.5 + p * crop1, 0.0, 1.0)).rgb;
