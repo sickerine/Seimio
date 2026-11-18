@@ -49,7 +49,7 @@ Item {
         if (!ok) { incoming = ""; return }
         startFade();
     }
-    function startFade() { fade.restart(); crossfadeStarted() }
+    function startFade() { Remote.tally("backdrop"); fade.restart(); crossfadeStarted() }
     NumberAnimation {
         id: fade; target: root; property: "fadeIn"; from: 0; to: 1; duration: 700; easing.type: Easing.InOutQuad
         onFinished: {

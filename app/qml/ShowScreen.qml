@@ -146,6 +146,7 @@ FocusScope {
     // opened from a calendar release was a 126 ms frame).
     function load(title, seasonsAndEpisodes, episodeId) {
         if (title === item && seasonsAndEpisodes === show) return false;
+        Remote.tally("page loaded");
         resumePos = Episodes.resting(seasonsAndEpisodes, today);
         item = title; show = seasonsAndEpisodes;
         entryIndex = -1;                                  // the new show's entry, at once (not after a settle)
@@ -170,6 +171,7 @@ FocusScope {
     // card, Play was renamed to that card.)
     function refresh(title, seasonsAndEpisodes) {
         var tile = strip.onTile, focusedId = !tile && focusedEp ? focusedEp.id : "", named = resumeEp, was = { s: shownSeason, e: Math.max(0, strip.currentIndex) };
+        Remote.tally("page refreshed");
         item = title; show = seasonsAndEpisodes; episodes = [];
         var resume = named ? Episodes.find(show, named.id) : null;
         if (resume) {

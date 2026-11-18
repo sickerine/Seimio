@@ -247,6 +247,17 @@ marked watched takes its episodes with it and a season's tab marks all of it (`A
 ones that are out by the days the page shows (docs/stremio-integration.md); a page's check button shows
 the title's state at rest.
 
+What is done to one title redraws that title and nothing else: no page is shown again, no cursor goes
+back to the top. The Library's grid changes where it is when a title leaves or joins it, the cards after
+a removed one sliding over (`BrowseScreen.take`, `CardGrid.closeUp`), and leaves another order of the
+same titles for when it next comes on screen. To check a change on the TV, count: the lab report's
+`redraws` (`Remote.tally`: "grid shown" is a whole page shown again, "grid replaced" rows changed in
+place, "info" and "backdrop" the title above, "page loaded" and "page refreshed" a show page, "home
+taken" Continue Watching's row, "day built" an open calendar day). Read it before and after the action;
+only what the action is about may have moved. Measured on 2026-11-18 for adding to and removing from
+the library (search, Home, the Anime tab, the Library), marking watched (the Library, an episode on its
+page) and Remove from Continue Watching: none shows a grid again.
+
 The cursor on Continue Watching stays on its title when the row comes back in another order
 (`HomeScreen.take`): what has the focus is set whole, with the row, never by a place in it.
 

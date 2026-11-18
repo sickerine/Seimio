@@ -246,17 +246,21 @@ public:
     // `searchMore()` asks for the next fifty when there are more: `foundMore(query, anime)`.
     Q_INVOKABLE void search(const QString &query) {
         const QString q = query.trimmed();
-        m_searching = q; m_animePage = 1; m_animeMore = m_animeAsked = false;
+        // the same text asked again (a space typed after it) is answered again, and its anime stay where
+        // their pages are: started over, the next page asked for was one the grid already had
+        const bool again = q == m_searching;
+        m_searching = q;
+        if (!again) { m_animePage = 1; m_animeMore = m_animeAsked = false; }
         if (q.size() < 2) { emit found(q, QVariantMap()); return; }
-        work([this, q] {
-            m_live->search(q, [this, q](const QJsonObject &r) {
+        work([this, q, again] {
+            m_live->search(q, [this, q, again](const QJsonObject &r) {
                 QVariantList movies, series;
                 auto thin = [](const QJsonValue &v) { QVariantMap m = Live::item(v.toObject()); m["thin"] = true; return m; };
                 for (const QJsonValue &v : r.value("movies").toArray()) movies << thin(v);
                 for (const QJsonValue &v : r.value("series").toArray()) series << thin(v);
                 const QVariantMap results { { "anime", shows(r.value("anime").toArray()) }, { "series", series }, { "movie", movies } };
                 const bool more = r.value("animeMore").toBool();
-                back([this, q, results, more] { if (q != m_searching) return; m_animeMore = more; emit this->found(q, results); });
+                back([this, q, results, more, again] { if (q != m_searching) return; if (!again) m_animeMore = more; emit this->found(q, results); });
             });
         });
     }

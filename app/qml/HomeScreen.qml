@@ -32,6 +32,7 @@ FocusScope {
         var at = -1;
         for (var i = 0; watchingItem && i < continueWatching.length && at < 0; i++) if (continueWatching[i].id === watchingItem.id) at = i;
         if (at >= 0) strip.jumpTo(at);                    // first: its move names the same title in the new row
+        Remote.tally("home taken");
         strip.model = continueWatching;
         watchingItem = continueWatching[strip.currentIndex] || null;
     }

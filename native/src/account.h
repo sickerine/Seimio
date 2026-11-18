@@ -31,7 +31,7 @@ class Account : public QObject {
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
     //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
     //   items(from, n)   that many of its titles, as the screens show a title
-    //   stampOf(n)   a number for its first n titles, in order: the same number, the same titles
+    //   ids()   its titles' ids, in order: what a screen tells a changed list from a longer one by
     Q_PROPERTY(QVariantMap browsing READ browsing NOTIFY browsingChanged)
 public:
     explicit Account(QObject *parent = nullptr) : QObject(parent) {
@@ -64,7 +64,7 @@ public:
 
     QVariantMap browsing() const { return m_browsing; }
     Q_INVOKABLE QVariantList items(int from, int n) const { return m_items.mid(from, n); }
-    Q_INVOKABLE uint stampOf(int n) const { uint stamp = 0; for (int i = 0; i < n && i < m_ids.size(); i++) stamp = stamp * 31 + qHash(m_ids[i]); return stamp; }
+    Q_INVOKABLE QStringList ids() const { return m_ids; }
     Q_INVOKABLE void browse(const QString &what) {
         if (what == m_browse) return;
         m_browse = what; m_items.clear(); m_ids.clear(); m_browsing = QVariantMap { { "what", what }, { "filters", QVariantList() }, { "count", 0 }, { "more", false }, { "loading", true } };
@@ -255,7 +255,7 @@ private:
     QString m_browse;
     QVariantMap m_browsing;
     QVariantList m_items;
-    QStringList m_ids;                              // m_items' ids, for stampOf
+    QStringList m_ids;                              // m_items' ids, for ids()
     int m_ticket = 0;
     bool m_libraryAsked = false;
     bool m_signedIn = false, m_reporting = false;

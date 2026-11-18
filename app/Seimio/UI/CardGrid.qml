@@ -38,14 +38,23 @@ FocusScope {
     property int pendingTop: rowTop
     function show(next, nextLayout, top) {
         pending = next; pendingLayout = nextLayout || "grid"; pendingTop = top === undefined ? rowTop : top;
+        Remote.tally("grid shown");
         if (visible) Remote.stir();
         if (visible && rows.length) swap.restart(); else apply();
     }
     // the rows it shows, or the ones on their way in while the old ones fade out: what `replace` replaces
     readonly property var latest: pending || rows
     function replace(next) {
+        Remote.tally("grid replaced");
         if (visible) Remote.stir();
         if (pending) pending = next; else { rows = next; if (row >= rows.length) row = rows.length - 1 }
+    }
+    // A title has gone from place `index` of a grid (counted along its rows) and the rows are already the
+    // ones without it: the cards from there on slide in from where they were, a place to the right, and
+    // the first of each row under it comes in from the right edge.
+    function closeUp(index) {
+        var at = Math.floor(index / perRow);
+        for (var i = 0; i < rowSlots.count; i++) { var s = rowSlots.itemAt(i); if (s.idx >= at) s.closeUp(s.idx === at ? index % perRow : 0) }
     }
     // new rows reach the row slots a slot a frame, top first (`staggering`): handing every slot its
     // cards at once (28 cards resized and rebound) stalled ~90 ms; they arrive while the list fades in
@@ -117,9 +126,11 @@ FocusScope {
         readonly property int slots: 4
         readonly property int first: Math.max(0, Math.floor((scrollY - grid.rowTop) / stride))
         Repeater {
+            id: rowSlots
             model: list.slots
             FocusScope {
                 id: slot
+                function closeUp(from) { strip.closeUp(from) }
                 readonly property int idx: list.first + ((index - list.first) % list.slots + list.slots) % list.slots
                 // the row this slot shows: at once when the slot is recycled while scrolling, a frame per
                 // place down the screen when new rows arrive (grid.staggering); its layout comes with it

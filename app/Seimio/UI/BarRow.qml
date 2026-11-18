@@ -25,7 +25,7 @@ FocusScope {
     onActiveFocusChanged: {
         if (!activeFocus) return;
         for (var i = 0; i < bars.length; i++) if (bars[i].activeFocus) { current = bars[i]; return }   // focused from outside
-        current = bars.indexOf(current) >= 0 ? current : bars[0];
+        current = bars.indexOf(current) >= 0 ? current : bars[0] || null;       // (no bars yet: a list still loading has no filters)
         if (current) current.forceActiveFocus();
     }
     Row { id: row }

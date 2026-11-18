@@ -57,6 +57,12 @@ FocusScope {
     onCountChanged: if (currentIndex >= count) jumpTo(Math.max(0, count - 1))
     onStrideChanged: jumpTo(currentIndex)
     NumberAnimation { id: slide; target: strip; property: "scroll"; duration: 400; easing.type: Theme.ease }
+    // A card has gone from before `from` and the model is already the one without it: the cards from
+    // there on start a place to the right, where they were, and slide in to close the gap.
+    property int closingFrom: 0
+    property real closing: 0
+    function closeUp(from) { closingFrom = from; closeAnim.restart(); Remote.stir() }
+    NumberAnimation { id: closeAnim; target: strip; property: "closing"; from: 1; to: 0; duration: 380; easing.type: Theme.ease }
 
     Repeater {
         model: strip.width > 0 ? strip.pool : 0
@@ -66,7 +72,7 @@ FocusScope {
             readonly property var d: idx >= 0 && idx < strip.count ? strip.model[idx] : null
             // a card fully off screen isn't drawn: a sliding row keeps a card each side of what shows
             visible: d !== null && x < strip.width && x + width > 0
-            x: strip.inset + idx * strip.stride - strip.scroll
+            x: strip.inset + idx * strip.stride - strip.scroll + (idx >= strip.closingFrom ? strip.closing * strip.stride : 0)
             width: strip.cardWidth; height: strip.cardHeight; radius: strip.cardRadius
             art: d && d.art || ""
             fallback: d && d.fallback || ""

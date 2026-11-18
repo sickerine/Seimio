@@ -3,6 +3,7 @@
 // card in place), and the same list again changes nothing.
 import QtQuick 2.12
 import QtTest 1.12
+import Seimio.UI 1.0
 import "../../app/qml"
 
 Item {
@@ -17,7 +18,7 @@ Item {
         function choose(key, option) {}
         function more() {}
         function items(from, n) { return all.slice(from, from + n) }
-        function stampOf(n) { return all.slice(0, n).map(function (i) { return i.id }).join(",") }
+        function ids() { return all.map(function (i) { return i.id }) }
         function show(ids) {
             all = ids.map(function (id) { return { id: id, name: id, title: id, art: "" } });
             browsing = { what: "library", filters: [], count: ids.length, more: false, loading: false };
@@ -45,7 +46,9 @@ Item {
         account.show(ids(13, 1)); settle();                 // the first title gone
         compare(titles().join(","), ids(13, 1).join(","));
         compare(screen.rows.length, 2);
-        account.show(ids(13, 1).reverse()); settle();       // another order, as many
+        account.show(ids(13, 1).reverse()); wait(50);       // another order, as many: left alone while it is on screen
+        compare(titles()[0], "t1");
+        screen.shown = false; screen.shown = true; settle();        // and taken when it next comes on
         compare(titles()[0], "t13");
         // another, longer list: its later rows arrive while the old rows are still fading out (they were
         // added to the old rows, which left holes)
@@ -57,6 +60,28 @@ Item {
         grown = [grown[1], grown[0]].concat(grown.slice(2), ["t140", "t141"]);
         account.show(grown); settle();
         compare(titles().join(","), grown.join(","));
+    }
+    // A title removed from the library with the library on screen: the page was shown again from the
+    // top, the cursor back on its first card. It changes where it is: the rows before the title are the
+    // rows they were, and the cursor stays on its title, or in its place when that title is the one gone.
+    function test_aTitleGoneChangesTheRowsWhereTheyAre() {
+        account.show(ids(21, 200)); settle();
+        wait(300);                                          // its rows reach the row slots a frame apart
+        screen.row = 1; screen.forceActiveFocus();
+        keyClick(Qt.Key_Right); keyClick(Qt.Key_Right);
+        tryVerify(function () { return screen.focusItem && screen.focusItem.id === "t209" });
+        var first = screen.rows[0], shown = Remote.tallies["grid shown"] || 0;
+        var left = ids(21, 200); left.splice(9, 1);         // the title under the cursor goes
+        account.show(left); settle();
+        verify(screen.rows[0] === first, "the row before it is the row it was");
+        compare(screen.row, 1);
+        compare(screen.focusItem.id, "t210", "the cursor is where it was, on the title that took the place");
+        left.splice(0, 1);                                  // then one before it, on another device
+        account.show(left); settle();
+        compare(screen.focusItem.id, "t210", "the cursor stays on its title");
+        compare(screen.row, 1);
+        compare(Remote.tallies["grid shown"] || 0, shown, "and the page is never shown again");
+        screen.row = -1;
     }
 }
 }

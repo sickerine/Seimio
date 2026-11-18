@@ -52,6 +52,7 @@ Item {
         if (!pending || fadeOut.running || (m && fadeIn > 0)) return;
         if (preload.source.toString() !== "" && preload.status === Image.Loading) return;
         m = pending; pending = null; rise = 18;
+        Remote.tally("info");
         fadeInAnim.restart();
     }
     ParallelAnimation {

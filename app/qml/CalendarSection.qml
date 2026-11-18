@@ -102,6 +102,7 @@ FocusScope {
     }
     function buildDay(k, land) {
         var list = releasesOf(k), prev = neighbour(k, -1), next = neighbour(k, 1), cards = [];
+        Remote.tally("day built");
         if (prev) cards.push({ kind: "prev", key: prev, entry: releasesOf(prev)[0] });
         list.forEach(function (e) { cards.push({ kind: "release", entry: e }) });
         if (next) cards.push({ kind: "next", key: next, entry: releasesOf(next)[0] });

@@ -13,6 +13,11 @@ QtObject {
     property bool resting: false
     signal stirred()
     function stir() { resting = false; stirred() }
+    // lab: how many times each kind of redraw has happened ("grid shown", "info", ...). An action on one
+    // title (removed from the library, marked watched) should redraw that title and nothing else: read
+    // the counts in the lab report before and after it (LabProbe's state, `redraws`).
+    property var tallies: ({})
+    function tally(what) { tallies[what] = (tallies[what] || 0) + 1 }
 
     // OK tap or hold (Apple TV's long press). LG's remote doesn't auto-repeat a held key the usual way:
     // it sends release and press pairs about 40 ms apart. So a hold is timed (500 ms from the press),

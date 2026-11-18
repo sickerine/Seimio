@@ -280,8 +280,8 @@ WebOSWindow {
         // an anime opens as its whole franchise, wherever it was picked (Continue Watching, the calendar, the
         // Anime tab); a title from a list, the library or a search is fetched the same way (a search's
         // title that isn't in yet is not what the info shows, and opens all the same)
-        var it = focusItem && focusItem.thin ? focusItem : displayItem;
-        if (it && fetched(it)) { openFranchise(it); return }
+        var thin = !!(focusItem && focusItem.thin), it = thin ? focusItem : displayItem;
+        if (it && (thin || fetched(it))) { openFranchise(it); return }
         openPage();
     }
     function openPage() { hold(displayItem, showData(displayItem.id)); showHeld(null) }
@@ -583,6 +583,7 @@ WebOSWindow {
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
+                     redraws: Remote.tallies,
                      search: { text: searchBar.text, kind: search.kind, zone: searchBar.zone, cursor: searchBar.kindBar.cursor, row: search.row, found: search.found, counts: app.searchKinds.map(function (k) { return search.count(k[1]) }).join(","), shownLag: app.shownLag },
                      library: { item: app.libraryItem ? app.libraryItem.id : "", "in": !!app.libraryItem && account.inLibrary(app.libraryItem.id), watched: !!app.libraryItem && account.watched(app.libraryItem.id), reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
