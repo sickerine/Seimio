@@ -140,7 +140,61 @@ WebOSWindow {
     }
 
     // out of the player, by Back or because the file ended with nothing after it
-    function leavePlayer() { streams.cancel(); player.stop(); back() }
+    function leavePlayer() { endReport(); streams.cancel(); player.stop(); back(); if (watchingStale) { watchingStale = false; catalog.reload() } }
+
+    // ---- the library, and watch state -------------------------------------------------------------------
+    // What the page in hand is in Stremio's library: an anime franchise's entry on screen (each is a title
+    // of its own there), else the title.
+    readonly property var libraryItem: {
+        var e = layer === "show" && held && held.show ? showPage.entry : null, i = held ? held.item : null;
+        if (e) return { id: e.id, type: e.kind === "film" ? "movie" : "series", name: e.title, poster: e.poster || "" };
+        if (!i) return null;
+        return { id: i.id, type: held.show ? "series" : "movie", name: i.name,
+                 poster: i.poster || (/^tt/.test(i.id) ? "https://images.metahub.space/poster/medium/" + i.id + "/img" : i.art || "") };
+    }
+    readonly property bool inLibrary: account.libraryRevision >= 0 && !!libraryItem && account.inLibrary(libraryItem.id)
+    readonly property bool watchedTitle: account.libraryRevision >= 0 && !!libraryItem && account.watched(libraryItem.id)
+    // the pages' buttons after Play, and what they do
+    readonly property var libraryButtons: [{ label: inLibrary ? "Remove from library" : "Add to library", icon: inLibrary ? "minus" : "plus", round: true },
+                                           { label: watchedTitle ? "Mark unwatched" : "Mark watched", icon: "check", round: true }]
+    function libraryAction(index) {
+        if (!libraryItem) return;
+        if (index === 1) account.markWatched(libraryItem, !watchedTitle);
+        else if (inLibrary) account.removeFromLibrary(libraryItem.id); else account.addToLibrary(libraryItem);
+    }
+    // The account's watch state changed (a title played, another device, a sign-in): Home takes it again,
+    // but never under the video (it would rebuild rows behind the film); the page in hand follows.
+    property bool watchingStale: false
+    Connections { target: account; onWatchingChanged: if (app.layer === "player") app.watchingStale = true; else catalog.reload() }
+    property string franchiseRefresh: ""                   // the franchise asked for again, for the page in hand
+    function refreshHeld() {
+        shows = ({}); franchises = ({});
+        if (!held || onHome || layer === "player" || layer === "signin") return;
+        if (franchiseId(held.item.id)) { franchiseRefresh = held.item.id; loadFranchise(held.item) }
+        else if (held.show) rehold(held.item, showData(held.item.id));
+    }
+    // the same title with new data: the page stays where it is
+    function rehold(item, show) {
+        var at = showPage.focusedEp;
+        hold(item, show, held.video);
+        if (layer === "show" && held.show) showPage.load(held.item, held.show, at ? at.id : "");
+    }
+    // ---- watch progress ----------------------------------------------------------------------------------
+    // What plays is reported to Stremio's core (Account), whose rules say what is watched and where
+    // Continue Watching resumes. `reported` is the video the core has been told is playing.
+    property string reported: ""
+    function endReport() { if (reported) { account.timeChanged(player.position, player.duration); account.stopped(); reported = "" } }
+    Connections {
+        target: player
+        // a lab tour plays without telling Stremio (`unreported`): it would move the account's own progress
+        onPlayingChanged: if (player.playing && app.layer === "player" && app.playTarget && player.stream && app.reported !== app.playTarget.id && !probe.variant.unreported) {
+            app.reported = app.playTarget.id;
+            account.playing(app.playTarget.id, app.playTarget.type || "series", player.stream.url);
+        }
+        onPausedChanged: if (app.reported) { account.timeChanged(player.position, player.duration); account.paused(player.paused) }
+        onSought: if (app.reported) account.seeked(to, player.duration)
+    }
+    Timer { running: app.reported !== "" && player.playing && !player.paused; interval: 10000; repeat: true; onTriggered: account.timeChanged(player.position, player.duration) }
     function open() {
         commit();
         // an anime opens as its whole franchise, wherever it was picked (Continue Watching, the calendar, the
@@ -174,6 +228,7 @@ WebOSWindow {
                  : { type: "movie", id: held.item.id, label: "", progress: held.item.progress || 0 };
     }
     function playAi(episode) {
+        endReport();                                       // another video: the one playing ends where it is
         playMenu = false;
         if (onHome) holdSelection();                        // Play from Home's menu: no page had it yet
         playTarget = target(episode);
@@ -265,7 +320,7 @@ WebOSWindow {
     // the data, held natively (Seimio.Data); a show's seasons come over to QML once and are kept, so the
     // show page sees the same object again and needn't rebuild
     // everything comes live from the services; `base` is the Stremio account's stand-in (Live, app/stremio/)
-    Catalog { id: catalog; onLoaded: app.shows = ({}) }
+    Catalog { id: catalog; onLoaded: app.refreshHeld() }
     Account { id: account }
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
@@ -306,6 +361,11 @@ WebOSWindow {
             delete app.franchiseLoading[sourceId];
             var f = { item: item, show: show };
             app.franchises[sourceId] = f; app.franchises[item.id] = f;
+            if (sourceId === app.franchiseRefresh) {         // asked for again after the watch state changed
+                app.franchiseRefresh = "";
+                if (app.held && (app.held.item.id === item.id || app.held.item.id === sourceId)) app.rehold(item, show);
+                return;
+            }
             app.shows[item.id] = show;                     // its episodes, for the player's row and what's next
             if (sourceId.indexOf("anilist:") === 0) anime.resolve(sourceId, item);   // the chart's selection becomes the Kitsu item
             // playing already (Play from Home before it was in): the franchise becomes the title in hand, so
@@ -350,6 +410,7 @@ WebOSWindow {
                      playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
+                     library: { item: app.libraryItem ? app.libraryItem.id : "", "in": app.inLibrary, watched: app.watchedTitle, reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
@@ -434,6 +495,8 @@ WebOSWindow {
                 onPlay: app.playAi(episode)
                 onPlayHeld: app.openPlayMenu(episode, rect)
                 onOpenShow: app.openFranchise(show)
+                extras: app.libraryButtons
+                onAction: app.libraryAction(index)
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: { probe.act("show " + ["actions", "seasons", "episodes"][zone]); probe.captures() }
@@ -443,6 +506,8 @@ WebOSWindow {
                 focus: app.layer === "title" && !app.playMenu
                 onPlay: app.playAi(null)
                 onPlayHeld: app.openPlayMenu(null, rect)
+                extras: app.libraryButtons
+                onAction: app.libraryAction(index)
                 active: app.layer === "title"
             }
             HomeScreen {

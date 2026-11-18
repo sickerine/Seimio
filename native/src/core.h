@@ -46,10 +46,10 @@ public:
     static QJsonDocument state(const char *model) { return taken(seimio_core_state(model)); }
     static QJsonDocument view(const char *name) { return taken(seimio_core_view(name)); }
     // { action, args } and { model, args }: the two shapes the core's actions nest
-    static QJsonObject action(const char *name, const QJsonValue &args = QJsonValue()) {
-        QJsonObject o { { "action", name } }; if (!args.isNull() && !args.isUndefined()) o["args"] = args; return o;
+    static QJsonObject action(const char *name, const QJsonValue &args = QJsonValue(QJsonValue::Undefined)) {
+        QJsonObject o { { "action", name } }; if (!args.isUndefined()) o["args"] = args; return o;
     }
-    static QJsonObject load(const char *model, const QJsonValue &args = QJsonValue()) {
+    static QJsonObject load(const char *model, const QJsonValue &args = QJsonValue(QJsonValue::Undefined)) {
         QJsonObject o { { "model", model } }; if (!args.isUndefined()) o["args"] = args; return action("Load", o);
     }
 

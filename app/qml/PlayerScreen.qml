@@ -265,6 +265,7 @@ FocusScope {
     signal turnSeason(var key)
     signal openingEpisodes()
     signal switchStream(int row)
+    signal sought(real to)               // the position was moved (a seek, a skip): not time watched
     onZoneChanged: {
         hide.restart();
         favoriteMenu = false;
@@ -286,7 +287,7 @@ FocusScope {
         seekTarget = Math.max(0, Math.min(media.duration - 2000, seekTarget + dir * step));
         commitSeek.restart();
     }
-    function seekNow() { commitSeek.stop(); if (seekTarget >= 0) { seekLog = [[0, Math.round(seekTarget)]]; seekAt = Date.now(); media.seek(seekTarget) } seekTarget = -1; seekPresses = 0 }
+    function seekNow() { commitSeek.stop(); if (seekTarget >= 0) { seekLog = [[0, Math.round(seekTarget)]]; seekAt = Date.now(); media.seek(seekTarget); sought(seekTarget) } seekTarget = -1; seekPresses = 0 }
     // lab: the position the player shows for 6 s after a seek, [ms since the seek, position]
     property var seekLog: []
     property double seekAt: 0
@@ -331,7 +332,7 @@ FocusScope {
     function skip() {
         var s = segmentNow;                               // read first: once marked it is no longer the one now
         if (!s) return;
-        skipped += " " + s.kind; media.seek(s.end + 500); zone = "none";
+        skipped += " " + s.kind; media.seek(s.end + 500); sought(s.end + 500); zone = "none";
     }
 
     Keys.onPressed: {
@@ -898,7 +899,7 @@ FocusScope {
     onOfferingChanged: if (!offering && zone === "offer") zone = "row"
     readonly property bool overlayZone: ["bar", "row", "offer", "episodes"].indexOf(zone) >= 0     // the transport is up, no list over it
     function playNext() { var e = nextEpisode; upNextMode = ""; zone = "none"; playEpisode(e) }
-    function skipCredits() { upNextMode = ""; zone = "none"; if (outro) { skipped += " outro"; media.seek(outro.end + 500) } }
+    function skipCredits() { upNextMode = ""; zone = "none"; if (outro) { skipped += " outro"; media.seek(outro.end + 500); sought(outro.end + 500) } }
     onUpNextModeChanged: if (upNextMode && nextEpisode) streams.prepare(nextEpisode.id, stream ? stream.bingeGroup || "" : "")
     UpNext {
         id: upNext

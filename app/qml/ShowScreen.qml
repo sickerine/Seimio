@@ -27,6 +27,8 @@ FocusScope {
     // OK on a related show (an anime franchise's Related tab) opens its page: { id, title }
     signal openShow(var show)
     signal playHeld(var episode, rect rect)
+    property var extras: []             // the buttons after Play (App's: the library's), and which was pressed
+    signal action(int index)
     // { id, label, progress, type } of an episode, for playing it; a film among the Specials plays as a film
     function target(sh, season, ep) {
         return { id: ep.id, label: episodeLabel(sh, season, ep), progress: ep.progress || 0, type: ep.type || "series" };
@@ -188,13 +190,11 @@ FocusScope {
         ButtonRow {
             id: actions
             focus: page.zone === 0
-            onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.target(page.show, page.resumePos.s, page.resumeEp))     // what its label names
+            onTriggered: if (buttonIndex > 0) page.action(buttonIndex - 1); else if (page.resumeEp) page.play(page.target(page.show, page.resumePos.s, page.resumeEp))     // what its label names
             onHeld: if (buttonIndex === 0 && page.resumeEp) page.playHeld(page.target(page.show, page.resumePos.s, page.resumeEp), buttonRect(0))
             model: [
-                { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 },
-                { label: "Add to library", icon: "plus", round: true },
-                { label: "Mark watched", icon: "check", round: true }
-            ]
+                { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 }
+            ].concat(page.extras)
         }
     }
 

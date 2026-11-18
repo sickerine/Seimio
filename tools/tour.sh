@@ -12,14 +12,15 @@
 # saved), anime (the Anime tab: moving along the chart crossfades its fanart; a show opening and
 # closing; the filters walked, one chosen and undone), schedule (the Anime tab's schedule: down through
 # the days and along them). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
-# plays the best stream by rank).
+# plays the best stream by rank) and never tell Stremio what they played ("unreported": the account's own
+# progress stays where it was).
 # usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule   (VARIANT: LabProbe switches)
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 route=${1:-home}
 mkdir -p .lab/www
-python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v["noAi"] = True; v.update({"autopop": True} if sys.argv[2] == "menu" else {"openStreams": 12000} if sys.argv[2] == "streams" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
+python3 -c 'import json,sys; v = json.loads(sys.argv[1] or "{}"); v["noAi"] = True; v["unreported"] = True; v.update({"autopop": True} if sys.argv[2] == "menu" else {"openStreams": 12000} if sys.argv[2] == "streams" else {}); print(json.dumps(v))' "${VARIANT:-}" "$route" > .lab/www/variant.json
 failed=0
 # 8 s: the catalog loads and the calendar's art decodes for about 5 s after launch; that's startup, not
 # what a tour measures

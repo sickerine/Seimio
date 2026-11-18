@@ -152,8 +152,8 @@ private:
 };
 
 // The data: Continue Watching, popular rows (for the tabs), shows with their seasons and episodes, and
-// the calendar of release days. It loads once the account's stored state is in (Core), and takes Continue
-// Watching and the watch states again whenever the core says they changed.
+// the calendar of release days. It loads once the account's stored state is in (Core); `reload()` takes
+// Continue Watching and the watch states again (the app asks when the account says they changed).
 class Catalog : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool ready READ ready NOTIFY loaded)
@@ -172,9 +172,8 @@ public:
         connect(&m_franchise, &Franchise::failed, this, &Catalog::franchiseFailed);
         Core *core = Core::instance();
         connect(core, &Core::readyChanged, this, &Catalog::load);
-        connect(core, &Core::changed, this, [this](const QStringList &models) { if (models.contains("continue_watching")) m_again.start(); });
         m_again.setSingleShot(true); m_again.setInterval(400);          // a sign-in changes it several times over
-        connect(&m_again, &QTimer::timeout, this, &Catalog::reload);
+        connect(&m_again, &QTimer::timeout, this, &Catalog::reloadNow);
         core->start();
         if (core->ready()) load();
     }
@@ -243,8 +242,9 @@ public:
             worker->start();
         });
     }
-    // Continue Watching and the watch states again (a title finished, another device, a sign-in)
-    void reload() {
+    // Continue Watching and the watch states again (a title played, another device, a sign-in); `loaded` after
+    Q_INVOKABLE void reload() { m_again.start(); }
+    void reloadNow() {
         if (!m_ready) { m_stale = true; return; }                   // the first load is on its way: after it
         auto docs = std::make_shared<Live::Docs>(m_docs);
         m_live.continueWatching(docs, [this, docs] { m_docs = *docs; build(); });
@@ -485,7 +485,7 @@ private:
         m_ready = true;
         m_model->setCalendar(&m_data->calendar);
         emit loaded();
-        if (m_stale) { m_stale = false; reload(); }
+        if (m_stale) { m_stale = false; reloadNow(); }
     }
 
     Live::Docs m_docs;                                     // Home's documents as last fetched
