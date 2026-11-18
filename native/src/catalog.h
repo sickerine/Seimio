@@ -22,6 +22,7 @@
 #include <QVector>
 #include "franchise.h"
 #include "live.h"
+#include "store.h"
 #include <algorithm>
 #include <climits>
 #include <memory>
@@ -173,6 +174,7 @@ class Catalog : public QObject {
     Q_PROPERTY(QString seasonAsked READ seasonAsked NOTIFY seasonAskedChanged)
     Q_PROPERTY(QVariantList seasons READ seasons CONSTANT)                  // the ones on offer, newest first
     Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY seasonLoaded)    // most common first
+    Q_PROPERTY(QString searchKind READ searchKind WRITE setSearchKind NOTIFY searchKindChanged)
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
         // Live and Franchise fetch, read and assemble on a thread of their own: a show's meta is hundreds of
@@ -228,7 +230,7 @@ public:
                 QVariantMap item = source;
                 const QVariantMap fresh = Live::item(meta);
                 for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
-                item["type"] = type;
+                item["type"] = type; item.remove("thin");
                 back([this, source, id, item, show, state] {
                     // watched while it was on its way: its seasons are made again with what the library says now
                     if (m_docs.library.value(id).toObject() != state) { loadFranchise(source); return; }
@@ -237,24 +239,50 @@ public:
             });
         });
     }
-    // Titles by name (Live::search), as rows for a CardGrid: `found(query, rows)`, each row { title, shelf,
-    // items }, the empty ones left out. Only the last search asked for answers.
+    // Titles by name (Live::search): `found(query, results)`, the titles of each kind { anime, series,
+    // movie }. A film or a series is as Cinemeta's search gives it, a name, a year and pictures (`thin`):
+    // its facts come with its page (`loadFranchise`). Only the last search asked for answers. Films and
+    // series are all Cinemeta has to give (twenty of each); the anime are the first fifty, and
+    // `searchMore()` asks for the next fifty when there are more: `foundMore(query, anime)`.
     Q_INVOKABLE void search(const QString &query) {
         const QString q = query.trimmed();
-        m_searching = q;
-        if (q.size() < 2) { emit found(q, QVariantList()); return; }
+        m_searching = q; m_animePage = 1; m_animeMore = m_animeAsked = false;
+        if (q.size() < 2) { emit found(q, QVariantMap()); return; }
         work([this, q] {
             m_live->search(q, [this, q](const QJsonObject &r) {
-                QVariantList rows, movies, series, anime;
-                for (const QJsonValue &v : r.value("movies").toArray()) movies << Live::item(v.toObject());
-                for (const QJsonValue &v : r.value("series").toArray()) series << Live::item(v.toObject());
-                Data d; Data::loadSeason(d, QJsonObject { { "shows", r.value("anime") } });
-                for (const QVariantMap &m : d.season) anime << m;
-                const QList<QPair<QString, QVariantList>> found { { "Movies", movies }, { "Series", series }, { "Anime", anime } };
-                for (const auto &f : found) if (!f.second.isEmpty()) rows << QVariantMap { { "title", f.first }, { "shelf", true }, { "items", f.second } };
-                back([this, q, rows] { if (q == m_searching) emit this->found(q, rows); });
+                QVariantList movies, series;
+                auto thin = [](const QJsonValue &v) { QVariantMap m = Live::item(v.toObject()); m["thin"] = true; return m; };
+                for (const QJsonValue &v : r.value("movies").toArray()) movies << thin(v);
+                for (const QJsonValue &v : r.value("series").toArray()) series << thin(v);
+                const QVariantMap results { { "anime", shows(r.value("anime").toArray()) }, { "series", series }, { "movie", movies } };
+                const bool more = r.value("animeMore").toBool();
+                back([this, q, results, more] { if (q != m_searching) return; m_animeMore = more; emit this->found(q, results); });
             });
         });
+    }
+    Q_INVOKABLE void searchMore() {
+        if (!m_animeMore || m_animeAsked) return;
+        m_animeAsked = true;
+        const QString q = m_searching;
+        const int page = ++m_animePage;
+        work([this, q, page] {
+            m_live->searchAnime(q, page, [this, q](const QJsonArray &found, bool more) {
+                const QVariantList anime = shows(found);
+                back([this, q, anime, more] { if (q != m_searching) return; m_animeAsked = false; m_animeMore = more; emit this->foundMore(q, anime); });
+            });
+        });
+    }
+    // which kind of title a search shows ("anime", "series" or "movie"): the last one picked, kept between
+    // runs (a preview starts on anime and keeps nothing)
+    QString searchKind() {
+        if (m_searchKind.isEmpty()) m_searchKind = Http::replaying() ? QString("anime") : m_choices.data().value("searchKind").toString("anime");
+        return m_searchKind;
+    }
+    void setSearchKind(const QString &kind) {
+        if (kind == searchKind()) return;
+        m_searchKind = kind;
+        if (!Http::replaying()) { m_choices.data()["searchKind"] = kind; m_choices.save(); }
+        emit searchKindChanged();
     }
     // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
     // items }], each item's `label` its local air time
@@ -389,7 +417,9 @@ signals:
     void seasonFailed(const QString &name);
     void franchiseReady(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
     void franchiseFailed(const QString &sourceId, const QString &reason);
-    void found(const QString &query, const QVariantList &rows);
+    void found(const QString &query, const QVariantMap &results);
+    void foundMore(const QString &query, const QVariantList &anime);
+    void searchKindChanged();
 
 private:
     struct Data {
@@ -556,6 +586,10 @@ private:
     }
 
     QString m_searching;                                   // the last search asked for
+    int m_animePage = 1;                                   // its anime: the last page asked for, whether one follows, and whether it is on its way
+    bool m_animeMore = false, m_animeAsked = false;
+    QString m_searchKind;
+    JsonStore m_choices { "choices.json" };                // what was last picked where the app remembers it
     int m_generation = 0;                                  // the newest load of Home's documents
     Live::Docs m_docs;                                     // Home's documents as last fetched
     QTimer m_again;
@@ -573,6 +607,13 @@ private:
     QThread m_thread;
     Live *m_live = new Live;                               // both live on m_thread
     Franchise *m_franchise = new Franchise;
+    // AniList's shows (Live::shown) as the screens show a title: a search's anime, as a season's chart has them
+    static QVariantList shows(const QJsonArray &found) {
+        Data d; Data::loadSeason(d, QJsonObject { { "shows", found } });
+        QVariantList out;
+        for (const QVariantMap &m : d.season) out << m;
+        return out;
+    }
     template <typename F> void work(F f) { QMetaObject::invokeMethod(m_live, f, Qt::QueuedConnection); }
     template <typename F> void back(F f) { QMetaObject::invokeMethod(this, f, Qt::QueuedConnection); }
     std::shared_ptr<Data> m_data;

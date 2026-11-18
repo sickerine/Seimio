@@ -1,7 +1,8 @@
 // A glass bar of segments (tabs, seasons) walked with Left/Right. The highlight stretches like liquid:
 // its leading edge moves first and the trailing edge follows. It's white while the bar has focus.
 // `model` entries are strings, or { label, icon } for icon-only segments, or { label, trailing } for a
-// label with a small icon after it (chevrons on a segment that opens a menu); a new model of the same
+// label with a small icon after it (chevrons on a segment that opens a menu), or { label, faint } for a
+// label drawn dim (a kind a search found nothing of: it can still be chosen); a new model of the same
 // length relabels the segments in place. Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 // Moving selects, unless `selectOnOk`: then a cursor walks the segments and OK selects the one under it
@@ -104,6 +105,7 @@ FocusScope {
                     readonly property string label: typeof m === "string" ? m : (m && m.label || "")
                     readonly property string icon: typeof m === "string" ? "" : (m && m.icon || "")
                     readonly property string trailing: typeof m === "string" ? "" : (m && m.trailing || "")
+                    readonly property bool faint: typeof m !== "string" && !!(m && m.faint)
                     readonly property bool current: bar.currentIndex === index
                     readonly property color ink: bar.showFocus && bar.cursor === index ? Theme.inkOnLight : Theme.ink
                     // the label and its trailing icon, centred as one block by what's drawn
@@ -115,8 +117,10 @@ FocusScope {
                         visible: parent.icon === ""
                         x: (parent.width - parent.block) / 2; anchors.verticalCenter: parent.verticalCenter
                         text: parent.label; color: parent.ink
+                        opacity: parent.faint && !(bar.showFocus && bar.cursor === index) ? 0.42 : 1      // holds: only dims; the label is the same (under the cursor it is whole: grey on the white pill read as switched off)
                         font.family: Theme.face; font.pixelSize: bar.fontSize; font.weight: parent.current ? Font.DemiBold : Font.Medium
                         Behavior on color { ColorAnimation { duration: 200 } }
+                        Behavior on opacity { NumberAnimation { duration: 200 } }
                     }
                     Icon { visible: parent.icon !== ""; name: parent.icon; anchors.centerIn: parent; color: parent.ink }
                     Icon {

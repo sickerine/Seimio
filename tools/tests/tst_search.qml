@@ -11,12 +11,16 @@ Item {
     // Catalog, as far as the screen uses it: `answer` is the network's
     QtObject {
         id: catalog
-        signal found(string query, var rows)
+        signal found(string query, var results)
+        signal foundMore(string query, var anime)
         property int asked: 0
+        property int more: 0
         function search(query) { asked++ }
-        function answer(query) { found(query, [{ title: "Movies", shelf: true, items: [{ id: "a", name: "a", title: "a", art: "" }, { id: "b", name: "b", title: "b", art: "" }] }]) }
+        function searchMore() { more++ }
+        function titles(from, n) { var out = []; for (var i = from; i < from + n; i++) out.push({ id: "s" + i, name: "s" + i, title: "s" + i, art: "" }); return out }
+        function answer(query) { found(query, { movie: [{ id: "a", name: "a", title: "a", art: "" }, { id: "b", name: "b", title: "b", art: "" }] }) }
     }
-    SearchScreen { id: screen; width: 1920; height: 1080; catalog: catalog; shown: true; focus: true }
+    SearchScreen { id: screen; width: 1920; height: 1080; catalog: catalog; kind: "movie"; shown: true; focus: true }
     SignalSpy { id: entered; target: screen; signalName: "entered" }
 
     TestCase {
@@ -36,6 +40,25 @@ Item {
         compare(screen.row, -1);
         catalog.answer("hun");
         compare(screen.row, 0, "and an Enter that waited for the answer goes on to the rows");
+    }
+    // The anime come fifty at a time. Near the end of the rows the next page is asked for, and its
+    // titles are added under the ones there, the cursor staying on its card.
+    function test_aPageMoreIsAddedUnderTheRows() {
+        screen.kind = "anime";
+        type("gun"); catalog.found("gun", { anime: catalog.titles(0, 10) });
+        screen.enter();
+        compare(screen.row, 0);
+        var asked = catalog.more;
+        keyClick(Qt.Key_Down);                               // the second of two rows: near the end
+        compare(screen.row, 1);
+        verify(catalog.more > asked, "the next page is asked for");
+        catalog.foundMore("gun", catalog.titles(10, 9));
+        compare(screen.count("anime"), 19);
+        compare(screen.row, 1, "the cursor stays on its row");
+        compare(screen.focusItem.id, "s7", "and on its card");
+        keyClick(Qt.Key_Down);
+        tryVerify(function () { return screen.focusItem && screen.focusItem.id === "s14" }, 2000, "the titles added are the rows under it");
+        screen.row = -1; screen.kind = "movie";
     }
     function test_enterIsDroppedWhenTheSearchIsLeft() {
         screen.row = -1; screen.query = "one"; screen.enter();

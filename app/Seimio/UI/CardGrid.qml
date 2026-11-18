@@ -1,9 +1,8 @@
 // Rows of cards under a screen's controls: a season's chart, a week's schedule, the library, a list of
 // films. A fixed pool of row strips handed new rows as the list moves, as CardStrip does with cards, so a
 // long grid never builds more than a screen.
-//   rows   [{ items, schedule, shelf, title, date }]: a `schedule` row is stills that slide under a title
-//          and a `shelf` posters that do (a search's results), each row keeping its own place; the others
-//          are a grid of posters that share one `column`
+//   rows   [{ items, schedule, title, date }]: a `schedule` row is stills that slide under a title, each
+//          row keeping its own place; the others are a grid of posters that share one `column`
 //   row    -1 above the rows (the owner's controls have the remote), 0.. the rows; `scrolled` past the first
 //   show(rows, layout, top)   on screen, the old rows fade out and the new take their place and rise in,
 //          as one piece, at `top` if given (`rowTop` from then on); `replace(rows)` swaps them where they
@@ -61,7 +60,7 @@ FocusScope {
     property var rowColumns: ({})
     // (by what the row is, never by the name the owner gives its layout: the Anime tab's chart is "chart",
     // and read as not a grid its focus stayed on the first card wherever the cursor went)
-    function restingColumn(rowIdx) { var r = rows[rowIdx]; return r && (r.schedule || r.shelf) ? (rowColumns[rowIdx] || 0) : column }
+    function restingColumn(rowIdx) { var r = rows[rowIdx]; return r && r.schedule ? (rowColumns[rowIdx] || 0) : column }
     function rememberColumn(rowIdx, i) { var c = Object.assign({}, rowColumns); c[rowIdx] = i; rowColumns = c }
 
     // the cards: a grid's posters fill the width between the margins exactly; a schedule's are stills
@@ -141,8 +140,7 @@ FocusScope {
                 // (waiting for the scroll to end left it empty, then snapping in, while presses kept coming)
                 onShownAtRestChanged: if (shownAtRest && !take.running && r !== wanted) r = wanted
                 Timer { id: take; onTriggered: slot.r = slot.wanted }
-                readonly property bool schedule: !!(r && r.schedule)
-                readonly property bool titled: !!(r && (r.schedule || r.shelf))      // a row of its own: a title over cards that slide
+                readonly property bool schedule: !!(r && r.schedule)      // a row of its own: a title over stills that slide
                 // a slot fully off screen isn't drawn (Qt draws what's off screen)
                 visible: r !== null && y < grid.height && y + height > 0 && idx - list.first <= grid.arrived
                 y: grid.rowTop + idx * list.stride - list.scrollY
@@ -155,18 +153,18 @@ FocusScope {
                 Behavior on opacity { NumberAnimation { duration: Theme.base } }
                 Row {
                     x: Theme.margin
-                    visible: slot.titled
+                    visible: slot.schedule
                     spacing: 16
                     Text { text: slot.r && slot.r.title || ""; color: Theme.ink; font.family: Theme.face; font.pixelSize: 30; font.weight: Font.DemiBold }
                     Text { anchors.baseline: parent.children[0].baseline; text: slot.r && slot.r.date || ""; color: Theme.inkDim; font.family: Theme.face; font.pixelSize: 24; font.weight: Font.Medium }
                 }
                 CardStrip {
                     id: strip
-                    y: slot.schedule ? 108 : slot.titled ? 62 : 54
+                    y: slot.schedule ? 108 : 54
                     width: grid.width
                     focus: true
                     model: slot.r ? slot.r.items : []
-                    slides: slot.titled
+                    slides: slot.schedule
                     nextLabels: false
                     marks: slot.schedule ? ({}) : grid.marks
                     cardWidth: slot.schedule ? grid.scheduleCard.width : grid.gridCard.width
@@ -174,7 +172,7 @@ FocusScope {
                     narrowest: grid.gridCard.width
                     spacing: slot.schedule ? 36 : grid.gridGap
                     showFocus: activeFocus
-                    onCurrentIndexChanged: if (activeFocus) { if (slot.titled) grid.rememberColumn(slot.idx, currentIndex); else grid.column = currentIndex }
+                    onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) grid.rememberColumn(slot.idx, currentIndex); else grid.column = currentIndex }
                     onActivated: grid.activated(model[cardIndex])
                     onHeld: grid.cardHeld(model[cardIndex], focusRect())
                     onModelChanged: slot.place()

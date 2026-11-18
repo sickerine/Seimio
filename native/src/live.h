@@ -90,7 +90,9 @@ public:
     }
     // Titles by name: Cinemeta's films and series, and anime from AniList, the most popular of the matches
     // first (Kitsu's own search ranks poorly: "demon slayer" starts with "Onigiri"). `done({ movies, series,
-    // anime })`: two lists of Cinemeta previews and one of shows as a season's.
+    // anime, animeMore })`: two lists of Cinemeta previews and one of shows as a season's. Cinemeta gives
+    // twenty of a kind and no more when asked; the anime are a page of fifty, `animeMore` when another
+    // follows (`searchAnime`).
     void search(const QString &query, std::function<void(QJsonObject)> done) {
         auto out = std::make_shared<QJsonObject>();
         auto left = std::make_shared<int>(3);
@@ -101,11 +103,18 @@ public:
                     (*out)[type == QByteArray("movie") ? "movies" : "series"] = metas; finish();
                 });
             });
-        anilist("query ($q: String) { Page(perPage: 24) { media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
-                QJsonObject { { "q", query } }, [this, out, finish](const QJsonObject &data) {
+        searchAnime(query, 1, [out, finish](const QJsonArray &shows, bool more) { (*out)["anime"] = shows; (*out)["animeMore"] = more; finish(); });
+    }
+    // A page of the anime a name finds on AniList, the most popular of the matches first: `done(shows,
+    // more)`, fifty a page, `more` when another page follows
+    void searchAnime(const QString &query, int page, std::function<void(QJsonArray, bool)> done) {
+        anilist("query ($q: String, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
+                QJsonObject { { "q", query }, { "page", page } }, [this, done](const QJsonObject &data) {
+            const QJsonObject found = data.value("Page").toObject();
+            const bool more = found.value("pageInfo").toObject().value("hasNextPage").toBool();
             auto shows = std::make_shared<QJsonArray>();
-            for (const QJsonValue &v : data.value("Page").toObject().value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) *shows << shown(v.toObject(), false);
-            kitsuIds(shows, [out, shows, finish] { (*out)["anime"] = *shows; finish(); });       // (what a result's watched check goes by)
+            for (const QJsonValue &v : found.value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) *shows << shown(v.toObject(), false);
+            kitsuIds(shows, [shows, more, done] { done(*shows, more); });       // (what a result's watched check goes by)
         });
     }
     // One title's meta (a film, a series), from the Kitsu addon or Cinemeta by its id, or nothing. Kept ten

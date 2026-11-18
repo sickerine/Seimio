@@ -17,9 +17,9 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   in `pinned.json`); a state that had to fetch one renders again, so no render shows art half arrived.
 - The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams|player|browse` against the frame budget in
   `tour.sh`. A new screen or interaction gets a route there too. (`search` is a route but not in the
-  check: the TV's own keyboard slides in as the bar opens, and the frames under it come late by their
-  render time with 2 ms of the app's work in them, four to seven a run. Its rows, a title opening and
-  Back are what to read in it.) TV runs vary by about 2x, so judge a
+  check: the TV's own keyboard slides in as the lab types into the bar, and the frames under it come
+  late by their render time with 2 ms of the app's work in them, three a run; two runs came to 3 and 7
+  of the budget of 8. Its rows, a title opening, the kinds and Back are what to read in it.) TV runs vary by about 2x, so judge a
   change by three runs, not one. An OVER BUDGET line means a regression; find it like this:
   1. `VARIANT='{"timing": true}' tools/tour.sh <route>`, then `tools/lab-timeline.py` lines up key
      presses with GUI stalls and late frames. A stall a fixed time after a key (280 ms is the selection

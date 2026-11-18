@@ -50,17 +50,30 @@ public:
     }
 
     // Whether something is at `url` (a HEAD): `done(false)` only when the server says there is nothing (404),
-    // so a request that failed otherwise loses nothing. A preview asks nothing of the network: there.
+    // so a request that failed otherwise loses nothing. A preview answers from its recordings, as `request`
+    // does ("true" or "false", by the address); what isn't recorded is there.
     void exists(const QString &url, std::function<void(bool)> done) {
-        if (replaying()) { QTimer::singleShot(0, this, [done] { done(true); }); return; }
+        static const QString replay = qEnvironmentVariable("SEIMIO_REPLAY");
+        const QString file = replay.isEmpty() ? QString() : replay + "/" + QCryptographicHash::hash("HEAD " + url.toUtf8(), QCryptographicHash::Sha1).toHex() + ".json";
+        if (!file.isEmpty()) {
+            QFile f(file);
+            const bool recorded = f.open(QIODevice::ReadOnly);
+            if (recorded || qEnvironmentVariableIsEmpty("SEIMIO_RECORD")) {
+                const bool there = !recorded || f.readAll().trimmed() != "false";
+                QTimer::singleShot(0, this, [done, there] { done(there); });
+                return;
+            }
+        }
         QNetworkRequest r { QUrl(url) };
         r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
         r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         QNetworkReply *reply = m_net.head(r);
         QTimer::singleShot(8000, reply, &QNetworkReply::abort);
-        connect(reply, &QNetworkReply::finished, this, [reply, done] {
+        connect(reply, &QNetworkReply::finished, this, [reply, done, file] {
             reply->deleteLater();
-            done(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 404);
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (!file.isEmpty() && (status == 200 || status == 404)) { QFile f(file); if (f.open(QIODevice::WriteOnly)) f.write(status == 404 ? "false" : "true"); }
+            done(status != 404);
         });
     }
 

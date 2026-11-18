@@ -135,14 +135,26 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
    tab's, made a component (`CardGrid`): recycled rows, art held ahead.
 4. **Movies, Series**: the same screen with a hero (the focused title's backdrop and facts, as on the Anime
    tab): filters for the list (Popular, New, Featured, the account's other catalogs) and the genre.
-5. **Search**: the search tab opens into a text field and the TV's keyboard comes up. Results under it as
-   three rows: Movies, Series, Anime. Movies and Series are Cinemeta's (IMDb ids); an anime's films and
-   seasons are in the Anime row by their Kitsu ids, titles of their own in Stremio, so the same film can be
-   in both rows with its own watched state in each. A Cinemeta result with no picture behind its poster's
-   address (a fan upload, a reaction video) is left out: the image host is asked once a result. Back from
-   the results goes to the bar; Back there clears what is typed (with the keyboard up the TV's keyboard
-   takes that Back and closes, which the bar sees as the keyboard going away); Back on an empty bar leaves
-   the search. OK on the bar brings the keyboard back.
+5. **Search**: the search tab opens into a text field and the TV's keyboard comes up. Beside the field
+   are the kinds of title, Anime, Series and Movies (`SearchBar`): one is chosen, kept between runs
+   (`Catalog.searchKind`, choices.json), and its results are a grid under the focused title's facts and
+   backdrop, as on Movies and Series (`SearchScreen`). One cursor walks the bar: crossing a kind doesn't
+   choose it, OK does, and a kind the search found nothing of is dim. Up or Back from the grid goes to
+   the kinds, not the field: the field with the remote raises the keyboard, which then takes the arrows.
+   Left from the first kind is the field.
+   Movies and Series are Cinemeta's (IMDb ids); an anime's films and seasons are under Anime by their
+   Kitsu ids, titles of their own in Stremio, so the same film can be under both with its own watched
+   state in each. Every title found is in the grid. Cinemeta gives twenty of a kind and nothing when
+   asked for more; the anime come fifty at a time from AniList, the next fifty asked for near the end of
+   the rows (`Catalog.searchMore`). A Cinemeta result with no picture behind its poster's address (a fan
+   upload, a reaction video) is left out: the image host is asked once a result.
+   A Cinemeta result is a name, a year and pictures (`thin`), so the info shows it as its page's item,
+   which is fetched when the cursor rests on it and shown when it is in (`App.rest`, `commit`): one
+   version of a title's info. Measured on the TV, it shows 0.39 to 0.45 s after the cursor lands, and
+   0.28 s (the rest every title waits) once it has been fetched.
+   Back in the bar clears what is typed (with the keyboard up the TV's keyboard takes that Back and
+   closes, which the field sees as the keyboard going away); Back on an empty bar leaves the search. OK
+   on the field brings the keyboard back.
 6. **Add to library / Remove from library** and **Mark watched / Mark unwatched** on the show and title
    pages, by the core's state, and in Home's menu (a long OK on a Continue Watching card), which also has
    **Remove from Continue Watching**. A long OK on any card of a show's row opens its menu, and what the

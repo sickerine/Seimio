@@ -15,8 +15,9 @@
 # closing; the filters walked, one chosen and undone), schedule (the Anime tab's schedule: down through
 # the days and along them), browse (the Movies tab: into its rows, along and down them, a film opening and
 # closing; then Series and the Library, each walked a little), search (the lab types "demon slayer" and
-# enters it: along its first row, down a row, a title opening and closing, back to the bar; not in
-# check.sh, since the TV's keyboard sliding in makes the frames under it late). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
+# enters it: along its first row, down a row, a title opening and closing, up to the kinds, another kind
+# picked and walked, the first picked again; not in check.sh, since the TV's keyboard sliding in as the
+# lab types makes the frames under it late). Tours never call the AI pick ("noAi": the app gets no OpenRouter key and
 # plays the best stream by rank) and never tell Stremio what they played ("unreported": the account's own
 # progress stays where it was).
 # usage: [VARIANT='{"timing": true}'] tools/tour.sh home|calendar|show|menu|play|streams|player|anime|schedule|browse|search   (VARIANT: LabProbe switches)
@@ -52,7 +53,12 @@ case $route in
           p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 2 400; p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 3 350 ;;
   anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p ENTER 1 2500; p BACK 1 1500
          p UP 1 900; p RIGHT 3 300; p ENTER 1 1500; p LEFT 1 300; p ENTER 1 1500; p UP 1 900 ;;
-  search) sleep 5; p RIGHT 4 350; p DOWN 1 900; p RIGHT 1 500; p UP 1 900; p LEFT 2 350; p ENTER 1 2500; p BACK 1 1500; p BACK 1 1500 ;;
+  search) sleep 5; p RIGHT 4 350; p DOWN 1 900; p RIGHT 1 500; p UP 1 900; p LEFT 2 350; p ENTER 1 2500; p BACK 1 1500
+          # up to the kinds, the one beside the chosen one picked and walked, then the first one picked
+          # again: the account's own pick is what it was
+          kind=$(python3 -c "import json,glob,os; print(json.load(open(sorted(glob.glob('.lab/reports/*design.json'), key=os.path.getmtime)[-1]))['state']['search']['kind'])")
+          there=RIGHT; back=LEFT; [ "$kind" = movie ] && { there=LEFT; back=RIGHT; }
+          p UP 1 900; p $there 1 700; p ENTER 1 2500; p DOWN 1 900; p RIGHT 2 350; p UP 1 900; p $back 1 700; p ENTER 1 2500; p DOWN 1 900; p BACK 1 1500 ;;
 esac
 sleep 4; echo '{}' > .lab/www/variant.json
 python3 - .lab/reports $S $route <<'PY'

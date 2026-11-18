@@ -43,7 +43,7 @@ WebOSWindow {
     onProfileOpenChanged: probe.captures()
     // the Anime tab has its own screen; Home's rows, selection and scroll belong to whichever is up
     property alias tab: tabs.currentIndex                  // 0 Home, 1 Anime, 2 Movies, 3 Series, 4 Library, 5 search
-    property alias searchText: searchField.text
+    property alias searchText: searchBar.text
     readonly property bool animeTab: tab === 1
     // Movies, Series and the Library are one screen (BrowseScreen), each a list of Account's; `browsed` is
     // the last one up, which the screen goes on showing while it fades
@@ -51,24 +51,50 @@ WebOSWindow {
     readonly property bool browseTab: browsing !== ""
     property string browsed: ""
     onBrowsingChanged: if (browsing) browsed = browsing
-    readonly property bool searchTab: tab === 5              // the tab bar turns into the search field; its results below
-    readonly property bool bare: onHome && (browsing === "library" || searchTab)     // a tab with no title above its grid: no info, the backdrop frosted
+    readonly property bool searchTab: tab === 5              // the tab bar turns into the search bar; its results below
+    onSearchTabChanged: { if (searchTab) searchBar.zone = 0; probe.captures() }    // reached from the tab bar: to type
+    // the kinds of title a search finds, as its bar names them and as Catalog does
+    readonly property var searchKinds: [["Anime", "anime"], ["Series", "series"], ["Movies", "movie"]]
+    readonly property bool bare: onHome && (browsing === "library" || (searchTab && !search.any))     // a tab with no title above its grid: no info, the backdrop frosted
     readonly property bool scrolled: animeTab ? anime.scrolled : browseTab ? browse.scrolled : searchTab ? search.scrolled : home.scrolled
     readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? browse.focusItem : searchTab ? search.focusItem : home.focusItem
     property var displayItem: null
-    function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
+    // A search's film or series is a name, a year and pictures (`thin`): the rest of what the info shows
+    // is its page's. So it is shown as its page's item, once that is in (one version of a title's info,
+    // not a name that grows a description), or as it is if that can't be had (`unfetched`). Until then
+    // the info stays on the title before it.
+    property var unfetched: ({})
+    function commit() {
+        settle.stop();
+        var it = focusItem;
+        if (it && it.thin) {
+            var f = franchises[it.id];
+            if (f) it = f.item; else if (!unfetched[it.id]) return;
+        }
+        if (displayItem !== it) displayItem = it;
+    }
+    // the cursor has rested on a title: it shows, a search's film or series once it has been fetched
+    function rest() {
+        var it = focusItem;
+        if (it && it.thin && !franchises[it.id] && !unfetched[it.id]) loadFranchise(it); else commit();
+    }
+    // lab: how long the info took to follow the cursor, the last time it did (a search's film or series
+    // waits for its page's item)
+    property double focusedAt: 0
+    property int shownLag: 0
     onFocusItemChanged: {
-        if (!displayItem) commit(); else settle.restart();
+        focusedAt = Date.now();
+        if (!displayItem) rest(); else settle.restart();
         if (layer === "menu" && menuCard && (!focusItem || focusItem.id !== menuCard.id)) layer = "home";      // the card under Home's menu is another title now
         probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move");
     }
-    Timer { id: settle; interval: 280; onTriggered: app.commit() }
+    Timer { id: settle; interval: 280; onTriggered: app.rest() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
     // the show page for the selected Continue Watching or Anime title is built once Home has been still for a
     // moment (after the backdrop and info have changed), so opening it costs nothing. Not from the
     // calendar: resting on its days would build a page each time (~25 ms) for an open that's rarer there
-    onDisplayItemChanged: prepareShow.restart()
+    onDisplayItemChanged: { shownLag = Date.now() - focusedAt; prepareShow.restart() }
     Timer {
         id: prepareShow; interval: 1200
         onTriggered: {
@@ -252,8 +278,10 @@ WebOSWindow {
     function open() {
         commit();
         // an anime opens as its whole franchise, wherever it was picked (Continue Watching, the calendar, the
-        // Anime tab); a title from a list, the library or a search is fetched the same way
-        if (displayItem && fetched(displayItem)) { openFranchise(displayItem); return }
+        // Anime tab); a title from a list, the library or a search is fetched the same way (a search's
+        // title that isn't in yet is not what the info shows, and opens all the same)
+        var it = focusItem && focusItem.thin ? focusItem : displayItem;
+        if (it && fetched(it)) { openFranchise(it); return }
         openPage();
     }
     function openPage() { hold(displayItem, showData(displayItem.id)); showHeld(null) }
@@ -492,6 +520,7 @@ WebOSWindow {
             delete app.franchiseLoading[sourceId];
             var f = { item: item, show: show };
             app.franchises[sourceId] = f; app.franchises[item.id] = f; app.arrivals++;
+            if (app.onHome && app.focusItem && app.focusItem.thin && app.focusItem.id === sourceId && !settle.running) app.commit();      // the cursor rested on it: now it shows
             if (sourceId === app.franchiseRefresh) {         // asked for again after the watch state changed
                 app.franchiseRefresh = "";
                 if (app.held && (app.held.item.id === item.id || app.held.item.id === sourceId)) app.rehold(item, show);
@@ -515,6 +544,8 @@ WebOSWindow {
         }
         onFranchiseFailed: {
             delete app.franchiseLoading[sourceId];
+            app.unfetched[sourceId] = true;
+            if (app.onHome && app.focusItem && app.focusItem.thin && app.focusItem.id === sourceId && !settle.running) app.commit();      // shown as the search gave it
             // a held card's menu waited for it: it is no title of Stremio's, so there is nothing to offer but why
             if (app.menuWaiting && app.menuWaiting.item.id === sourceId) { app.menuWaiting = null; app.say(reason) }
             if (sourceId !== app.franchiseOpening) return;
@@ -552,6 +583,7 @@ WebOSWindow {
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
+                     search: { text: searchBar.text, kind: search.kind, zone: searchBar.zone, cursor: searchBar.kindBar.cursor, row: search.row, found: search.found, counts: app.searchKinds.map(function (k) { return search.count(k[1]) }).join(","), shownLag: app.shownLag },
                      library: { item: app.libraryItem ? app.libraryItem.id : "", "in": !!app.libraryItem && account.inLibrary(app.libraryItem.id), watched: !!app.libraryItem && account.watched(app.libraryItem.id), reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
@@ -559,7 +591,7 @@ WebOSWindow {
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
         onOpenStreams: app.openStreams(null)
-        onSearch: { app.tab = 5; app.layer = "tabs"; searchField.text = text; search.enter() }      // typed, and Enter: on to what is found
+        onSearch: { app.tab = 5; app.layer = "tabs"; searchBar.text = text; search.enter() }      // typed, and Enter: on to what is found
         onVariantChanged: {
             if (variant.signIn && account.ready && !account.signedIn) account.signInWith(variant.signIn[0], variant.signIn[1]);   // lab: a tour can't approve a code
             if (variant.signOut && account.signedIn) account.signOut();
@@ -718,8 +750,9 @@ WebOSWindow {
                 shown: app.onHome && app.searchTab
                 catalog: catalog
                 watched: account.watchedTitles
-                query: searchField.text
-                onExitTop: app.layer = "tabs"
+                query: searchBar.text
+                kind: catalog.searchKind
+                onExitTop: { searchBar.zone = 1; app.layer = "tabs" }      // up from the results: onto the kinds, which change what they are
                 onEntered: app.layer = "home"
                 onRowChanged: probe.act("search row")
                 onActivated: app.open()
@@ -756,15 +789,25 @@ WebOSWindow {
             Behavior on opacity { NumberAnimation { duration: 300 } }
             onCurrentIndexChanged: probe.act("tabs")
         }
-        // The search tab opens into this, in the tab bar's place: reaching the tab gives it the remote and the
-        // TV's keyboard comes up. Left at the start of the text goes back to the tabs, Down to what was found.
-        SearchField {
-            id: searchField
+        // The search tab opens into this, in the tab bar's place: the field and, beside it, the kinds of
+        // title (SearchBar). Reaching the tab gives the field the remote and the TV's keyboard comes up.
+        // Left at the start of the text goes back to the tabs, Down to what was found.
+        SearchBar {
+            id: searchBar
+            width: parent.width; y: tabs.y
             open: app.searchTab && tabs.shown
             focus: app.layer === "tabs" && app.searchTab
-            source: scene; sy: tabs.y
-            y: tabs.y; iconX: tabs.x + tabs.width - barHeight
-            Keys.onLeftPressed: app.tab = 4
+            opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims, as the tab bar does under a menu
+            Behavior on opacity { NumberAnimation { duration: 300 } }
+            source: scene
+            iconX: tabs.x + tabs.width - height
+            // a kind the search found nothing of is dim
+            kinds: app.searchKinds.map(function (k) { return { label: k[0], faint: search.found.length > 1 && !search.count(k[1]) } })
+            kind: Math.max(0, app.searchKinds.map(function (k) { return k[1] }).indexOf(catalog.searchKind))
+            onChosen: { catalog.searchKind = app.searchKinds[index][1]; probe.act("search kind"); probe.captures() }
+            onZoneChanged: { probe.act("search bar"); probe.captures() }
+            Connections { target: searchBar.kindBar; onCursorChanged: { probe.act("search bar"); probe.captures() } }
+            onExitLeft: app.tab = 4
             Keys.onDownPressed: search.enter()
             Keys.onUpPressed: {}
             onAccepted: search.enter()                      // Enter on the keyboard: on to what was found
@@ -899,7 +942,7 @@ WebOSWindow {
             else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.back() }
             else if (Remote.isBack(event.key) && app.layer === "signin") event.accepted = true                       // nowhere to go back to: signed out, the app is this screen
             // Back in the search bar: what is typed goes first, and from an empty bar it leaves the search
-            else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; if (searchField.text) searchField.text = ""; else { app.tab = 0; app.layer = "home" } }
+            else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; if (searchBar.text) searchBar.text = ""; else { app.tab = 0; app.layer = "home" } }
             else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }

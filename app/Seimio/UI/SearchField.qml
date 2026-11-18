@@ -33,7 +33,7 @@ FocusScope {
     property real t: 0
     states: State { when: field.open; PropertyChanges { target: field; t: 1 } }
     transitions: Transition { NumberAnimation { property: "t"; duration: Theme.slow; easing.type: Theme.ease } }
-    readonly property real openX: (parent ? parent.width - openWidth : 0) / 2
+    property real openX: (parent ? parent.width - openWidth : 0) / 2       // where it is once open: the middle of its parent, unless something sits beside it
     x: iconX + (openX - iconX) * t
     width: barHeight + (openWidth - barHeight) * t; height: barHeight
     opacity: Math.min(1, t * 2.5)
