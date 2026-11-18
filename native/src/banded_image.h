@@ -24,7 +24,11 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QMutex>
+#include <QPointer>
+#include <QVector>
+#include <algorithm>
 #include <QThread>
+#include <QTimer>
 #include <QRunnable>
 #include <atomic>
 #include <memory>
@@ -42,6 +46,8 @@ class BandedImage : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QUrl source READ source WRITE setSource NOTIFY sourceChanged)
     Q_PROPERTY(QSize sourceSize MEMBER m_sourceSize)
+    // a picture to show in the source's place when the source is slow to come (set before `source`)
+    Q_PROPERTY(QUrl fallback MEMBER m_fallback)
     Q_PROPERTY(int status READ status NOTIFY statusChanged)         // Image's: 0 Null, 1 Ready, 2 Loading, 3 Error
 public:
     enum Status { Null, Ready, Loading, Error };
@@ -50,6 +56,17 @@ public:
     ~BandedImage() override { try { drop(); attach(nullptr); } catch (...) { } }
     QUrl source() const { return m_source; }
     int status() const { return m_status; }
+    // lab: how far the picture wanted has come ("fetching 120/996 KB", "decoding", "sending 408/1080", "ready")
+    Q_INVOKABLE QString stage() const {
+        switch (m_stage) {
+        case 1: return QString("fetching %1/%2 KB").arg(m_got / 1024).arg(m_total / 1024);
+        case 2: return "decoding";
+        case 3: return QString("sending %1").arg(m_row);
+        case 4: return "ready";
+        case 5: return "failed: " + m_why;
+        }
+        return "none";
+    }
     void setSource(const QUrl &url) {
         if (url == m_source) return;
         m_source = url; emit sourceChanged();
@@ -80,26 +97,73 @@ private:
     }
     static QSGTexture *blank(QQuickWindow *window) { QImage none(1, 1, QImage::Format_RGBX8888); none.fill(Qt::black); return window->createTextureFromImage(none); }
     void setStatus(int s) { if (s != m_status) { m_status = s; emit statusChanged(); } }
-    void drop() { if (m_reply) { m_reply->disconnect(this); m_reply->abort(); m_reply->deleteLater(); m_reply = nullptr; } }
+    // A picture on its way that is no longer wanted here goes on: cancelled, a backdrop from a slow host
+    // (fanart.tv, 25 KB/s a connection) never arrived, since the cursor had always moved on before it
+    // had, and so was never on disk either. Three go on at most; a fourth lets the oldest go.
+    static QVector<QPointer<QNetworkReply>> &asides() { static QVector<QPointer<QNetworkReply>> list; return list; }
+    static void aside(QNetworkReply *reply) {
+        if (reply->isFinished()) { reply->deleteLater(); return; }
+        connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
+        auto &list = asides();
+        list.erase(std::remove_if(list.begin(), list.end(), [](const QPointer<QNetworkReply> &r) { return !r || r->isFinished(); }), list.end());
+        list << reply;
+        while (list.size() > 3) if (QNetworkReply *oldest = list.takeFirst()) oldest->abort();
+    }
+    // the one on its way for `url`, if any, taken back
+    static QNetworkReply *adopt(const QUrl &url) {
+        auto &list = asides();
+        for (int i = 0; i < list.size(); i++) {
+            QNetworkReply *reply = list[i];
+            if (!reply || reply->isFinished() || reply->request().url() != url) continue;
+            list.remove(i);
+            return reply;
+        }
+        return nullptr;
+    }
+    void drop() { if (m_reply) { m_reply->disconnect(this); aside(m_reply); m_reply = nullptr; } }
 
-    // GUI thread: fetches and decodes `source`; the picture it had goes at once
+    // GUI thread: fetches and decodes `source`; the picture it had goes at once. With a `fallback`, a
+    // source that isn't in within `Patience` gives way to it, for good: the fallback shows, and the source
+    // goes on arriving on the side, to be on disk the next time it is wanted (from disk it is in well
+    // within that).
+    enum { Patience = 400 };
     void load() {
         const int ticket = ++m_ticket;
         drop();
         hand(QImage(), ticket);
         setImplicitSize(0, 0);
+        m_stage = 0; m_got = m_total = 0;
         if (m_source.isEmpty()) { setStatus(Null); return; }
         setStatus(Loading);
-        QNetworkRequest request(m_source);
-        request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
-        m_reply = qmlEngine(this)->networkAccessManager()->get(request);
-        connect(m_reply, &QNetworkReply::finished, this, [this, ticket, reply = m_reply] {
+        fetch(m_source, ticket);
+        if (m_fallback.isEmpty()) return;
+        QTimer::singleShot(Patience, this, [this, ticket] {
+            if (ticket != m_ticket || m_stage != 1) return;         // another picture by now, or this one is in
+            drop();
+            fetch(m_fallback, ticket);
+        });
+    }
+    void fetch(const QUrl &url, int ticket) {
+        m_stage = 1;
+        QNetworkReply *reply = adopt(url);                          // on its way already: not asked for twice
+        if (!reply) {
+            QNetworkRequest request(url);
+            request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+            reply = qmlEngine(this)->networkAccessManager()->get(request);
+        }
+        m_reply = reply;
+        connect(reply, &QNetworkReply::downloadProgress, this, [this, ticket](qint64 got, qint64 total) { if (ticket == m_ticket) { m_got = got; m_total = total; } });
+        connect(reply, &QNetworkReply::finished, this, [this, ticket, reply, url] {
             reply->deleteLater();
-            if (ticket != m_ticket) return;
+            if (ticket != m_ticket || reply != m_reply) return;     // (the source's, when the fallback has taken its place)
             m_reply = nullptr;
-            if (reply->error()) { setStatus(Error); return; }
+            if (reply->error()) { m_stage = 5; m_why = QString::number(reply->error()) + " " + reply->errorString().left(60) + " " + url.toString().right(40); setStatus(Error); return; }
+            m_stage = 2;
             auto decoded = std::make_shared<QImage>();
-            QThread *worker = QThread::create([decoded, data = reply->readAll(), fit = m_sourceSize] {
+            const QByteArray body = reply->readAll();
+            m_why = QString("%1 bytes %2 %3 from %4 %5").arg(body.size()).arg(QString(body.left(8).toHex())).arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt())
+                        .arg(reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute).toBool() ? "disk" : "net").arg(url.toString().right(30));
+            QThread *worker = QThread::create([decoded, data = body, fit = m_sourceSize] {
                 QBuffer buffer; buffer.setData(data); buffer.open(QIODevice::ReadOnly);
                 QImageReader reader(&buffer);
                 const QSize full = reader.size();
@@ -108,8 +172,9 @@ private:
             });
             connect(worker, &QThread::finished, this, [this, ticket, decoded] {
                 if (ticket != m_ticket) return;
-                if (decoded->isNull()) { setStatus(Error); return; }
+                if (decoded->isNull()) { m_stage = 5; m_why = "no picture in " + m_why; setStatus(Error); return; }
                 setImplicitSize(decoded->width(), decoded->height());
+                m_stage = 3;
                 hand(*decoded, ticket);
             });
             connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -180,16 +245,17 @@ private:
         m_id = 0;
         static_cast<BandedProvider *>(textureProvider())->show(whole);
         done(handed);                                       // the GPU has it now
-        QMetaObject::invokeMethod(this, [this, ticket] { if (ticket == m_ticket) setStatus(Ready); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, [this, ticket] { if (ticket == m_ticket) { m_stage = 4; setStatus(Ready); } }, Qt::QueuedConnection);
     }
     // render thread: nothing more to send, unless something else was handed over meanwhile
     void done(int handed) { QMutexLocker l(&m_mutex); if (m_handed == handed) { m_image = QImage(); m_work = false; } }
 
     enum { Band = 136 };                                    // rows a frame: an eighth of 1080
-    QUrl m_source;
+    QUrl m_source, m_fallback;
     QSize m_sourceSize;
     int m_status = Null;
     int m_ticket = 0;                                       // which fetch is the one wanted (GUI thread)
+    int m_stage = 0; qint64 m_got = 0, m_total = 0; QString m_why;      // lab (stage())
     QNetworkReply *m_reply = nullptr;
     QMutex m_mutex;
     QImage m_image;                                         // decoded and waiting for the GPU (under m_mutex)

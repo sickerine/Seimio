@@ -270,7 +270,16 @@ Pictures from a host that says nothing of how long they keep are kept thirty day
 plugin.cpp). fanart.tv, where an anime's backdrops and logos are, sends no cache headers and serves
 about 25 KB/s a connection (2026-11-18): without that each backdrop was fetched again at every launch,
 40 to 67 s for a megabyte, with the title before it still on screen. The first view of one is still
-that slow.
+that slow, so two more things (`BandedImage`): a backdrop on its way that is no longer wanted goes on
+arriving (three at most), to be on disk the next time; cancelled as the cursor moved on, a fanart
+backdrop never arrived at all, and along the Anime chart only the titles with art on a fast host
+changed the screen. And a title that has a quick picture of its own (`backdropFast`: AniList's wide
+strip or its cover, for the chart's and a search's anime) shows that one, for good, when its fanart
+isn't in within 0.4 s (`Backdrop.fallback`). The lab report's `hero` says what each of the backdrop's
+two pictures is doing ("fetching 111/803 KB", "sending", "ready", "failed: why").
+The lab's frame counter is blind while the panel is at 48 Hz (LG leaves it there after an HDR video):
+every gap is 20.8 ms, so nearly no frame counts and a tour reads "80 frames, 80 late". Run
+`tools/tour.sh play` first: an SDR video puts the panel back to 60 Hz.
 
 The cursor on Continue Watching stays on its title when the row comes back in another order
 (`HomeScreen.take`): what has the focus is set whole, with the row, never by a place in it.
