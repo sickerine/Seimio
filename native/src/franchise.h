@@ -5,17 +5,21 @@
 // behind it.
 //  1. ARM maps the id to Kitsu, AniList and the TVDB show, then lists the show's entries with their TVDB
 //     season (0: specials and films; none: a long runner Kitsu keeps whole).
-//  2. AniList's SEQUEL links from the newest season add seasons ARM can't place yet; an entry with no TVDB
-//     show of its own (a film ARM never mapped, as Dragon Ball Super: Super Hero) joins the show of its
-//     AniList prequel or sequel, and so do unmapped films and specials linked to any of the show's entries.
+//  2. AniList's SEQUEL links from the newest season add seasons ARM can't place yet (one announced with no
+//     day to start on is left out until it has one); an entry with no TVDB show of its own (a film ARM
+//     never mapped, as Dragon Ball Super: Super Hero) joins the show of its AniList prequel or sequel, and
+//     so do unmapped films and specials linked to any of the show's entries, and a side story of any
+//     format that no TVDB show has (among the specials: Tensura's two-episode Ramiris ONA).
 //  3. In parallel: each entry's Kitsu meta (episodes, logo, backdrop, poster, year), AniList for all the
 //     entries at once (English titles, scores, descriptions), and Cinemeta for the franchise (its name, logo,
 //     backdrop).
 //  4. Seasons: long runners first, the TVDB seasons in order (split parts joined, numbered on), unplaced
 //     sequels, then Movies and Specials. Every episode names its entry, and an entry without its own logo or
 //     backdrop takes the franchise's.
-//  Related: the other series AniList links to its entries that TVDB keeps as shows of their own (Naruto to
-//  Shippuden, Dragon Ball Super to Daima and its remake), for the page to link to.
+//  Related: the other series AniList links to its entries that are shows of their own (TVDB keeps them
+//  apart, as Naruto and Shippuden, Dragon Ball Super and Daima; or they are a spin-off or another telling
+//  that TVDB doesn't have), for the page to link to. What is listed there opens as a page of its own:
+//  tools/franchises.sh opens every one and says when it comes back as the show it was listed on.
 //  5. Watch state: each member's own Stremio library state (Stremio keeps every Kitsu entry apart) over its
 //     episodes; where you are is the member watched last.
 // A show Kitsu doesn't have comes from Cinemeta by its IMDb id.
@@ -87,6 +91,9 @@ private:
     static QByteArray graphql(const QString &query) { return QJsonDocument(QJsonObject { { "query", query } }).toJson(QJsonDocument::Compact); }
 
     static bool shortForm(const QString &format) { return format == "MOVIE" || format == "OVA" || format == "SPECIAL"; }
+    // Announced, with no day to start on: no season of a show yet, and nothing to list beside it (Tensura's
+    // "4th Season Part 3", due some time in 2027, stood on its page as a Season 5 of thirty-three episodes)
+    static bool undated(const QJsonObject &node) { return node.value("status").toString() == "NOT_YET_RELEASED" && !node.value("startDate").toObject().value("day").toInt(); }
     // the TVDB show's entries (ARM), with `ids` among them if ARM doesn't list it there (a film or special as
     // a special, anything else after the seasons)
     void show(std::shared_ptr<Job> job, int tvdb, QJsonObject ids) {
@@ -105,7 +112,7 @@ private:
                 if (season > best && e.value("anilist").toInt()) { best = season; job->tail = e.value("anilist").toInt(); }
             }
             if (!has) {
-                if (ids.value("thetvdb").toInt() != job->tvdb) { if (shortForm(ids.value("media").toString())) ids["thetvdb-season"] = 0; else ids["appended"] = true; }
+                if (ids.value("thetvdb").toInt() != job->tvdb) { if (shortForm(ids.value("media").toString()) || ids.value("side").toBool()) ids["thetvdb-season"] = 0; else ids["appended"] = true; }
                 job->entries.append(ids);
             }
             if (!job->tail) job->tail = ids.value("anilist").toInt();
@@ -120,18 +127,39 @@ private:
         const int anilist = ids.value("anilist").toInt();
         auto alone = [this, job, ids] { job->entries = QJsonArray { ids }; job->tail = ids.value("anilist").toInt(); sequels(job, 0); };
         if (!anilist) { alone(); return; }
-        send("https://graphql.anilist.co", graphql("{ Media(id:" + QString::number(anilist) + "){ relations{ edges{ relationType node{ id type format status "
+        send("https://graphql.anilist.co", graphql("{ Media(id:" + QString::number(anilist) + "){ format relations{ edges{ relationType node{ id type format status "
                                                     "relations{ edges{ relationType node{ id type format status } } } } } } } }"),
-             [this, job, ids, alone](const QByteArray &body, bool) {
+             [this, job, ids, alone, anilist](const QByteArray &body, bool) {
             static const QStringList order { "PARENT", "PREQUEL", "SEQUEL", "SIDE_STORY" };
             auto released = [](const QJsonObject &n) { return n.value("type").toString() == "ANIME" && n.value("status").toString() != "NOT_YET_RELEASED" && n.value("status").toString() != "CANCELLED"; };
             QVector<QPair<int, int>> ranked;                                  // (preference, AniList id)
-            for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("data").toObject().value("Media").toObject().value("relations").toObject().value("edges").toArray()) {
+            QSet<int> parents;                                                // the ones it is a side story of
+            const QJsonObject media = QJsonDocument::fromJson(body).object().value("data").toObject().value("Media").toObject();
+            // What it is goes by AniList's format, as it does when a show's page sorts what is linked to
+            // it (`extras`): ARM calls Re:Zero's Break Time shorts specials and AniList a short series, and
+            // the page listed them as related shows while opening one put it among Re:Zero's specials.
+            QJsonObject mine = ids;
+            if (!media.value("format").toString().isEmpty()) mine["media"] = media.value("format").toString();
+            const bool series = !shortForm(mine.value("media").toString());
+            for (const QJsonValue &v : media.value("relations").toObject().value("edges").toArray()) {
                 const QJsonObject e = v.toObject(), n = e.value("node").toObject();
                 const int rank = order.indexOf(e.value("relationType").toString());
+                // A series joins another show in two ways only, the two a show's page takes one in by
+                // (`extras`): as its next season (it follows one of the show's entries), or as a side story
+                // of one, among the specials. Anything else is a show of its own, which is how the other's
+                // page lists it (Related), and opened from there it has to be that: a spin-off or another
+                // telling (what its parent calls it says which), a story set before the show, the parent of
+                // one of its side stories. Taken in as seasons, Tensura's two-episode Ramiris side story
+                // opened as "Season 5" of Tensura and One Piece's MONSTERS as its "Season 2". (A film or a
+                // special goes with what it is linked to either way.)
+                QString called;
+                for (const QJsonValue &w : n.value("relations").toObject().value("edges").toArray())
+                    if (w.toObject().value("node").toObject().value("id").toInt() == anilist) called = w.toObject().value("relationType").toString();
+                if (series && (rank >= 2 || (rank == 0 && called != "SIDE_STORY"))) continue;
+                if (series && rank == 0) parents << n.value("id").toInt();
                 if (rank >= 0 && released(n)) ranked << qMakePair(rank, n.value("id").toInt());
                 // its source (a manga, a novel): that source's TV anime, after all of the above
-                if (e.value("relationType").toString() == "ADAPTATION" || e.value("relationType").toString() == "SOURCE")
+                if (!series && (e.value("relationType").toString() == "ADAPTATION" || e.value("relationType").toString() == "SOURCE"))
                     for (const QJsonValue &w : n.value("relations").toObject().value("edges").toArray()) {
                         const QJsonObject m = w.toObject().value("node").toObject();
                         const QString f = m.value("format").toString();
@@ -141,9 +169,13 @@ private:
             if (ranked.isEmpty()) { alone(); return; }
             std::stable_sort(ranked.begin(), ranked.end(), [](const QPair<int, int> &a, const QPair<int, int> &b) { return a.first < b.first; });
             QJsonArray ask; for (const auto &r : ranked) ask << QJsonObject { { "anilist", r.second } };
-            send("https://arm.haglund.dev/api/v2/ids", QJsonDocument(ask).toJson(QJsonDocument::Compact), [this, job, ids, alone](const QByteArray &body, bool) {
+            send("https://arm.haglund.dev/api/v2/ids", QJsonDocument(ask).toJson(QJsonDocument::Compact), [this, job, mine, alone, parents](const QByteArray &body, bool) mutable {
                 for (const QJsonValue &v : QJsonDocument::fromJson(body).array())                // in the order asked
-                    if (const int host = v.toObject().value("thetvdb").toInt()) { show(job, host, ids); return; }
+                    if (const int host = v.toObject().value("thetvdb").toInt()) {
+                        if (parents.contains(v.toObject().value("anilist").toInt())) mine["side"] = true;
+                        show(job, host, mine);
+                        return;
+                    }
                 alone();
             });
         });
@@ -151,19 +183,22 @@ private:
     // AniList's next season after `job->tail` that ARM's TVDB show doesn't have (up to 3 in a row)
     void sequels(std::shared_ptr<Job> job, int hop) {
         if (!job->tail || hop >= 3) { details(job); return; }
-        send("https://graphql.anilist.co", graphql("{ Media(id:" + QString::number(job->tail) + "){ relations{ edges{ relationType node{ id type format } } } } }"),
+        send("https://graphql.anilist.co", graphql("{ Media(id:" + QString::number(job->tail) + "){ relations{ edges{ relationType node{ id type format status startDate{ day } } } } } }"),
              [this, job, hop](const QByteArray &body, bool) {
             int next = 0;
             for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("data").toObject().value("Media").toObject().value("relations").toObject().value("edges").toArray()) {
                 const QJsonObject e = v.toObject(), n = e.value("node").toObject();
                 const QString f = n.value("format").toString();
-                if (e.value("relationType").toString() == "SEQUEL" && n.value("type").toString() == "ANIME" && (f == "TV" || f == "TV_SHORT" || f == "ONA")) { next = n.value("id").toInt(); break; }
+                if (e.value("relationType").toString() == "SEQUEL" && n.value("type").toString() == "ANIME" && (f == "TV" || f == "TV_SHORT" || f == "ONA") && !undated(n)) { next = n.value("id").toInt(); break; }
             }
             for (const QJsonValue &v : job->entries) if (next && v.toObject().value("anilist").toInt() == next) next = 0;
             if (!next) { details(job); return; }
             get("https://arm.haglund.dev/api/v2/ids?source=anilist&id=" + QString::number(next), [this, job, hop, next](const QByteArray &body, bool ok) {
                 QJsonObject ids = QJsonDocument::fromJson(body).object();
                 if (!ok || !ids.value("kitsu").toInt()) { details(job); return; }
+                // (what follows is a show TVDB has apart: no season of this one. MONSTERS, a story set
+                // before One Piece, took One Piece in as its own second season of 1410 episodes.)
+                if (ids.value("thetvdb").toInt() && ids.value("thetvdb").toInt() != job->tvdb) { details(job); return; }
                 ids["appended"] = true;
                 job->entries.append(ids); job->tail = next;
                 sequels(job, hop + 1);
@@ -187,7 +222,7 @@ private:
                 done();
             });
         send("https://graphql.anilist.co", graphql("{ Page(perPage:50){ media(id_in:[" + anilist.join(',') + "]){ id title{ english romaji } averageScore description(asHtml:false) "
-                    "relations{ edges{ relationType node{ id type format title{ english romaji } coverImage{ large } } } } } } }"),
+                    "relations{ edges{ relationType node{ id type format status startDate{ day } title{ english romaji } coverImage{ large } } } } } } }"),
              [job, done](const QByteArray &body, bool) {
             for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("data").toObject().value("Page").toObject().value("media").toArray())
                 job->anilist[v.toObject().value("id").toInt()] = v.toObject();
@@ -208,7 +243,7 @@ private:
             for (const QJsonValue &v : a.value("relations").toObject().value("edges").toArray()) {
                 const QJsonObject e = v.toObject(), n = e.value("node").toObject();
                 const int id = n.value("id").toInt();
-                if (n.value("type").toString() != "ANIME" || known.contains(id) || nodes.contains(id)) continue;
+                if (n.value("type").toString() != "ANIME" || known.contains(id) || nodes.contains(id) || undated(n)) continue;
                 const QString r = e.value("relationType").toString();
                 const bool film = shortForm(n.value("format").toString()) && (r == "PREQUEL" || r == "SEQUEL" || r == "SIDE_STORY" || r == "PARENT");
                 const bool series = !shortForm(n.value("format").toString()) && (r == "PREQUEL" || r == "SEQUEL" || r == "SPIN_OFF" || r == "ALTERNATIVE" || r == "SIDE_STORY" || r == "PARENT");
@@ -224,9 +259,14 @@ private:
                 const int a = e.value("anilist").toInt(), k = e.value("kitsu").toInt(), tv = e.value("thetvdb").toInt();
                 if (!nodes.contains(a)) continue;
                 const QJsonObject n = nodes[a];
-                if (shortForm(n.value("format").toString())) {
+                // (a side story no TVDB show has is one of this show's specials, whatever its format: the
+                // same answer as when it is the title opened, `adopt`)
+                if (shortForm(n.value("format").toString()) || (!tv && relation[a] == "SIDE_STORY")) {
                     if (tv || !k) continue;                                   // another show's, or not playable
                     e["thetvdb-season"] = 0; e["media"] = n.value("format").toString();
+                    job->entries.append(e); fetch << k;
+                } else if (k && !tv && relation[a] == "SEQUEL") {                  // what follows an entry, in no TVDB show yet: a season (as `adopt` has it)
+                    e["appended"] = true;
                     job->entries.append(e); fetch << k;
                 } else if (k && tv != job->tvdb && !(tv && shows.contains(tv))) {     // another show, playable
                     if (tv) shows << tv;

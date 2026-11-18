@@ -13,6 +13,9 @@ QtObject {
     property bool resting: false
     signal stirred()
     function stir() { resting = false; stirred() }
+    // A menu is open over what had the remote. The app says so before it takes the remote away, and the
+    // thing it took it from keeps its focused look until the menu closes (HeldFocus).
+    property bool menuOver: false
     // lab: how many times each kind of redraw has happened ("grid shown", "info", ...). An action on one
     // title (removed from the library, marked watched) should redraw that title and nothing else: read
     // the counts in the lab report before and after it (LabProbe's state, `redraws`).

@@ -225,6 +225,18 @@ episode, a season or all of a title (then `<episode>=<day>` for each day the app
 over the network remote is `tools/tvremote.mjs press ENTER 16 40`, and the lab report says which card the
 open menu is for and what it lists (`menuCard`, `menuEntries`).
 
+An anime's page is put together from four services (`Franchise`), and what it lists has to be true when
+followed: after a change there, run `tools/franchises.sh` (no ids: AniList's forty most popular; or ids
+as the app has them, `kitsu:49235`). It builds each show on the Mac with the app's own loader, prints its
+tabs, opens every title listed as related and fails when one opens as the show it was listed on. A show
+the user watches is not a test of this: Tensura was on Continue Watching the whole time its Related tab
+led back to itself as "Season 5".
+
+What is held for its menu keeps its focused look under the menu: a card stays lifted, a season's tab and
+a button stay white (`HeldFocus`, by `Remote.menuOver`, which the app sets before it opens a menu). The
+frost's cutout is cut for the lifted card, and a card back at its resting size stood inside a hole wider
+than itself. A new control that a menu opens from draws its focus with `HeldFocus`, not `activeFocus`.
+
 A card's menu follows what the card is, the same wherever that kind of card is (`App.menuEntries`): Play
 AI Pick and Play from Stream for what plays, the library's two entries for a title, watched or not for an
 episode. Every card has one on a long OK: a show's row (episodes, films, specials, related shows), a

@@ -1,0 +1,74 @@
+#!/bin/bash
+# Puts franchises together on the Mac with the app's own loader (Catalog.loadFranchise, live network, an
+# empty account) and checks what a page promises: a title it lists under Related opens as a page of its
+# own, not as this show again; no title is both an entry of the show and related to it; and a numbered
+# season is a season (one made of a single short entry that came after the last is named, to look at).
+# With no ids it takes AniList's most popular anime. Prints each show's tabs and what it found; exits 1
+# on a broken promise.
+# (The Mac's Qt can't make a TLS connection to arm.haglund.dev, where a franchise starts, so a relay runs
+# beside it for the length of the run, asking through curl: native/src/http.h, SEIMIO_VIA.)
+# usage: tools/franchises.sh [id...]     ids as the app has them: anilist:101280, kitsu:49235
+REPO=$(cd "$(dirname "$0")/.." && pwd); OUT="$REPO/.lab/franchises"; mkdir -p "$OUT"
+PORT=8099
+python3 -I - "$PORT" <<'PY' &
+import sys, subprocess, http.server
+class Relay(http.server.BaseHTTPRequestHandler):
+    # (through curl: this Python's TLS is too old for the host as well)
+    def go(self, body=None):
+        cmd = ["curl", "-s", "-m", "30", "-A", "seimio/0.1", "-X", self.command, "-w", "\n%{http_code}", "https://arm.haglund.dev" + self.path]
+        if body is not None: cmd += ["-H", "Content-Type: application/json", "--data-binary", "@-"]
+        out = subprocess.run(cmd, input=body, capture_output=True).stdout
+        data, _, code = out.rpartition(b"\n")
+        self.send_response(int(code or 502)); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+    def do_GET(self): self.go()
+    def do_POST(self): self.go(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+    def log_message(self, *a): pass
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Relay).serve_forever()
+PY
+relay=$!; trap 'kill $relay 2>/dev/null; wait $relay 2>/dev/null' EXIT; sleep 1
+run() {       # ids, comma separated: one line of JSON a franchise
+  rm -rf "$OUT/account"; mkdir -p "$OUT/account"
+  SEIMIO_ACCOUNT="$OUT/account" SEIMIO_VIA="arm.haglund.dev=http://127.0.0.1:$PORT" perl -e 'alarm shift; exec @ARGV' 1800 \
+    /opt/homebrew/opt/qt@5/bin/qml -I "$REPO/tools/preview/imports" -I "$REPO/app" "$REPO/tools/preview/franchise.qml" -- "$1" 2>&1 | sed -n 's/^qml: FRANCHISE //p'
+}
+ids=$(IFS=,; echo "$*")
+if [ -z "$ids" ]; then
+  ids=$(curl -s -A "seimio/0.1" -H "Content-Type: application/json" -d '{"query":"query { Page(perPage: 40) { media(type: ANIME, format: TV, sort: POPULARITY_DESC) { id } } }"}' https://graphql.anilist.co \
+        | python3 -I -c "import json,sys; print(','.join('anilist:%d' % m['id'] for m in json.load(sys.stdin)['data']['Page']['media']))")
+fi
+run "$ids" > "$OUT/shows.jsonl"
+# every title a show lists as related, opened in its turn
+related=$(python3 -I -c "
+import json,sys
+seen=set()
+for line in open(sys.argv[1]):
+    for r in json.loads(line).get('related', []): seen.add(r['id'])
+print(','.join(sorted(seen)))" "$OUT/shows.jsonl")
+: > "$OUT/related.jsonl"; [ -n "$related" ] && run "$related" > "$OUT/related.jsonl"
+python3 -I - "$OUT/shows.jsonl" "$OUT/related.jsonl" <<'PY'
+import json, sys
+shows = [json.loads(l) for l in open(sys.argv[1])]
+opened = {f["asked"]: f for f in (json.loads(l) for l in open(sys.argv[2]))}
+bad = 0
+def tab(t): return ("Season %d" % t["season"]) if t["season"] else t["label"]
+# the entries a show's own tabs are made of (its related shows are entries too, for their logo and backdrop)
+def own(f): return set(f["entries"][i]["id"] for t in f["tabs"] if t["kind"] != "related" for i in t["entries"])
+def where(f, id): return [tab(t) for t in f["tabs"] if t["kind"] != "related" and any(f["entries"][i]["id"] == id for i in t["entries"])]
+for f in shows:
+    if "failed" in f: print("%-18s could not be put together: %s" % (f["asked"], f["failed"])); continue
+    mine = own(f)
+    print("%-18s %s" % (f["asked"], f["name"]))
+    for t in f["tabs"]:
+        if t["kind"] != "related": print("    %-10s %3d  %s" % (tab(t), t["episodes"], "; ".join(f["entries"][i]["title"][:44] for i in t["entries"])))
+    for r in f["related"]:
+        o = opened.get(r["id"])
+        if r["id"] in mine: bad += 1; print("    BROKEN: %s is listed as related and is on %s too" % (r["title"], ", ".join(where(f, r["id"]))))
+        elif o and "failed" not in o and own(o) & mine:
+            bad += 1; print("    BROKEN: %s (%s) is listed as related; opened, it is this show again, on %s" % (r["title"], r["id"], ", ".join(where(o, r["id"])) or "?"))
+        else: print("    related    %s%s" % (r["title"][:50], "" if o and "failed" not in o else "  (could not be opened: %s)" % (o or {}).get("failed", "not asked")))
+    numbered = [t for t in f["tabs"] if t["season"] > 0]
+    if len(numbered) > 1 and len(numbered[-1]["entries"]) == 1 and numbered[-1]["episodes"] <= 3:
+        print("    look: %s is one entry of %d episode(s)" % (tab(numbered[-1]), numbered[-1]["episodes"]))
+print("%d shows, %d broken promise(s)" % (len(shows), bad))
+sys.exit(1 if bad else 0)
+PY

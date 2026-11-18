@@ -182,7 +182,6 @@ FocusScope {
                     cardHeight: slot.schedule ? grid.scheduleCard.height : grid.gridCard.height
                     narrowest: grid.gridCard.width
                     spacing: slot.schedule ? 36 : grid.gridGap
-                    showFocus: activeFocus
                     onCurrentIndexChanged: if (activeFocus) { if (slot.schedule) grid.rememberColumn(slot.idx, currentIndex); else grid.column = currentIndex }
                     onActivated: grid.activated(model[cardIndex])
                     onHeld: grid.cardHeld(model[cardIndex], focusRect())

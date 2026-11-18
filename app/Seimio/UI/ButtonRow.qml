@@ -8,6 +8,7 @@ FocusScope {
     property var model: []
     property int currentIndex: 0
     property int spacing: 22
+    property HeldFocus look: HeldFocus { of: row }      // its button looks focused with the remote, and under a menu that took it
     // the button that takes the row's width beyond what the others need (-1: none, the row is as wide
     // as its buttons); give the row a width to use it
     property int stretch: -1
@@ -38,7 +39,7 @@ FocusScope {
                 primary: !!b.primary
                 progress: b.progress === undefined ? -1 : b.progress
                 fill: b.fill === undefined ? -1 : b.fill
-                focused: row.activeFocus && row.currentIndex === index
+                focused: look.shown && row.currentIndex === index
                 width: index === row.stretch ? Math.max(implicitWidth, row.width - row.othersWidth) : implicitWidth
             }
         }

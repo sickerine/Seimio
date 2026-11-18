@@ -34,7 +34,11 @@ public:
             if (f.open(QIODevice::ReadOnly)) { later(f.readAll(), true, 200); return; }
             if (qEnvironmentVariableIsEmpty("SEIMIO_RECORD")) { later(QByteArray(), false, 0); return; }
         }
-        QNetworkRequest r { QUrl(url) };
+        // (A host this Qt can't reach is asked through a relay, SEIMIO_VIA="host=http://127.0.0.1:port":
+        // the Mac's Qt fails the TLS handshake with arm.haglund.dev, where a franchise starts, so
+        // tools/franchises.sh runs one beside it.)
+        static const QStringList via = qEnvironmentVariable("SEIMIO_VIA").split('=');
+        QNetworkRequest r { QUrl(via.size() == 2 && url.startsWith("https://" + via[0] + "/") ? via[1] + url.mid(8 + via[0].size()) : url) };
         r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
         r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         if (!body.isEmpty()) { r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); r.setRawHeader("Accept", "application/json"); }

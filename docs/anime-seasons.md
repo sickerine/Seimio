@@ -56,6 +56,19 @@ ARM also answers the other way: `GET /api/v2/thetvdb?id=` lists every entry of a
 5. **Franchises span several TVDB shows**: Naruto / Shippuden / Boruto, Dragon Ball / Z / Super / Daima,
    Fate, Baki. Those are separate shows, as TVDB and Stremio have them; AniList's links between them can
    fill a "related" row instead.
+   **What a page lists as related has to open as a page of its own.** A title no TVDB show has is
+   placed by two pieces of code, the page that links to it (`Franchise::extras`) and the title itself
+   when it is the one opened (`adopt`), and they must give the same answer. They didn't: Tensura's
+   two-episode Ramiris ONA was "related" on Tensura's page and "Season 5" of Tensura when opened, One
+   Piece's MONSTERS its "Season 2", and Re:Zero's Break Time shorts related on one side and specials on
+   the other (ARM calls them specials, AniList a short series: AniList's format decides on both sides
+   now). The rule, the same from both: a series joins a show as its next season (it follows one of its
+   entries) or, a side story, among its specials; a film or a special goes with what it is linked to;
+   anything else is a show of its own and is listed as related. And a title announced with no day to
+   start on is nowhere yet: Tensura's "4th Season Part 3" (some time in 2027) stood as a Season 5 of
+   thirty-three episodes. `tools/franchises.sh` puts AniList's forty most popular shows together on the
+   Mac with the app's own loader, opens everything they list as related, and fails when one comes back
+   as the show it was listed on (2026-11-18: 5 of 40 did; none after).
 6. **Kitsu's dates**: unknown air dates are 1970-01-01, and planned episodes have guessed dates (Blue Box
    season 2 lists 25 with the last two on one day). `Episodes.aired` must treat 1970-01-01 as not aired.
 7. **No Kitsu id** (2 in 600: Ranma ½ 2024, Steel Ball Run): play by IMDb season and episode, which

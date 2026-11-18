@@ -26,7 +26,8 @@ FocusScope {
     property real shadow: 0
     property bool preblurred: false      // `source` is already blurred (see Glass)          // opacity of a drop shadow under the bar, 0 for none
     property int moveDir: 1
-    property bool showFocus: activeFocus  // draws the focused look; previews set it directly
+    property bool showFocus: look.shown   // draws the focused look (with the remote, or under a menu that took it); previews set it directly
+    property HeldFocus look: HeldFocus { of: bar }
     property bool selectOnOk: false
     property int cursor: currentIndex     // the segment under focus: the selection, unless walking with selectOnOk
     signal triggered(int index)           // OK with selectOnOk, after selecting

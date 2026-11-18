@@ -28,9 +28,9 @@ FocusScope {
     property bool nextLabels: true       // Home's Continue Watching marks unstarted next episodes "Next"
     property int currentIndex: 0
     readonly property int count: model.length
-    // whether the current card is drawn focused; a screen can keep it on while a menu over the row
-    // has the remote
-    property bool showFocus: activeFocus
+    // whether the current card is drawn focused: with the remote, and under a menu that took it (HeldFocus)
+    property bool showFocus: look.shown
+    property HeldFocus look: HeldFocus { of: strip }
     property int moveDir: 1
     property bool slides: true
     // ids of titles that are watched (each true): a card of a title wears its check by its id (`kitsu` for

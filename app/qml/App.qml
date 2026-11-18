@@ -368,7 +368,8 @@ WebOSWindow {
     property bool playMenu: false
     property var menuEpisode: null
     property rect menuAnchor: Qt.rect(0, 0, 0, 0)
-    function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; playMenu = true }
+    // (Remote.menuOver first: what the menu takes the remote from keeps its focused look, HeldFocus)
+    function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; Remote.menuOver = true; playMenu = true }
     readonly property var menuTitle: menuEpisode && (menuEpisode.type === "movie" || menuEpisode.type === "show")
         ? { id: menuEpisode.id, type: (menuEpisode.kind || menuEpisode.type) === "movie" ? "movie" : "series", name: menuEpisode.name, poster: menuEpisode.poster } : null
     readonly property int menuPlays: menuEpisode && !menuEpisode.plays ? 0 : 2
@@ -413,6 +414,8 @@ WebOSWindow {
         if (layer === "home" && selected(sourceId, item)) openTitleMenu(w.item, w.rect);
     }
     onPlayMenuChanged: probe.captures()                    // lab: captures follow the Play options too
+    readonly property bool menuOpen: layer === "menu" || playMenu
+    onMenuOpenChanged: if (!menuOpen) Remote.menuOver = false
     // a handoff (a switch inside the player) is still watching: the scene behind stays away, or the
     // title's backdrop showed through as the still dissolved into the new video
     readonly property bool watching: layer === "player" && (player.playing || !!player.handoff)
@@ -451,7 +454,7 @@ WebOSWindow {
     // changes under it (Continue Watching taken again: a title gone, another order) closes it, so what it
     // does never lands on the title that took the card's place.
     property var menuCard: null
-    function openMenu() { commit(); playMenu = false; menuCard = libraryItem; layer = "menu"; probe.captures() }
+    function openMenu() { commit(); playMenu = false; menuCard = libraryItem; Remote.menuOver = true; layer = "menu"; probe.captures() }
     onLayerChanged: { Remote.stir(); probe.act(layer); probe.captures() }      // a screen coming or going is movement, whoever asked
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
@@ -704,7 +707,6 @@ WebOSWindow {
                 width: parent.width; height: parent.height
                 focus: app.layer === "home" && app.tab === 0 && !app.playMenu
                 shown: app.onHome && app.tab === 0
-                holdFocus: app.layer === "menu"
                 continueWatching: catalog.continueWatching
                 catalog: catalog
                 glassSource: backdropFrost

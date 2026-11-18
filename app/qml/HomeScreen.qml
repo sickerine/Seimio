@@ -12,8 +12,6 @@ FocusScope {
     property Item glassSource                // what the calendar's month bar blurs
     property string today
     property bool shown: true                // false sinks Home away (a page is open)
-    // keeps the focused card drawn focused while something over Home has the remote (quick actions)
-    property bool holdFocus: false
     property int row: 0                      // 0 Continue Watching, 1 calendar
     readonly property bool scrolled: row > 0
     readonly property int column: strip.currentIndex
@@ -73,7 +71,6 @@ FocusScope {
                 cardWidth: 400; cardHeight: 225; spacing: 40
                 onCurrentIndexChanged: home.watchingItem = home.continueWatching[currentIndex] || null
                 focus: home.row === 0
-                showFocus: activeFocus || (home.holdFocus && home.row === 0)
                 onActivated: home.activated(home.continueWatching[cardIndex])
                 onHeld: home.held(home.continueWatching[cardIndex])
             }

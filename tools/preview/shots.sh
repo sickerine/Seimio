@@ -25,7 +25,8 @@ js() {
     calendar) echo "$FIND_JS home.row = 1; var g = f(home, function (o) { return o.cellWidth !== undefined && o.today !== undefined });"\
                    ' g.showFocus = true; g.select("2026-11-17")' ;;
     show) echo 'win.open()' ;;
-    menu) echo 'win.openMenu()' ;;
+    # (its card drawn focused, as it is under its menu with the remote: the Mac may not have made the window active)
+    menu) echo "$FIND_JS win.openMenu(); f(home, function (o) { return o.jumpTo !== undefined }).showFocus = true" ;;
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
     # (its menu's row drawn focused, as it is with the remote: whether the Mac makes the preview's window active varies)
     profile) echo "$FIND_JS win.layer = 'profile'; win.profileOpen = true;"\
