@@ -35,14 +35,19 @@ WebOSWindow {
     // set it to a fixed day
     property string today: Qt.formatDate(new Date(), "yyyy-MM-dd")
     Timer { interval: 60000; running: true; repeat: true; onTriggered: { var t = Qt.formatDate(new Date(), "yyyy-MM-dd"); if (t !== app.today) app.today = t } }
-    readonly property bool onHome: layer === "home" || layer === "tabs" || layer === "menu"
+    readonly property bool onHome: layer === "home" || layer === "tabs" || layer === "menu" || layer === "profile"
+    // signed out, the app is its sign-in screen; signed in, Home
+    readonly property bool signedOut: account.ready && !account.signedIn
+    onSignedOutChanged: { if (signedOut) { trail = []; held = null; profileOpen = false; layer = "signin" } else if (layer === "signin") layer = "home" }
+    property bool profileOpen: false                       // the account's menu, under its picture
+    onProfileOpenChanged: probe.captures()
     // the Anime tab has its own screen; Home's rows, selection and scroll belong to whichever is up
     readonly property bool animeTab: tabs.currentIndex === 1
     readonly property bool scrolled: animeTab ? anime.scrolled : home.scrolled
     readonly property var focusItem: animeTab ? anime.focusItem : home.focusItem
     property var displayItem: null
     function commit() { settle.stop(); if (displayItem !== focusItem) displayItem = focusItem }
-    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); still.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
+    onFocusItemChanged: { if (!displayItem) commit(); else settle.restart(); probe.captures(); if (home.row === 1) probe.act(home.dayOpen ? "day move" : "calendar move") }
     Timer { id: settle; interval: 280; onTriggered: app.commit() }
     // opening or closing a calendar day changes the whole screen, so it commits at once
     Connections { target: home; onDayOpenChanged: { app.commit(); probe.act(home.dayOpen ? "day open" : "day close") } }
@@ -61,8 +66,9 @@ WebOSWindow {
     }
     // Building a page is 60-90 ms of JavaScript on the TV, and a franchise arrives whenever the network
     // answers: one built while the remote was moving along the tab bar was a 90 ms frame. So a page built
-    // ahead waits until nothing has moved for a second (`still`), and is built only if its title is still
-    // the selection. The latest one asked for is the one that waits.
+    // ahead waits until nothing has moved for a second (`still`: any key press, whoever takes it, and a
+    // backdrop crossfade start it over), and is built only if its title is still the selection. The latest
+    // one asked for is the one that waits.
     property var ahead: null                               // { source, item, show }
     function buildAhead(source, item, show) { ahead = { source: source, item: item, show: show }; if (!still.running) builtAhead() }
     // one piece of work a quiet second: the selection's page, then (once) the Anime tab
@@ -249,7 +255,7 @@ WebOSWindow {
         }
     }
     function openMenu() { commit(); playMenu = false; layer = "menu"; probe.captures() }
-    onLayerChanged: { still.restart(); probe.act(layer); probe.captures() }
+    onLayerChanged: { probe.act(layer); probe.captures() }
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
     // compile before anyone opens them
@@ -259,7 +265,8 @@ WebOSWindow {
     // the data, held natively (Seimio.Data); a show's seasons come over to QML once and are kept, so the
     // show page sees the same object again and needn't rebuild
     // everything comes live from the services; `base` is the Stremio account's stand-in (Live, app/stremio/)
-    Catalog { id: catalog; base: Qt.resolvedUrl("../stremio/"); onLoaded: app.shows = ({}) }
+    Catalog { id: catalog; onLoaded: app.shows = ({}) }
+    Account { id: account }
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     // episodes in a show: the library's, or one loaded since (the Anime tab's)
@@ -279,6 +286,7 @@ WebOSWindow {
     property var franchises: ({})
     property var franchiseLoading: ({})
     property string franchiseOpening: ""
+    property var franchiseFrom: null                       // the title in hand when it was asked for
     function loadFranchise(item) {
         if (franchises[item.id] || franchiseLoading[item.id]) return;
         franchiseLoading[item.id] = true;
@@ -286,7 +294,7 @@ WebOSWindow {
     }
     function openFranchise(item) {
         var f = franchises[item.id], from = held;
-        if (!f) { franchiseOpening = item.id; loadFranchise(item); return }
+        if (!f) { franchiseOpening = item.id; franchiseFrom = held; loadFranchise(item); return }
         hold(f.item, f.show, picked(f, item));
         showHeld(from);                                    // from a page's Related tab, over that page
         probe.captures();                                  // lab: a page over a page is a screen change too
@@ -305,7 +313,7 @@ WebOSWindow {
             var playing = app.layer === "player" && app.held && app.playTarget && (app.held.item.id === sourceId || app.held.item.id === item.id) ? Episodes.find(show, app.playTarget.id) : null;
             if (playing) { app.hold(item, show); if (!showPage.load(item, show, app.playTarget.id)) showPage.place(playing); return }
             // asked for from a page's Related tab: it opens over the page
-            if (sourceId === app.franchiseOpening && app.layer === "show") { app.franchiseOpening = ""; app.openFranchise(item); return }
+            if (sourceId === app.franchiseOpening && app.layer === "show" && app.held === app.franchiseFrom) { app.franchiseOpening = ""; app.openFranchise(item); return }
             if (!app.onHome || !app.selected(sourceId, item)) { if (sourceId === app.franchiseOpening) app.franchiseOpening = ""; return }
             if (sourceId !== app.franchiseOpening) { app.buildAhead(sourceId, item, show); return }
             app.franchiseOpening = "";
@@ -318,7 +326,7 @@ WebOSWindow {
             if (app.animeTab) anime.say(reason); else if (app.onHome && app.focusItem && app.focusItem.id === sourceId) app.openPage();
         }
     }
-    WindowTools { id: tools }
+    WindowTools { id: tools; onKeyPressed: still.restart() }
     // keys out of git: app/qml/Secrets.qml (gitignored)
     Loader { id: secrets; source: "Secrets.qml" }
     Tracks { id: trackChoice }
@@ -341,6 +349,7 @@ WebOSWindow {
                      playLog: app.playLog, subs: player.active ? player.subtitleInfo() : "",
                      playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
+                     account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
@@ -348,6 +357,8 @@ WebOSWindow {
         onOpenMenu: app.openMenu()
         onOpenStreams: app.openStreams(null)
         onVariantChanged: {
+            if (variant.signIn && account.ready && !account.signedIn) account.signInWith(variant.signIn[0], variant.signIn[1]);   // lab: a tour can't approve a code
+            if (variant.signOut && account.signedIn) account.signOut();
             if (variant.clearTrackChoices) trackChoice.clearPreferences(typeof variant.clearTrackChoices === "string" ? variant.clearTrackChoices : "");
             // lab: { "playId": { "type": "series", "id": "tt…:2:3" } } plays that video's ranked pick
             if (variant.playId) { app.playTarget = variant.playId; player.prepare({ name: variant.playId.id }, ""); app.layer = "player"; streams.play(variant.playId.type, variant.playId.id, variant.playId.id) }
@@ -363,7 +374,7 @@ WebOSWindow {
         Item {
             id: scene
             anchors.fill: parent
-            opacity: app.watching ? 0 : 1      // holds: the scene keeps its screens under the video
+            opacity: app.watching || app.layer === "signin" ? 0 : 1      // holds: the scene keeps its screens under the video
             // gone, not just transparent, under the video: its backdrop's slow zoom and the calendar's light
             // stop, so nothing redraws over the film
             visible: opacity > 0
@@ -494,8 +505,31 @@ WebOSWindow {
             opacity: app.layer === "menu" ? 0.3 : 1      // holds: only dims; its tabs do not change
             Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
             Behavior on opacity { NumberAnimation { duration: 300 } }
-            onCurrentIndexChanged: { still.restart(); probe.act("tabs") }
+            onCurrentIndexChanged: probe.act("tabs")
         }
+        // The account, at the top left on the tab bar's line: Left from Home's tab reaches it, OK opens its
+        // menu. It comes and goes with the tab bar.
+        FocusScope {
+            id: profile
+            x: Theme.margin; y: tabs.y + (tabs.height - height) / 2
+            width: picture.width; height: picture.height
+            focus: app.layer === "profile" && !app.profileOpen
+            opacity: app.layer === "menu" ? 0.3 : 1      // holds: only dims; the picture does not change
+            Behavior on opacity { NumberAnimation { duration: 300 } }
+            Avatar { id: picture; source: account.avatar; focused: app.layer === "profile" }
+            OkPress { id: profileOk; onTapped: app.profileOpen = true }
+            Keys.forwardTo: [profileOk]
+            Keys.onRightPressed: app.layer = "tabs"
+            Keys.onDownPressed: app.layer = "home"
+        }
+        DropMenu {
+            x: profile.x; y: profile.y + profile.height + 18
+            width: 620                                      // room for an address
+            open: app.profileOpen
+            model: [{ label: "Log out", detail: account.email }]
+            onTriggered: { app.profileOpen = false; account.signOut() }
+        }
+        SignInScreen { anchors.fill: parent; active: app.layer === "signin"; account: account }
         StreamScreen {
             id: streamPage
             focus: app.layer === "streams"
@@ -579,18 +613,21 @@ WebOSWindow {
         }
 
         Keys.onPressed: {
-            if (Remote.isBack(event.key) && app.playMenu) { event.accepted = true; app.playMenu = false }
+            if (Remote.isBack(event.key) && app.profileOpen) { event.accepted = true; app.profileOpen = false }
+            else if (Remote.isBack(event.key) && app.playMenu) { event.accepted = true; app.playMenu = false }
             else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; app.leavePlayer() }
             else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.back() }
             else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
+            else if (event.key === Qt.Key_Left && app.layer === "tabs") { event.accepted = true; app.layer = "profile" }
         }
     }
 
     Component.onCompleted: {
         // Back reaches the app only with this window property; without it webOS opens the exit menu
         tools.setWindowProperty(app, "_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
+        tools.watchKeys(app);
         requestActivate();
     }
 }

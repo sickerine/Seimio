@@ -159,7 +159,9 @@ FocusScope {
     function landing(s) { return s === resumePos.s ? resumePos.e : 0 }
     Connections {
         target: seasonBar
-        onCurrentIndexChanged: if (page.active && seasonBar.currentIndex !== page.shownSeason)
+        // against where the row is headed: back on the season shown while its cards are still on their way
+        // out, the turn goes back too (it used to finish on the season left behind)
+        onCurrentIndexChanged: if (page.active && seasonBar.currentIndex !== (strip.turningNow && !strip.entering ? strip.turnKey : page.shownSeason))
             strip.turnTo(seasonBar.currentIndex > page.shownSeason ? 1 : -1, seasonBar.currentIndex, page.landing(seasonBar.currentIndex))
     }
 
@@ -187,7 +189,7 @@ FocusScope {
             id: actions
             focus: page.zone === 0
             onTriggered: if (buttonIndex === 0 && page.resumeEp) page.play(page.target(page.show, page.resumePos.s, page.resumeEp))     // what its label names
-            onHeld: if (buttonIndex === 0 && page.resumeEp) page.playHeld(page.resumeTarget(page.show), buttonRect(0))
+            onHeld: if (buttonIndex === 0 && page.resumeEp) page.playHeld(page.target(page.show, page.resumePos.s, page.resumeEp), buttonRect(0))
             model: [
                 { label: page.resumeLabel, icon: "play", primary: true, progress: page.resumeEp ? page.resumeEp.progress : -1 },
                 { label: "Add to library", icon: "plus", round: true },

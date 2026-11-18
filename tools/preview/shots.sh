@@ -4,8 +4,9 @@
 # A changed state leaves .lab/shots/<name>.png and <name>-diff.png (differences brightened) to look at.
 # The app fetches everything live (native/src/live.h), so the renders replay recorded answers from
 # tools/preview/api/ (SEIMIO_REPLAY) and stay the same from day to day; --record fetches and records what's
-# missing (delete the folder to record afresh, then look at the renders and approve). Your Stremio stand-in
-# (app/stremio/, tools/fetch-library.sh) decides what Continue Watching holds.
+# missing (delete the folder to record afresh, then look at the renders and approve). The account is the
+# core's storage in tools/preview/account/ (AGENTS.md says how it is signed in): it decides what Continue
+# Watching holds.
 # usage: tools/preview/shots.sh [--approve | --record] [state...]
 P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); OUT="$REPO/.lab/shots"; mkdir -p "$OUT"
 approve=0; [ "$1" = --approve ] && { approve=1; shift; }
@@ -28,12 +29,15 @@ js() {
     show) echo 'win.open()' ;;
     menu) echo 'win.openMenu()' ;;
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
+    profile) echo 'win.layer = "profile"; win.profileOpen = true' ;;
   esac
 }
-states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title gallery gallery2)
+states=("$@"); [ ${#states[@]} -eq 0 ] && states=(home calendar show menu title profile signin gallery gallery2)
 fail=0
 for s in "${states[@]}"; do
   screen="$REPO/app/qml/App.qml"; day="$DAY"; case "$s" in gallery*) screen="$P/$s.qml"; day="";; esac
+  # signed out: the core on an empty folder, so the app is its sign-in screen (the code is a recorded answer)
+  unset SEIMIO_ACCOUNT; [ "$s" = signin ] && { rm -rf "$OUT/signed-out"; export SEIMIO_ACCOUNT="$OUT/signed-out"; }
   # a render that fetched an image caught it whenever it arrived (the data plugin says "fetched"); the next
   # one has it on disk
   for try in 1 2; do
@@ -42,6 +46,9 @@ for s in "${states[@]}"; do
     case "$log" in *"fetched "*) ;; *) break;; esac
   done
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }
+  # a handler that threw or a binding that read nothing while it rendered (the TV's tours catch the same)
+  errs=$(printf '%s\n' "$log" | grep -E "TypeError|ReferenceError|Unable to assign|is not defined" | sed -E 's/^file:[^ ]*\/(app|tools)\//\1\//' | sort -u | head -4)
+  [ -n "$errs" ] && { echo "  $s: script errors"; printf '%s\n' "$errs" | cut -c1-220 | sed 's/^/    /'; fail=1; }
   base="$P/baseline/$s.png"
   if [ $approve = 1 ]; then
     if ffmpeg -v error -y -i "$OUT/$s.png" -vf scale=960:540 "$base"; then echo "  $s: approved"; else echo "  $s: could not write $base"; fail=1; fi

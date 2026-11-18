@@ -152,10 +152,10 @@ private:
 };
 
 // The data: Continue Watching, popular rows (for the tabs), shows with their seasons and episodes, and
-// the calendar of release days. Setting `base` (the art folder's URL) loads it on a worker thread.
+// the calendar of release days. It loads once the account's stored state is in (Core), and takes Continue
+// Watching and the watch states again whenever the core says they changed.
 class Catalog : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString base READ base WRITE setBase NOTIFY baseChanged)
     Q_PROPERTY(bool ready READ ready NOTIFY loaded)
     Q_PROPERTY(QVariantList continueWatching READ continueWatching NOTIFY loaded)
     Q_PROPERTY(QVariantList popular READ popular NOTIFY loaded)
@@ -170,8 +170,14 @@ public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
         connect(&m_franchise, &Franchise::ready, this, &Catalog::franchiseReady);
         connect(&m_franchise, &Franchise::failed, this, &Catalog::franchiseFailed);
+        Core *core = Core::instance();
+        connect(core, &Core::readyChanged, this, &Catalog::load);
+        connect(core, &Core::changed, this, [this](const QStringList &models) { if (models.contains("continue_watching")) m_again.start(); });
+        m_again.setSingleShot(true); m_again.setInterval(400);          // a sign-in changes it several times over
+        connect(&m_again, &QTimer::timeout, this, &Catalog::reload);
+        core->start();
+        if (core->ready()) load();
     }
-    QString base() const { return m_base; }
     bool ready() const { return m_ready; }
     QVariantList continueWatching() const { return m_data ? m_data->continueWatching : QVariantList(); }
     QVariantList popular() const { return m_data ? m_data->popular : QVariantList(); }
@@ -222,23 +228,9 @@ public:
         return days;
     }
 
-    // `base`: the Stremio account's stand-in (its core's files, see Live); everything else is fetched live.
     // Home's data arrives first (`loaded`), the Anime tab's season with its art after (`seasonLoaded`).
-    void setBase(const QString &b) {
-        if (b == m_base) return;
-        m_base = b;
-        emit baseChanged();
-        const QString dir = QUrl(b).isLocalFile() ? QUrl(b).toLocalFile() : b;
-        // results come back through queued connections with this object as their context, so Qt drops them
-        // if the catalog is gone by then (no pointer to it crosses threads)
-        m_live.fetch(dir, [this](Live::Docs docs) {
-            m_franchise.setLibrary(docs.library);
-            auto data = std::make_shared<Data>();
-            QThread *worker = QThread::create([data, docs] { *data = Data::load(docs); });
-            connect(worker, &QThread::finished, this, [this, data] { take(data); });
-            connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-            worker->start();
-        }, [this](Live::Docs docs) {
+    void load() {
+        m_live.fetch([this](Live::Docs docs) { m_docs = docs; build(); }, [this](Live::Docs docs) {
             auto season = std::make_shared<Data>();
             QThread *worker = QThread::create([season, docs] { Data::loadSeason(*season, docs.season); });
             connect(worker, &QThread::finished, this, [this, season] {
@@ -250,6 +242,23 @@ public:
             connect(worker, &QThread::finished, worker, &QObject::deleteLater);
             worker->start();
         });
+    }
+    // Continue Watching and the watch states again (a title finished, another device, a sign-in)
+    void reload() {
+        if (!m_ready) { m_stale = true; return; }                   // the first load is on its way: after it
+        auto docs = std::make_shared<Live::Docs>(m_docs);
+        m_live.continueWatching(docs, [this, docs] { m_docs = *docs; build(); });
+    }
+    void build() {
+        m_franchise.setLibrary(m_docs.library);
+        // results come back through queued connections with this object as their context, so Qt drops them
+        // if the catalog is gone by then (no pointer to it crosses threads)
+        auto data = std::make_shared<Data>();
+        const Live::Docs docs = m_docs;
+        QThread *worker = QThread::create([data, docs] { *data = Data::load(docs); });
+        connect(worker, &QThread::finished, this, [this, data] { take(data); });
+        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+        worker->start();
     }
     bool seasonReady() const { return m_seasonReady; }
     QString seasonAsked() const { return m_seasonAsked; }
@@ -305,7 +314,6 @@ public:
     Q_INVOKABLE int releaseCount(const QString &key) const { return m_data ? m_data->calendar.value(key).size() : 0; }
 
 signals:
-    void baseChanged();
     void loaded();
     void seasonLoaded();
     void seasonAskedChanged();
@@ -323,10 +331,6 @@ private:
         QString seasonName;
         QStringList seasonGenres;
 
-        static QJsonDocument read(const QString &dir, const QString &name) {
-            QFile f(dir + "/" + name);
-            return f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()) : QJsonDocument();
-        }
         static QStringList strings(const QJsonValue &v) {
             QStringList out;
             for (const QJsonValue &x : v.toArray()) if (!x.toString().isEmpty()) out << x.toString();
@@ -475,13 +479,18 @@ private:
         return m;
     }
     void take(std::shared_ptr<Data> data) {
+        // the season on show is the Anime tab's own, fetched apart: a new Home keeps it
+        if (m_data) { data->season = m_data->season; data->seasonName = m_data->seasonName; data->seasonGenres = m_data->seasonGenres; }
         m_data = data;
         m_ready = true;
         m_model->setCalendar(&m_data->calendar);
         emit loaded();
+        if (m_stale) { m_stale = false; reload(); }
     }
 
-    QString m_base;
+    Live::Docs m_docs;                                     // Home's documents as last fetched
+    QTimer m_again;
+    bool m_stale = false;
     bool m_ready = false, m_seasonReady = false;
     QString m_seasonAsked;
     QHash<QString, std::shared_ptr<Data>> m_seasons;       // the seasons fetched this run, by name ("Fall 2026")

@@ -4,7 +4,6 @@ native/out/
 native/qt512/
 
 tvlibs/
-core/target/
 third_party/libass/build/
 third_party/libass/out/
 tools/.tv-client-key
@@ -17,3 +16,7 @@ tools/preview/imports/Seimio/Data/libseimiodata.dylib
 
 # keys
 app/qml/Secrets.qml
+
+# the previews' Stremio account (the core's storage, signed in once with core/target/release/core-lab)
+tools/preview/account/
+core/target/

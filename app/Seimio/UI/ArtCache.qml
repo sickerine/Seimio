@@ -13,7 +13,7 @@ import QtQuick 2.12
 import QtQml 2.12
 
 QtObject {
-    id: cache
+    id: art
     readonly property int slots: 224
     readonly property int budget: 72 * 1024 * 1024      // bytes of decoded art, at 4 a pixel
     property int held: 0                                // bytes held now
@@ -61,8 +61,15 @@ QtObject {
     function take(i, k, url, w, h) {
         drop(i);
         var image = holders.objectAt(i);
-        image.sourceSize = Qt.size(w, h); image.source = url;
         at[k] = i; keys[i] = k; bytes[i] = w * h * 4; stamp[i] = ++clock; held += bytes[i];
+        image.slot = i; image.sourceSize = Qt.size(w, h); image.source = url;      // last: cached art is Ready inside the assignment
+    }
+    // decoded: the budget counts the picture as it came out, which is not always the size asked for (how
+    // a crop is decoded differs between Qt versions)
+    function sized(i, w, h) {
+        if (!keys[i]) return;
+        held += w * h * 4 - bytes[i]; bytes[i] = w * h * 4;
+        while (held > budget) { var o = oldest(false); if (o === i || o < 0) break; drop(o) }
     }
 
     // A view's art, held ahead: `urls` in the order the view shows them, each decoded at w x h. They are
@@ -77,13 +84,17 @@ QtObject {
     property Timer feed: Timer {
         interval: 16; repeat: true
         onTriggered: {
-            for (var n = 0; n < 6 && cache.queue.length; n++) { var q = cache.queue.shift(); cache.hold(q[0], q[1], q[2]) }
-            if (!cache.queue.length) stop();
+            for (var n = 0; n < 6 && art.queue.length; n++) { var q = art.queue.shift(); art.hold(q[0], q[1], q[2]) }
+            if (!art.queue.length) stop();
         }
     }
 
     property Instantiator holders: Instantiator {
-        model: cache.slots
-        Image { visible: false; asynchronous: true; fillMode: Image.PreserveAspectCrop }
+        model: art.slots
+        Image {
+            property int slot: -1                       // which holder this is, set when it takes art (Qt 5.12 gives an Instantiator's delegate no `index`)
+            visible: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
+            onStatusChanged: if (status === Image.Ready && slot >= 0) art.sized(slot, implicitWidth, implicitHeight)
+        }
     }
 }

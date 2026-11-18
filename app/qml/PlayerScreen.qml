@@ -184,10 +184,12 @@ FocusScope {
     }
     function chooseTracks(list) {
         trackList = list.concat(addonSubs); choice = tracks.choose(trackList, group);
+        var mine = choice;
         if (!judged) {
             judged = true;
             if (choice.silent) reject("No sound this TV plays", true); else if (group === "anime" && choice.noSubtitleTrack) reject("No subtitle track", true);
         }
+        if (choice !== mine) return;                       // rejected, and another file is loading already (App answers inside reject)
         if (choice.audio >= 0) { if (media.loaded) media.selectAudio(choice.audio); else media.preferredAudio = choice.audio }
         audioMuted = !!choice.audioOff;
         if (media.loaded) media.mute(audioMuted);
@@ -867,8 +869,8 @@ FocusScope {
             // sought back before it: gone, to be offered again; watched on past the credits: gone, and the
             // end's offer still comes; there: the next episode
             if (p < upNextSpan.from - 1500) { if (upNextMode === "credits") creditsOffered = false; else endOffered = false; upNextMode = "" }
+            else if (p >= upNextSpan.until - 250) playNext();       // first: a countdown that ends with the credits is not one they outlasted
             else if (upNextMode === "credits" && outro && p >= outro.end) upNextMode = "";
-            else if (p >= upNextSpan.until - 250) playNext();
             return;
         }
         var mode = outro && !creditsOffered && p >= outro.start && p < outro.end - 3000 ? "credits" : d > 0 && !endOffered && p >= d - 10000 ? "end" : "";

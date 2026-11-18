@@ -112,7 +112,7 @@ FocusScope {
         dayStrip.show(dayRow, land);                      // last: what the focused card stands for is in place
     }
     function openTheDay() { buildDay(grid.selected, 0); dayOpen = true; zone = 2 }
-    function closeTheDay() { dayOpen = false; zone = 1 }
+    function closeTheDay() { dayStrip.settle(); dateRoll.complete(); dayOpen = false; zone = 1 }      // a turn on its way ends here
 
     // turning to a neighbouring day (the row, a PagedStrip, slides its cards over): the date rolls and a
     // light runs along the timeline the way you go

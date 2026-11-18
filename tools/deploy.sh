@@ -1,5 +1,5 @@
 #!/bin/bash
-# Packages app/ (with the built plugin and the Stremio stand-in), installs it on the TV and launches it, then
+# Packages app/ (with the built plugins), installs it on the TV and launches it, then
 # prints the load result from the lab server. Needs ares-cli on Node 20 and the TV set up as device "tv".
 # usage: tools/deploy.sh [seconds to wait]
 set -u
@@ -7,7 +7,6 @@ REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
 export PATH=~/.nvm/versions/node/v20.20.0/bin:$PATH
 mkdir -p app/native .lab/ipk .lab/reports
 cp native/out/libseimionative.so native/out/libseimiodata.so native/out/libass.so.9 native/out/qmldir app/native/
-[ -f app/stremio/cw.out.json ] || { echo "no Stremio stand-in: run tools/fetch-library.sh first"; exit 1; }
 id=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['id'])")
 ver=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['version'])")
 # a fresh build number each time, or ares-install keeps the old files

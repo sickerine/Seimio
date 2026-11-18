@@ -66,18 +66,12 @@ private:
         QJsonArray entries; QHash<int, QJsonObject> kitsu; QHash<int, QJsonObject> anilist; QJsonObject cinemeta; QJsonObject library;
         QVector<int> relatedKitsu;                       // the related shows' Kitsu ids, their metas in `kitsu` too
     };
-    QNetworkAccessManager m_net { this };
+    Http m_http { this };
     QJsonObject m_library;
 
     void get(const QString &url, std::function<void(const QByteArray &, bool)> done) { send(url, QByteArray(), done); }
     void send(const QString &url, const QByteArray &body, std::function<void(const QByteArray &, bool)> done) {
-        QNetworkRequest r { QUrl(url) };
-        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
-        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-        if (!body.isEmpty()) { r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); r.setRawHeader("Accept", "application/json"); }
-        QNetworkReply *reply = body.isEmpty() ? m_net.get(r) : m_net.post(r, body);
-        QTimer::singleShot(15000, reply, &QNetworkReply::abort);
-        connect(reply, &QNetworkReply::finished, this, [reply, done] { reply->deleteLater(); done(reply->readAll(), reply->error() == QNetworkReply::NoError); });
+        m_http.request(url, body, [done](const QByteArray &data, bool ok, int) { done(data, ok); });
     }
     static QByteArray graphql(const QString &query) { return QJsonDocument(QJsonObject { { "query", query } }).toJson(QJsonDocument::Compact); }
 

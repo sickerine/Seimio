@@ -1,35 +1,24 @@
 #pragma once
 // Live: everything the catalog shows, fetched when the app starts, from the services themselves. Nothing is
-// baked into the app. The one stand-in is the Stremio account: until the app signs in, its continue-watching
-// list and library state are the Stremio core's own files (cw.out.json, library_recent.json), copied from
-// the TV's core probe by tools/fetch-library.sh into app/stremio/.
+// baked into the app. The account's part (Continue Watching, every library item's watch state) comes from
+// Stremio's core (core.h).
 //   rows     Cinemeta's top movies and series; posters, backdrops and logos from metahub
 //   cw       Stremio's continue-watching list, each title's art and facts from Cinemeta or the Kitsu addon
 //   series   those shows' episodes, from the same metas, with watch state from Stremio's (the watched bitfield)
 //   season   AniList's current season and the shows still airing from earlier ones (AniChart's leftovers),
 //            each with its Kitsu fanart and logo (ARM maps AniList to Kitsu)
 //   airing   the calendar's anime: those shows' episode air times (AniList, in the same pages)
-// The documents keep the shapes the catalog parses (Catalog::Data::load).
-//
-// The Mac's visual check needs the same data every run: with SEIMIO_REPLAY set to a folder, answers come from
-// recordings there (by request), and SEIMIO_RECORD=1 records what's missing (tools/preview/shots.sh --record).
-// The app on the TV never sets them.
-#include <QCryptographicHash>
+// The documents keep the shapes the catalog parses (Catalog::Data::load). Requests go through Http, which
+// replays recordings for the Mac's visual check.
 #include <QDateTime>
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QRegularExpression>
 #include <QSet>
-#include <QTimer>
-#include <QUrl>
 #include <functional>
 #include <memory>
+#include "core.h"
 
 class Live : public QObject {
     Q_OBJECT
@@ -41,12 +30,12 @@ public:
 
     // Home's documents (rows, cw, series, and the calendar's anime from the season pages), then `home`; the
     // season's art (a Kitsu meta a show) after, then `anime`: each screen gets its data whole, once
-    void fetch(const QString &stremioDir, std::function<void(Docs)> home, std::function<void(Docs)> anime) {
+    void fetch(std::function<void(Docs)> home, std::function<void(Docs)> anime) {
         auto docs = std::make_shared<Docs>();
         auto homeLeft = std::make_shared<int>(3);
         auto homeDone = [docs, homeLeft, home] { if (--*homeLeft == 0) home(*docs); };
         rows(docs, homeDone);
-        continueWatching(stremioDir, docs, homeDone);
+        continueWatching(docs, homeDone);
         const auto now = seasonAt(QDate::currentDate());
         chart(now.first, now.second, true, [docs, homeDone, now](std::shared_ptr<QJsonArray> shows) {
             docs->season = QJsonObject { { "season", now.first }, { "year", now.second } };
@@ -66,33 +55,11 @@ public:
     }
 
 private:
-    QNetworkAccessManager m_net { this };
+    Http m_http { this };
     static constexpr const char *kCinemeta = "https://v3-cinemeta.strem.io";
     static constexpr const char *kKitsu = "https://anime-kitsu.strem.fun";
 
-    // every request goes through here: GET when `body` is empty, else a JSON POST; `done(body, ok, status)`
-    void request(const QString &url, const QByteArray &body, std::function<void(const QByteArray &, bool, int)> done) {
-        static const QString replay = qEnvironmentVariable("SEIMIO_REPLAY");
-        const QString file = replay.isEmpty() ? QString() : replay + "/" + QCryptographicHash::hash(url.toUtf8() + body, QCryptographicHash::Sha1).toHex() + ".json";
-        if (!file.isEmpty()) {
-            QFile f(file);
-            if (f.open(QIODevice::ReadOnly)) { const QByteArray data = f.readAll(); QTimer::singleShot(0, this, [done, data] { done(data, true, 200); }); return; }
-            if (qEnvironmentVariableIsEmpty("SEIMIO_RECORD")) { QTimer::singleShot(0, this, [done] { done(QByteArray(), false, 0); }); return; }
-        }
-        QNetworkRequest r { QUrl(url) };
-        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
-        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-        if (!body.isEmpty()) { r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); r.setRawHeader("Accept", "application/json"); }
-        QNetworkReply *reply = body.isEmpty() ? m_net.get(r) : m_net.post(r, body);
-        QTimer::singleShot(20000, reply, &QNetworkReply::abort);
-        connect(reply, &QNetworkReply::finished, this, [reply, done, file] {
-            reply->deleteLater();
-            const QByteArray data = reply->readAll();
-            const bool ok = reply->error() == QNetworkReply::NoError;
-            if (ok && !file.isEmpty()) { QDir().mkpath(QFileInfo(file).path()); QFile f(file); if (f.open(QIODevice::WriteOnly)) f.write(data); }
-            done(data, ok, reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt());
-        });
-    }
+    void request(const QString &url, const QByteArray &body, Http::Done done) { m_http.request(url, body, done); }
     void get(const QString &url, std::function<void(const QJsonDocument &, bool)> done) {
         request(url, QByteArray(), [done](const QByteArray &data, bool ok, int) { done(QJsonDocument::fromJson(data), ok); });
     }
@@ -132,16 +99,14 @@ private:
                 if (--*left == 0) { docs->rows = QJsonArray { (*rows)[0], (*rows)[1] }; done(); }
             });
     }
-    // Stremio's list (the stand-in for the account), each title's meta live; a show's meta also gives its
-    // episodes, with Stremio's watch state laid over them
-    void continueWatching(const QString &dir, std::shared_ptr<Docs> docs, std::function<void()> done) {
-        auto read = [&dir](const QString &name) { QFile f(dir + "/" + name); return f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()) : QJsonDocument(); };
-        const QJsonArray list = firstN(read("cw.out.json").array(), 10);
+    // Stremio's Continue Watching, each title's meta live; a show's meta also gives its episodes, with
+    // Stremio's watch state laid over them
+public:
+    void continueWatching(std::shared_ptr<Docs> docs, std::function<void()> done) {
+        const QJsonArray list = firstN(Core::view("watching").array(), 10);
         QHash<QString, QJsonObject> library;
-        const QJsonDocument lib = read("library_recent.json");
-        const QJsonValue items = lib.isObject() && lib.object().contains("items") ? lib.object().value("items") : (lib.isArray() ? QJsonValue(lib.array()) : QJsonValue(lib.object()));
-        auto add = [&library](const QJsonValue &v) { const QJsonObject i = v.toObject(); library[i.value("_id").toString()] = i.value("state").toObject(); };
-        if (items.isArray()) for (const QJsonValue &v : items.toArray()) add(v); else for (const QJsonValue &v : items.toObject()) add(v);
+        for (const QJsonValue &v : Core::view("library").array()) library[v.toObject().value("_id").toString()] = v.toObject().value("state").toObject();
+        docs->cw = QJsonArray(); docs->series = QJsonObject(); docs->library = QJsonObject();
         for (auto it = library.begin(); it != library.end(); ++it) docs->library[it.key()] = it.value();
         if (list.isEmpty()) { done(); return; }
         auto left = std::make_shared<int>(list.size());
@@ -168,7 +133,6 @@ private:
             });
         }
     }
-public:
     // a show's seasons from its meta: watched episodes from Stremio's bitfield, progress on the current one
     static QJsonObject show(const QJsonObject &meta, const QJsonObject &state) {
         QVector<QJsonObject> videos;

@@ -35,10 +35,11 @@ its owner, so the rest of the hold can't press anything in the menu.
 ## Building and running
 
 1. `tools/fetch-tv-libs.sh` copies the TV's Qt and LG libraries into `tvlibs/` (dev mode, SSH key at `~/.ssh/tv_key`).
-2. `third_party/libass/build.sh`, then `native/build.sh` (Docker; the webOS toolchain is cached in `~/Library/Caches/webos-sdk`).
-3. `tools/fetch-library.sh` copies your Stremio state (continue watching, library) from the TV's Stremio core
-   into `app/stremio/`, the account's stand-in until the app signs in. Everything else the app fetches live
-   from the services when it starts (`native/src/live.h`); nothing is baked in.
+2. `third_party/libass/build.sh`, `core/build.sh` (Stremio's core, Rust), then `native/build.sh` (Docker; the
+   webOS toolchain is cached in `~/Library/Caches/webos-sdk`).
+3. The app signs in to Stremio itself (a code to approve on a phone) and takes the account from Stremio's
+   core. Everything else it fetches live from the services when it starts (`native/src/live.h`); nothing
+   is baked in.
 4. `python3 -I tools/lab-server.py &` then `tools/deploy.sh`.
 5. `tools/tour.sh home|calendar|show|menu|play|streams|player` drives the TV with the network remote and prints frame pacing.
 6. `tools/preview/build-data.sh` builds `Seimio.Data` for the Mac, then `tools/preview/shot.sh out.png`

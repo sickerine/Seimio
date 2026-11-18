@@ -10,6 +10,7 @@ echo "visual check"; tools/preview/shots.sh || fail=1
 # it changes as the fade starts (a scale or a slide that goes with one is on the same item)
 echo "fades"; out=$(grep -nE '^[[:space:]]*opacity: .*\?' app/qml/*.qml app/Seimio/UI/*.qml | grep -v '// holds:') && { echo "$out"; echo "  an opacity switched by a condition: use Fade (its content reads \`current\`), or say on the line why what it shows can't change under it (// holds: ...)"; fail=1; }
 echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app -import tools/preview/imports 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
+errs=$(echo "$out" | grep -E "TypeError|ReferenceError|Unable to assign|is not defined" | sort -u | head -4); [ -n "$errs" ] && { echo "  script errors in the tests:"; echo "$errs" | cut -c1-220; fail=1; }
 [ "$1" = --mac ] && exit $fail
 
 started=""

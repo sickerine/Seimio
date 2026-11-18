@@ -121,10 +121,20 @@ Each rule comes from a measured stall on the C5.
 ## Data
 
 Nothing is baked into the app: everything comes live from the services when it starts (`native/src/live.h`:
-Cinemeta, the Kitsu addon, AniList, ARM, metahub), and images go through a disk cache. The one stand-in is
-the Stremio account (`app/stremio/`, `tools/fetch-library.sh`) until the app signs in. Never add a fetched
+Cinemeta, the Kitsu addon, AniList, ARM, metahub), and images go through a disk cache. Never add a fetched
 snapshot of data or art to make something look finished; the Mac's visual check alone replays recorded
 answers (`tools/preview/api/`) so its renders stay fixed.
+
+The Stremio account is Stremio's own core (`core/`, Rust: `stremio-core` behind a C interface;
+`native/src/core.h`, `account.h`): signing in with a link code, the library, Continue Watching, watch
+state and its rules. Nothing about the account is reimplemented: what counts as watched, what Continue
+Watching holds and how devices merge are the core's. `docs/stremio-integration.md` has the plan and what
+was measured. The core's HTTP goes through `Http` like everything else; a request to Stremio's API (it
+carries the account's key) is never recorded and never made in a preview. The previews' account is the
+core's storage in `tools/preview/account/` (not in git), signed in once:
+`core/target/release/core-lab tools/preview/account '|{"action":"Ctx","args":{"action":"Authenticate","args":{"type":"Login","email":"…","password":"…","facebook":false}}}' wait:6000`.
+On the TV a tour can't approve a code, so the lab signs in: `{"signIn": ["email", "password"]}` in the
+variant.
 
 ## Playback
 

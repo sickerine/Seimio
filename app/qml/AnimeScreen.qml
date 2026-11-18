@@ -76,8 +76,11 @@ FocusScope {
         return out;
     }
     function warm() { if (!shown && !rows.length && catalog && catalog.seasonReady) { pending = build(); pendingView = view; apply() } }
+    property bool stale: false                       // a season came in while the tab was away
     function refresh() {
-        if (!catalog || !catalog.seasonReady || !shown) return;
+        if (!catalog || !catalog.seasonReady) return;
+        if (!shown) { stale = rows.length > 0; return }
+        stale = false;
         var out = build();
         // on screen, the old rows fade out, the new ones take their place and rise in, as one piece, with
         // the view they're laid out for (cards keep the old shape until then)
@@ -113,7 +116,7 @@ FocusScope {
         }
         onSeasonFailed: anime.say("Couldn't load " + name)
     }
-    onShownChanged: { if (shown && !rows.length) refresh(); holdCovers() }
+    onShownChanged: { if (shown && (!rows.length || stale)) refresh(); holdCovers() }
     // a choice (OK on a bar) asks again, once for changes made together
     onViewChanged: Qt.callLater(anime.refresh)
     onFormatChanged: Qt.callLater(anime.refresh)
