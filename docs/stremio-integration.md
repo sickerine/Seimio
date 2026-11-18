@@ -142,7 +142,9 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
    library's two entries, on the card's left where its right has no room; an Anime tab card is AniList's
    until its franchise says which Kitsu title it is, so its menu waits for that. A release in an open
    calendar day has its episode's entry, by the episode's number in its franchise for an anime.
-   Nothing that airs later is marked. A menu lists what it opened with until it has closed
+   Nothing that airs later is marked. A watched title's poster wears the check in every grid, at once
+   and without its row being rebuilt (`Account.watchedTitles`, `CardGrid.marks`); a mark that can't be
+   made says "Couldn't mark it" at the bottom of the screen. A menu lists what it opened with until it has closed
    (`QuickMenu`'s `Latch`): its labels follow what they did. The page under it is built again where it is
    (`ShowScreen.refresh`): the focus stays on the card and Play names what it named.
 7. **Calendar**: library titles' releases, first in each day.

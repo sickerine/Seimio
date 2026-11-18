@@ -98,10 +98,10 @@ public:
                 (*out)[type == QByteArray("movie") ? "movies" : "series"] = d.object().value("metas").toArray(); finish();
             });
         anilist("query ($q: String) { Page(perPage: 24) { media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
-                QJsonObject { { "q", query } }, [out, finish](const QJsonObject &data) {
-            QJsonArray shows;
-            for (const QJsonValue &v : data.value("Page").toObject().value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) shows << shown(v.toObject(), false);
-            (*out)["anime"] = shows; finish();
+                QJsonObject { { "q", query } }, [this, out, finish](const QJsonObject &data) {
+            auto shows = std::make_shared<QJsonArray>();
+            for (const QJsonValue &v : data.value("Page").toObject().value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) *shows << shown(v.toObject(), false);
+            kitsuIds(shows, [out, shows, finish] { (*out)["anime"] = *shows; finish(); });       // (what a result's watched check goes by)
         });
     }
     // One title's meta (a film, a series), from the Kitsu addon or Cinemeta by its id, or nothing. Kept ten
@@ -338,33 +338,46 @@ private:
         }
         return out;
     }
-    // each show's full-screen fanart and logo: ARM maps AniList to Kitsu (100 at a time), the Kitsu addon has them
-    void art(std::shared_ptr<QJsonArray> shows, std::function<void()> done) {
+    // each show's Kitsu id (`kitsu`: "kitsu:N", the title Stremio's library knows it by; none when Kitsu
+    // doesn't have it): ARM maps AniList to Kitsu, 100 at a time
+    void kitsuIds(std::shared_ptr<QJsonArray> shows, std::function<void()> done) {
         if (shows->isEmpty()) { done(); return; }
-        auto left = std::make_shared<int>(0);
-        auto finish = [left, done] { if (--*left == 0) done(); };
+        auto left = std::make_shared<int>((shows->size() + 99) / 100);
         for (int from = 0; from < shows->size(); from += 100) {
             QJsonArray ask;
             for (int i = from; i < shows->size() && i < from + 100; i++) ask << QJsonObject { { "anilist", (*shows)[i].toObject().value("anilist") } };
-            ++*left;
-            request("https://arm.haglund.dev/api/v2/ids", QJsonDocument(ask).toJson(QJsonDocument::Compact), [this, shows, from, left, finish](const QByteArray &data, bool, int) {
+            request("https://arm.haglund.dev/api/v2/ids", QJsonDocument(ask).toJson(QJsonDocument::Compact), [shows, from, left, done](const QByteArray &data, bool, int) {
                 const QJsonArray ids = QJsonDocument::fromJson(data).array();
                 for (int k = 0; k < ids.size(); k++) {
                     const int kitsu = ids[k].toObject().value("kitsu").toInt();
                     if (!kitsu) continue;
-                    ++*left;
-                    const int at = from + k;
-                    get(QString(kKitsu) + "/meta/series/kitsu:" + QString::number(kitsu) + ".json", [shows, at, finish](const QJsonDocument &d, bool) {
-                        const QJsonObject m = d.object().value("meta").toObject();
-                        QJsonObject s = (*shows)[at].toObject();
-                        s["background"] = m.value("background").toString();
-                        s["logo"] = m.value("logo").toString();
-                        (*shows)[at] = s;
-                        finish();
-                    });
+                    QJsonObject s = (*shows)[from + k].toObject();
+                    s["kitsu"] = "kitsu:" + QString::number(kitsu);
+                    (*shows)[from + k] = s;
                 }
-                finish();
+                if (--*left == 0) done();
             });
         }
+    }
+    // each show's full-screen fanart and logo, which the Kitsu addon has
+    void art(std::shared_ptr<QJsonArray> shows, std::function<void()> done) {
+        kitsuIds(shows, [this, shows, done] {
+            auto left = std::make_shared<int>(1);
+            auto finish = [left, done] { if (--*left == 0) done(); };
+            for (int at = 0; at < shows->size(); at++) {
+                const QString kitsu = (*shows)[at].toObject().value("kitsu").toString();
+                if (kitsu.isEmpty()) continue;
+                ++*left;
+                get(QString(kKitsu) + "/meta/series/" + kitsu + ".json", [shows, at, finish](const QJsonDocument &d, bool) {
+                    const QJsonObject m = d.object().value("meta").toObject();
+                    QJsonObject s = (*shows)[at].toObject();
+                    s["background"] = m.value("background").toString();
+                    s["logo"] = m.value("logo").toString();
+                    (*shows)[at] = s;
+                    finish();
+                });
+            }
+            finish();
+        });
     }
 };

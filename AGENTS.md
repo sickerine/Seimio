@@ -229,6 +229,11 @@ open calendar day, a Continue Watching card. A new row of cards takes its menu f
 with no menu is a bug. Only what has nothing to offer opens none: a release that airs later, an anime
 that Kitsu doesn't have (it is no title of Stremio's).
 
+What is watched wears the check wherever its card is: an episode, a film or a related show by its own
+data, a title's poster in a grid by the account's watched titles (`Account.watchedTitles` to
+`CardGrid.marks`; an anime by its `kitsu` id, which `Live::kitsuIds` gives the chart's and a search's
+shows). A mark that can't be made says so (`App.say`, the one chip at the bottom of the screen).
+
 ## Playback
 
 What the TV plays is measured: `docs/playback.md` has the table, and `native/src/playback.h` is that table

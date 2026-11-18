@@ -26,6 +26,8 @@ class Account : public QObject {
     Q_PROPERTY(QVariantMap link READ link NOTIFY linkChanged)
     // read with inLibrary() or watched(), so a binding follows; it also moves when an episode's watched state does
     Q_PROPERTY(int libraryRevision READ libraryRevision NOTIFY libraryChanged)
+    // the titles watched, by id (each `true`): what a grid's posters wear their check by (CardGrid.marks)
+    Q_PROPERTY(QVariantMap watchedTitles READ watchedTitles NOTIFY libraryChanged)
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
     //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
     //   items(from, n)   that many of its titles, as the screens show a title
@@ -35,6 +37,7 @@ public:
     explicit Account(QObject *parent = nullptr) : QObject(parent) {
         Core *core = Core::instance();
         connect(core, &Core::readyChanged, this, &Account::refresh);
+        connect(core, &Core::unmarked, this, &Account::markFailed);
         connect(core, &Core::changed, this, [this](const QStringList &models) {
             if (models.contains("ctx")) refresh();
             if (models.contains("link")) linked();
@@ -57,6 +60,7 @@ public:
     int libraryRevision() const { return m_revision; }
     Q_INVOKABLE bool inLibrary(const QString &id) const { return m_library.contains(id); }
     Q_INVOKABLE bool watched(const QString &id) const { return m_watched.contains(id); }
+    QVariantMap watchedTitles() const { QVariantMap out; for (const QString &id : m_watched) out[id] = true; return out; }
 
     QVariantMap browsing() const { return m_browsing; }
     Q_INVOKABLE QVariantList items(int from, int n) const { return m_items.mid(from, n); }
@@ -94,7 +98,7 @@ public:
         ctx("MetaItemMarkAsWatched", QJsonObject { { "meta_item", preview(item) }, { "is_watched", watched } });
     }
     // one episode of a series, by its id: the core's rules (Continue Watching moves on when it was the one
-    // you were on)
+    // you were on); `markFailed()` if it can't be
     Q_INVOKABLE void markEpisode(const QString &videoId, bool watched) {
         const QString meta = titleOf(videoId);
         Core::instance()->markVideo("series", meta, sourceOf(meta), videoId, watched);
@@ -130,6 +134,7 @@ signals:
     void browsingChanged();
     void libraryChanged();
     void watchingChanged();
+    void markFailed();                        // an episode asked to be marked couldn't be: nothing was written
 
 private:
     static void ctx(const char *action, const QJsonValue &args = QJsonValue(QJsonValue::Undefined)) { Core::instance()->dispatch("", Core::action("Ctx", Core::action(action, args))); }

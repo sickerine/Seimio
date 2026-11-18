@@ -12,7 +12,7 @@
 // and made again at each change (22-26 ms on the TV).
 //
 // `model` is a JS array of card data: { art, fallback, title, caption, label, episode, progress, watched,
-// upcoming }.
+// upcoming }, and for a title's card its `id` (and `kitsu`), which `marks` goes by.
 // With `slides` off the row stays put and the focus moves along it (a row of a grid that fits the screen).
 import QtQuick 2.12
 
@@ -33,6 +33,9 @@ FocusScope {
     property bool showFocus: activeFocus
     property int moveDir: 1
     property bool slides: true
+    // ids of titles that are watched (each true): a card of a title wears its check by its id (`kitsu` for
+    // an anime known by another id), where an episode's card carries `watched` itself
+    property var marks: ({})
     signal activated(int cardIndex)
     signal held(int cardIndex)
     height: cardHeight + (showTitles ? 70 : 0)
@@ -70,7 +73,7 @@ FocusScope {
             title: d && d.title || ""
             episode: d && d.episode || ""
             progress: d && d.progress !== undefined ? d.progress : -1
-            watched: !!(d && d.watched)
+            watched: !!(d && (d.watched || strip.marks[d.kitsu || d.id]))
             upcoming: d && d.upcoming || ""
             caption: d && d.caption || ""
             label: d && d.label || ""

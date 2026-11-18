@@ -441,7 +441,13 @@ WebOSWindow {
     // show page sees the same object again and needn't rebuild
     // everything comes live from the services, and the account from Stremio's core (Account)
     Catalog { id: catalog; onLoaded: app.refreshHeld() }
-    Account { id: account }
+    Account { id: account; onMarkFailed: app.say("Couldn't mark it") }
+    // A moment's word at the bottom of the screen when something asked for couldn't be done: a show that
+    // can't open (not on Kitsu yet, its episodes didn't load), a season that didn't load, an episode that
+    // couldn't be marked. The Anime tab's season on its way shows there too.
+    property string notice: ""
+    function say(text) { notice = text; noticeTimer.restart() }
+    Timer { id: noticeTimer; interval: 2600; onTriggered: app.notice = "" }
     property var shows: ({})
     function showData(id) { if (!shows[id]) shows[id] = catalog.show(id); return shows[id] }
     // episodes in a show: the library's, or one loaded since (the Anime tab's)
@@ -515,11 +521,11 @@ WebOSWindow {
         }
         onFranchiseFailed: {
             delete app.franchiseLoading[sourceId];
-            // a held card's menu waited for it: it has no title of Stremio's, so there is nothing to offer
-            if (app.menuWaiting && app.menuWaiting.item.id === sourceId) { app.menuWaiting = null; if (app.animeTab) anime.say(reason) }
+            // a held card's menu waited for it: it is no title of Stremio's, so there is nothing to offer but why
+            if (app.menuWaiting && app.menuWaiting.item.id === sourceId) { app.menuWaiting = null; app.say(reason) }
             if (sourceId !== app.franchiseOpening) return;
             app.franchiseOpening = "";
-            if (app.animeTab) anime.say(reason); else if (app.onHome && app.focusItem && app.focusItem.id === sourceId) app.openPage();
+            if (app.animeTab) app.say(reason); else if (app.onHome && app.focusItem && app.focusItem.id === sourceId) app.openPage();
         }
     }
     WindowTools { id: tools; onKeyPressed: Remote.stir() }
@@ -685,6 +691,7 @@ WebOSWindow {
                 focus: app.layer === "home" && app.animeTab && !app.playMenu
                 shown: app.onHome && app.animeTab
                 catalog: catalog
+                watched: account.watchedTitles
                 glassSource: backdropFrost
                 shownItem: app.displayItem
                 onExitTop: app.layer = "tabs"
@@ -694,6 +701,7 @@ WebOSWindow {
                 // a show from the chart opens once its franchise is in (Catalog.loadFranchise)
                 onActivated: app.open()
                 onHeld: app.openTitleMenu(item, rect)
+                onSaid: app.say(text)
             }
             BrowseScreen {
                 id: browse
@@ -714,6 +722,7 @@ WebOSWindow {
                 focus: app.layer === "home" && app.searchTab && !app.playMenu
                 shown: app.onHome && app.searchTab
                 catalog: catalog
+                watched: account.watchedTitles
                 query: searchField.text
                 onExitTop: app.layer = "tabs"
                 onEntered: app.layer = "home"
@@ -878,6 +887,11 @@ WebOSWindow {
             x: fromRight ? app.menuAnchor.x - 44 - width : app.menuAnchor.x + app.menuAnchor.width + 44
             y: Math.min(app.menuAnchor.y, Theme.screenHeight - height - 60)
             onTriggered: app.menuAct(actionIndex)
+        }
+        Fade {
+            anchors.horizontalCenter: parent.horizontalCenter; y: Theme.screenHeight - 120
+            value: app.notice || (app.onHome && app.animeTab && anime.seasonLoading ? "Loading " + catalog.seasonAsked : "")
+            Chip { kind: "solid"; size: 24; text: parent.current || "" }
         }
 
         Keys.onPressed: {

@@ -3,7 +3,8 @@
 // rules) for Qt. One for the process, on the thread that first asks for it (the GUI's). The core runs on
 // its own threads; what it says comes back here through queued calls, and its HTTP is answered by Http.
 //   dispatch(model, action)   the core's Action as JSON, to one of its models or ("") to all
-//   markVideo(type, meta, base, video, watched)   one episode, which the core does on its details of the title
+//   markVideo(type, meta, base, video, watched)   one episode, which the core does on its details of the title;
+//                                                 `unmarked()` when it couldn't be
 //   state(model), view(name)  JSON, read on any thread
 //   changed(models)           those models' state is new;  event(name, args)  the core's events
 #include <QCoreApplication>
@@ -54,7 +55,7 @@ public:
     // `base` (`mark_video` in core/src/lib.rs); one that can't be marked is a warning, now or later
     void markVideo(const QString &type, const QString &meta, const QString &base, const QString &video, bool watched) {
         if (char *why = seimio_core_mark_video(type.toUtf8().constData(), meta.toUtf8().constData(), base.toUtf8().constData(), video.toUtf8().constData(), watched)) {
-            qWarning("core: not marked: %s", why); seimio_core_free(why);
+            notMarked(why); seimio_core_free(why);
         }
     }
     static QJsonDocument state(const char *model) { return taken(seimio_core_state(model)); }
@@ -71,9 +72,11 @@ signals:
     void readyChanged();
     void changed(const QStringList &models);
     void event(const QString &name, const QJsonObject &args);
+    void unmarked();                          // an episode asked to be marked couldn't be (`markVideo`)
 
 private:
     explicit Core(QObject *parent) : QObject(parent) {}
+    void notMarked(const char *why) { qWarning("core: not marked: %s", why); emit unmarked(); }
     static QJsonDocument taken(char *json) {
         if (!json) return QJsonDocument();
         const QJsonDocument d = QJsonDocument::fromJson(json);
@@ -88,7 +91,7 @@ private:
             if (k == "ready") { core->m_ready = true; emit core->readyChanged(); }
             else if (k == "state") { QStringList models; for (const QJsonValue &v : QJsonDocument::fromJson(j).array()) models << v.toString(); emit core->changed(models); }
             else if (k == "event") { const QJsonObject e = QJsonDocument::fromJson(j).object(); emit core->event(e.value("event").toString(), e.value("args").toObject()); }
-            else if (k == "unmarked") qWarning("core: not marked: %s", j.constData());
+            else if (k == "unmarked") core->notMarked(j.constData());
         }, Qt::QueuedConnection);
     }
     static void onFetch(void *user, quint64 id, const char *method, const char *url, const char *, const uchar *body, size_t len) {

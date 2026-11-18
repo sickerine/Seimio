@@ -96,6 +96,7 @@ FocusScope {
         width: browse.width; height: browse.height
         focus: browse.row >= 0
         held: browse.shown
+        marks: browse.account ? browse.account.watchedTitles : ({})
         dim: browse.mine && browse.page.loading ? 0.3 : 1      // another list is on its way
         onActivated: browse.activated(item)
         onCardHeld: browse.held(item, rect)

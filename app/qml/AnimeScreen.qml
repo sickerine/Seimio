@@ -16,6 +16,7 @@ import "Episodes.js" as Episodes
 FocusScope {
     id: anime
     property var catalog: null
+    property var watched: ({})               // ids of the titles watched (Account.watchedTitles): the chart's posters wear their check by it
     property Item glassSource
     property bool shown: false
     property var shownItem: null             // the show App's info is on (the countdown follows it)
@@ -47,10 +48,7 @@ FocusScope {
     readonly property var focusItem: { var raw = grid.focusItem; return raw && resolved[raw.id] ? resolved[raw.id] : raw }
     property var resolved: ({})
     function resolve(sourceId, item) { var r = Object.assign({}, resolved); r[sourceId] = item; resolved = r }
-    // a moment's word when a show can't open (not on Kitsu yet, its episodes didn't load)
-    property string notice: ""
-    function say(text) { notice = text; noticeTimer.restart() }
-    Timer { id: noticeTimer; interval: 2600; onTriggered: anime.notice = "" }
+    signal said(string text)                 // a moment's word for the app to show (a season that didn't load)
     signal activated(var item)
     signal held(var item, rect rect)         // a long OK on a card: its menu goes beside `rect`
     signal exitTop()
@@ -99,7 +97,7 @@ FocusScope {
             anime.row = -1;
             anime.refresh();
         }
-        onSeasonFailed: anime.say("Couldn't load " + name)
+        onSeasonFailed: anime.said("Couldn't load " + name)
     }
     onShownChanged: if (shown && (!rows.length || stale)) refresh()
     // a choice (OK on a bar) asks again, once for changes made together
@@ -296,6 +294,7 @@ FocusScope {
         width: anime.width; height: anime.height
         focus: anime.row >= 0
         held: anime.shown
+        marks: anime.watched
         dim: anime.seasonLoading ? 0.3 : 1               // the season on screen while another is fetched: dimmed, and out of reach (see the controls' Down)
         onActivated: anime.activated(item)
         onCardHeld: anime.held(item, rect)
@@ -331,14 +330,6 @@ FocusScope {
         maxRows: 5
         model: [{ label: "All genres", checked: anime.genre === "" }].concat((anime.catalog ? anime.catalog.seasonGenres : []).map(function (g) { return { label: g, checked: anime.genre === g } }))
         onTriggered: { anime.genre = rowIndex === 0 ? "" : anime.catalog.seasonGenres[rowIndex - 1]; anime.menu = "" }
-    }
-
-    // a season on its way, or a moment's word
-    Fade {
-        z: 4
-        anchors.horizontalCenter: parent.horizontalCenter; y: Theme.screenHeight - 120
-        value: anime.seasonLoading ? "Loading " + anime.catalog.seasonAsked : anime.notice
-        Chip { kind: "solid"; size: 24; text: parent.current || "" }
     }
 
     Keys.onPressed: {

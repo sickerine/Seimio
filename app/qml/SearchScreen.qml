@@ -7,6 +7,7 @@ import Seimio.UI 1.0
 FocusScope {
     id: search
     property var catalog
+    property var watched: ({})               // ids of the titles watched (Account.watchedTitles): a result's poster wears its check by it
     property bool shown: false
     property string query: ""                // what the field holds
     property alias row: grid.row             // -1 the field, 0.. the rows
@@ -50,6 +51,7 @@ FocusScope {
         width: search.width; height: search.height
         focus: true
         held: search.shown
+        marks: search.watched
         rowTop: 240
         onActivated: search.activated(item)
         onCardHeld: search.held(item, rect)

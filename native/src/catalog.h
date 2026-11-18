@@ -504,6 +504,7 @@ private:
                 const QJsonObject next = a["next"].toObject();
                 d.season.append(QVariantMap{
                     { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
+                    { "kitsu", a["kitsu"].toString() },          // the title Stremio's library knows it by, if Kitsu has it
                     { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", art(a["logo"].toString()) },
                     { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
                     { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },

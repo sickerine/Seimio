@@ -12,6 +12,7 @@ Item {
         id: account
         property var all: []
         property var browsing: ({ what: "library", filters: [], count: 0, more: false, loading: false })
+        property var watchedTitles: ({})
         function browse(what) {}
         function choose(key, option) {}
         function more() {}

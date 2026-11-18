@@ -21,6 +21,9 @@ FocusScope {
     property string layout: "grid"           // the layout the rows on screen are for: "grid", "schedule" or "shelf"
     property int perRow: 7
     property bool held: false
+    // ids of the titles that are watched (each true): their posters wear the check (CardStrip.marks). A
+    // schedule's cards are next episodes, which a watched title says nothing of.
+    property var marks: ({})
     property real dim: 1                     // below 1 the rows dim as one piece (another list is on its way)
     property int rowTop: 650                 // where the first row sits, under the owner's controls
     readonly property bool swapping: swap.running
@@ -163,6 +166,7 @@ FocusScope {
                     model: slot.r ? slot.r.items : []
                     slides: slot.titled
                     nextLabels: false
+                    marks: slot.schedule ? ({}) : grid.marks
                     cardWidth: slot.schedule ? grid.scheduleCard.width : grid.gridCard.width
                     cardHeight: slot.schedule ? grid.scheduleCard.height : grid.gridCard.height
                     narrowest: grid.gridCard.width
