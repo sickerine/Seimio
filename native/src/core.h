@@ -1,7 +1,9 @@
 #pragma once
 // Stremio's own core (core/, Rust: accounts, the library, watch state, catalogs, the player's progress
 // rules) for Qt. One for the process, on the thread that first asks for it (the GUI's). The core runs on
-// its own threads; what it says comes back here through queued calls, and its HTTP is answered by Http.
+// its own threads; what it says comes back here through queued calls, and its HTTP is answered by Net,
+// each request sent once as the core asks it (`Net::send`): the core is a client of its own, which
+// writes as well as reads and decides itself what to ask again.
 //   dispatch(model, action)   the core's Action as JSON, to one of its models or ("") to all
 //   mark(type, meta, base, what, watched)   an episode, a season or all of a title, which the core does on
 //                                           its details of the title; `unmarked()` when it couldn't be
@@ -13,7 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
-#include "http.h"
+#include "net.h"
 
 extern "C" {
 void seimio_core_start(const char *dir, void (*onEvent)(void *, const char *, const char *),
@@ -38,7 +40,7 @@ public:
     void start() {
         if (m_started) return;
         m_started = true;
-        const QString dir = qEnvironmentVariable("SEIMIO_ACCOUNT", Http::replaying() ? qEnvironmentVariable("SEIMIO_REPLAY") + "/../account"
+        const QString dir = qEnvironmentVariable("SEIMIO_ACCOUNT", Net::replaying() ? qEnvironmentVariable("SEIMIO_REPLAY") + "/../account"
                                                  : QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/account");
         seimio_core_start(QDir::cleanPath(dir).toUtf8().constData(), &Core::onEvent, &Core::onFetch, this);
     }
@@ -111,12 +113,12 @@ private:
         // a POST is the Stremio API (the key goes with it, the library comes back); a GET is an addon
         const bool secret = qstrcmp(method, "GET") != 0;
         QMetaObject::invokeMethod(core, [core, id, u, b, secret] {
-            core->m_http.request(u, b, [id](const QByteArray &data, bool, int status) {
+            core->m_net.send(u, b, [id](const QByteArray &data, bool, int status) {
                 seimio_core_fetched(id, quint16(status), reinterpret_cast<const uchar *>(data.constData()), size_t(data.size()));
             }, secret);
         }, Qt::QueuedConnection);
     }
-    Http m_http { this };
+    Net m_net { nullptr, this };
     bool m_started = false, m_ready = false;
     QJsonObject m_airing;
 };

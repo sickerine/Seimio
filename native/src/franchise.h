@@ -43,31 +43,24 @@
 class Franchise : public QObject {
     Q_OBJECT
 public:
-    explicit Franchise(QObject *parent = nullptr) : QObject(parent) {}
+    explicit Franchise(query::Queries *cache, QObject *parent = nullptr) : QObject(parent), m_cache(cache), m_net(cache, this) {}
     // the library's watch state by title, and when the season's episodes air by episode (Live's `airing`)
     void setLibrary(const QJsonObject &library, const QJsonObject &airing) { m_library = library; m_airing = airing; }
 
     // `source`: { id: "anilist:N" or "kitsu:N", and what the screen showed (kept as it is) }
-    // Asked for again within ten minutes (the watch state changed under its page, the page opened again),
-    // what was fetched is put together again with the library as it is now: nothing is asked of the network.
+    // What was fetched for a title is a query of its own, fresh ten minutes: asked for again within that
+    // (the watch state changed under its page, the page opened again), it is put together again with the
+    // library as it is now, and nothing is asked of the network.
     void load(const QVariantMap &source) {
-        const auto kept = m_kept.constFind(source["id"].toString());
-        if (kept != m_kept.constEnd() && QDateTime::currentMSecsSinceEpoch() - kept->second < Live::kKept) {
-            auto again = std::make_shared<Job>(*kept->first);       // (its own: the last one may still be on its worker)
-            again->source = source; again->sourceId = source["id"].toString();
-            finish(again);
-            return;
-        }
-        auto job = std::make_shared<Job>(); job->source = source; job->sourceId = source["id"].toString();
-        const QString kind = job->sourceId.section(':', 0, 0), id = job->sourceId.section(':', 1, 1);
-        get("https://arm.haglund.dev/api/v2/ids?source=" + kind + "&id=" + id, [this, job](const QByteArray &body, bool ok) {
-            const QJsonObject ids = QJsonDocument::fromJson(body).object();
-            job->picked = ids.value("kitsu").toInt();
-            if (!ok || ids.isEmpty()) { emit failed(job->sourceId, "Not on Kitsu yet"); return; }
-            if (!job->picked) { cinemetaOnly(job, ids.value("imdb").toString()); return; }
-            job->imdb = ids.value("imdb").toString();
-            const int tvdb = ids.value("thetvdb").toInt();
-            if (tvdb) show(job, tvdb, ids); else adopt(job, ids);
+        const QString id = source["id"].toString();
+        query::Options kept; kept.freshMs = kept.keepMs = Live::kKept; kept.retries = 0;      // (each request under it has its own tries)
+        m_cache->fetch<Job>({ "franchise", id }, [this, id](query::Call<Job> call) { fetch(id, call); }, kept,
+                            [this, source, id, kept](std::shared_ptr<const Job> fetched, const query::Failure &why) {
+            if (!fetched) { emit failed(id, why.reason); return; }
+            // by its Kitsu id too, which is what its page asks again with
+            const query::Key byKitsu { "franchise", "kitsu:" + QString::number(fetched->picked) };
+            if (fetched->picked && !m_cache->peek<Job>(byKitsu)) m_cache->put<Job>(byKitsu, *fetched, kept);
+            assemble(*fetched, source);
         });
     }
 signals:
@@ -75,18 +68,41 @@ signals:
     void failed(const QString &sourceId, const QString &reason);
 
 private:
+    // what is fetched for a title, and, with what asked for it and the library, what its page is made of
     struct Job {
         QVariantMap source; QString sourceId, imdb; int picked = 0, tail = 0, pending = 0, tvdb = 0; QVariantList related;
         QJsonArray entries; QHash<int, QJsonObject> kitsu; QHash<int, QJsonObject> anilist; QJsonObject cinemeta; QJsonObject library, airing;
         QVector<int> relatedKitsu;                       // the related shows' Kitsu ids, their metas in `kitsu` too
+        QJsonObject only;                                // Cinemeta's meta, for a show Kitsu doesn't have (`cinemetaOnly`)
+        std::function<void(Job &, const QString &)> end; // while it is fetched: how it ends ("": fetched, else why not)
     };
-    Http m_http { this };
+    query::Queries *m_cache;
+    Net m_net;
     QJsonObject m_library, m_airing;
-    QHash<QString, QPair<std::shared_ptr<Job>, qint64>> m_kept;      // what was fetched for a source, and when (`load`)
+
+    // the fetch of a title's query: ARM first, then as the top of the file says
+    void fetch(const QString &sourceId, query::Call<Job> call) {
+        auto job = std::make_shared<Job>(); job->sourceId = sourceId;
+        job->end = [call](Job &done, const QString &why) {
+            if (!why.isEmpty()) { query::Failure f; f.reason = why; f.final = true; call.fail(f); return; }
+            Job fetched = done; fetched.end = nullptr;
+            call.ok(fetched);
+        };
+        const QString kind = sourceId.section(':', 0, 0), id = sourceId.section(':', 1, 1);
+        get("https://arm.haglund.dev/api/v2/ids?source=" + kind + "&id=" + id, [this, job](const QByteArray &body, bool ok) {
+            const QJsonObject ids = QJsonDocument::fromJson(body).object();
+            job->picked = ids.value("kitsu").toInt();
+            if (!ok || ids.isEmpty()) { job->end(*job, "Not on Kitsu yet"); return; }
+            if (!job->picked) { cinemetaOnly(job, ids.value("imdb").toString()); return; }
+            job->imdb = ids.value("imdb").toString();
+            const int tvdb = ids.value("thetvdb").toInt();
+            if (tvdb) show(job, tvdb, ids); else adopt(job, ids);
+        });
+    }
 
     void get(const QString &url, std::function<void(const QByteArray &, bool)> done) { send(url, QByteArray(), done); }
     void send(const QString &url, const QByteArray &body, std::function<void(const QByteArray &, bool)> done) {
-        m_http.request(url, body, [done](const QByteArray &data, bool ok, int) { done(data, ok); });
+        m_net.request(url, body, [done](const QByteArray &data, bool ok, int) { done(data, ok); });
     }
     static QByteArray graphql(const QString &query) { return QJsonDocument(QJsonObject { { "query", query } }).toJson(QJsonDocument::Compact); }
 
@@ -247,8 +263,12 @@ private:
         job->entries = dated;
         QSet<int> known; for (const QJsonValue &v : job->entries) known << v.toObject().value("anilist").toInt();
         QHash<int, QJsonObject> nodes; QHash<int, QString> relation; QJsonArray ask;
-        for (const QJsonObject &a : job->anilist)
-            for (const QJsonValue &v : a.value("relations").toObject().value("edges").toArray()) {
+        // In the entries' own order: a title linked from several of them is what the first calls it, and the
+        // related titles keep that order. (Read in the order a hash happens to hold AniList's answers, which
+        // differs every run, Shippuden's page said "Sequel" of Boruto on one run and "Alternative" on the
+        // next, as one of its films has it, and listed it before Naruto or after.)
+        for (const QJsonValue &entry : job->entries)
+            for (const QJsonValue &v : job->anilist.value(entry.toObject().value("anilist").toInt()).value("relations").toObject().value("edges").toArray()) {
                 const QJsonObject e = v.toObject(), n = e.value("node").toObject();
                 const int id = n.value("id").toInt();
                 if (n.value("type").toString() != "ANIME" || known.contains(id) || nodes.contains(id) || undated(n)) continue;
@@ -293,14 +313,20 @@ private:
                 });
         });
     }
-    void finish(std::shared_ptr<Job> job) {
-        if (!job->kitsu.contains(job->picked)) { emit failed(job->sourceId, "Couldn't load its episodes"); return; }
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        for (auto it = m_kept.begin(); it != m_kept.end();) it = now - it->second < Live::kKept ? std::next(it) : m_kept.erase(it);
-        // by what asked for it and by its Kitsu id, which is what its page asks again with (put together
-        // again, it keeps the age of its fetch)
-        for (const QString &key : { job->sourceId, "kitsu:" + QString::number(job->picked) }) if (!m_kept.contains(key)) m_kept[key] = { job, now };
+    // everything is fetched
+    void finish(std::shared_ptr<Job> job) { job->end(*job, job->kitsu.contains(job->picked) ? QString() : QString("Couldn't load its episodes")); }
+    // The page of what was fetched, for the title as `source` showed it and with the library as it is now
+    void assemble(const Job &fetched, const QVariantMap &source) {
+        auto job = std::make_shared<Job>(fetched);
+        job->source = source; job->sourceId = source["id"].toString();
         job->library = m_library; job->airing = m_airing;
+        if (!job->only.isEmpty()) {
+            QVariantMap show = Live::show(job->only, m_library.value(job->imdb).toObject()).toVariantMap();
+            show["logo"] = job->only.value("logo").toString(); show["backdrop"] = job->only.value("background").toString();
+            QVariantMap item = source; item["id"] = job->imdb;
+            emit ready(job->sourceId, item, show);
+            return;
+        }
         auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
         QThread *worker = QThread::create([out, job] { *out = build(*job); });
         connect(worker, &QThread::finished, this, [this, out, job] { emit ready(job->sourceId, out->first, out->second); });
@@ -435,15 +461,12 @@ private:
     }
     // a show Kitsu doesn't have, from Cinemeta by its IMDb id (Torrentio answers IMDb seasons too)
     void cinemetaOnly(std::shared_ptr<Job> job, const QString &imdb) {
-        if (imdb.isEmpty()) { emit failed(job->sourceId, "Not on Kitsu yet"); return; }
-        get("https://v3-cinemeta.strem.io/meta/series/" + imdb + ".json", [this, job, imdb](const QByteArray &body, bool ok) {
+        if (imdb.isEmpty()) { job->end(*job, "Not on Kitsu yet"); return; }
+        get("https://v3-cinemeta.strem.io/meta/series/" + imdb + ".json", [job, imdb](const QByteArray &body, bool ok) {
             const QJsonObject meta = QJsonDocument::fromJson(body).object().value("meta").toObject();
-            if (!ok || meta.isEmpty()) { emit failed(job->sourceId, "Couldn't load its episodes"); return; }
-            QJsonObject s = Live::show(meta, m_library.value(imdb).toObject());
-            QVariantMap show = s.toVariantMap();
-            show["logo"] = meta.value("logo").toString(); show["backdrop"] = meta.value("background").toString();
-            QVariantMap item = job->source; item["id"] = imdb;
-            emit ready(job->sourceId, item, show);
+            if (!ok || meta.isEmpty()) { job->end(*job, "Couldn't load its episodes"); return; }
+            job->imdb = imdb; job->only = meta;
+            job->end(*job, QString());
         });
     }
 };

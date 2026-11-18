@@ -11,8 +11,9 @@
 //            each with its Kitsu fanart and logo (ARM maps AniList to Kitsu)
 //   airing   when those shows' episodes air (AniList, in the same pages), by the episode's id as Stremio has
 //            it: the calendar's library anime take their air time from it
-// The documents keep the shapes the catalog parses (Catalog::Data::load). Requests go through Http, which
-// replays recordings for the Mac's visual check.
+// The documents keep the shapes the catalog parses (Catalog::Data::load). Requests go through Net and the
+// data thread's query cache (query.h): one fetch for an address asked twice at once, a failure tried
+// again before it counts, and recordings in place of the network for the Mac's visual check.
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -30,7 +31,8 @@ public:
     // `library`: every Stremio library item's state by id (where you are, the watched bitfield, when last
     // watched), for anything that needs watch state beyond Continue Watching (a franchise's other seasons)
     struct Docs { QJsonArray cw, rows; QJsonObject series, season, library, airing; };
-    explicit Live(QObject *parent = nullptr) : QObject(parent) {}
+    // `cache`: the data thread's, which Franchise shares (a title's meta asked for by both is fetched once)
+    explicit Live(query::Queries *cache, QObject *parent = nullptr) : QObject(parent), m_cache(cache), m_net(cache, this) {}
 
     // Home's documents (rows, cw, series, and the calendar's anime from the season pages), then `home`; the
     // season's art (a Kitsu meta a show) after, then `anime`: each screen gets its data whole, once
@@ -123,20 +125,15 @@ public:
     // off Continue Watching), and asking for every title's meta again was 2 s before the screen followed.
     void title(const QString &type, const QString &id, std::function<void(QJsonObject)> done) {
         const QString url = QString(id.startsWith("kitsu:") ? kKitsu : kCinemeta) + "/meta/" + type + "/" + id + ".json";
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        const auto kept = m_titles.constFind(url);
-        if (kept != m_titles.constEnd() && now - kept->second < kKept) {
-            const QJsonObject meta = kept->first;
-            QTimer::singleShot(0, this, [done, meta] { done(meta); });      // later, as an answer from the network comes
-            return;
-        }
-        get(url, [this, url, done](const QJsonDocument &d, bool) {
-            const QJsonObject meta = d.object().value("meta").toObject();
-            const qint64 at = QDateTime::currentMSecsSinceEpoch();
-            for (auto it = m_titles.begin(); it != m_titles.end();) it = at - it->second < kKept ? std::next(it) : m_titles.erase(it);
-            if (!meta.isEmpty()) m_titles[url] = { meta, at };
-            done(meta);
-        });
+        query::Options kept; kept.freshMs = kept.keepMs = kKept; kept.retries = 0;        // (the request under it has its own tries)
+        m_cache->fetch<QJsonObject>({ "title", type, id }, [this, url](query::Call<QJsonObject> call) {
+            get(url, [call](const QJsonDocument &d, bool) {
+                const QJsonObject meta = d.object().value("meta").toObject();
+                if (!meta.isEmpty()) { call.ok(meta); return; }
+                query::Failure none; none.reason = "no such title"; none.final = true;     // (not kept: asked again the next time)
+                call.fail(none);
+            });
+        }, kept, [done](std::shared_ptr<const QJsonObject> meta, const query::Failure &) { done(meta ? *meta : QJsonObject()); });
     }
     static constexpr qint64 kKept = 10 * 60 * 1000;         // how long what was fetched is kept (Franchise's too)
     // the season a day is in, as AniList names it: Winter is December to February, under the year it ends in
@@ -151,25 +148,19 @@ public:
     }
 
 private:
-    Http m_http { this };
-    QHash<QString, QPair<QJsonObject, qint64>> m_titles;     // metas by address, and when each came (`title`)
+    query::Queries *m_cache;
+    Net m_net;
     static constexpr const char *kCinemeta = "https://v3-cinemeta.strem.io";
     static constexpr const char *kKitsu = "https://anime-kitsu.strem.fun";
 
-    void request(const QString &url, const QByteArray &body, Http::Done done) { m_http.request(url, body, done); }
+    void request(const QString &url, const QByteArray &body, Net::Done done) { m_net.request(url, body, done); }
     void get(const QString &url, std::function<void(const QJsonDocument &, bool)> done) {
         request(url, QByteArray(), [done](const QByteArray &data, bool ok, int) { done(QJsonDocument::fromJson(data), ok); });
     }
-    // AniList's GraphQL; a 429 (about 30 requests a minute) waits a little and tries again
-    void anilist(const QByteArray &query, const QJsonObject &variables, std::function<void(const QJsonObject &)> done, int attempt = 0) {
+    // AniList's GraphQL (a 429, at about 30 requests a minute, waits and tries again: Net)
+    void anilist(const QByteArray &query, const QJsonObject &variables, std::function<void(const QJsonObject &)> done) {
         const QByteArray body = QJsonDocument(QJsonObject { { "query", QString::fromUtf8(query) }, { "variables", variables } }).toJson(QJsonDocument::Compact);
-        request("https://graphql.anilist.co", body, [this, query, variables, done, attempt](const QByteArray &data, bool, int status) {
-            if (status == 429 && attempt < 3) {
-                QTimer::singleShot(20000, this, [this, query, variables, done, attempt] { anilist(query, variables, done, attempt + 1); });
-                return;
-            }
-            done(QJsonDocument::fromJson(data).object().value("data").toObject());
-        });
+        request("https://graphql.anilist.co", body, [done](const QByteArray &data, bool, int) { done(QJsonDocument::fromJson(data).object().value("data").toObject()); });
     }
 
     // ---- Home ----------------------------------------------------------------------------------------------
@@ -366,7 +357,7 @@ private:
         auto left = std::make_shared<int>(metas.size());
         for (int i = 0; i < metas.size(); i++) {
             const QJsonObject m = metas[i].toObject();
-            m_http.exists(m.value("poster").toString(metahub("poster", m.value("id").toString())), [metas, there, left, done, i](bool ok) {
+            m_net.exists(m.value("poster").toString(metahub("poster", m.value("id").toString())), [metas, there, left, done, i](bool ok) {
                 (*there)[i] = ok;
                 if (--*left) return;
                 QJsonArray kept;

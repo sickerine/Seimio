@@ -193,7 +193,7 @@ public:
         // Live and Franchise fetch, read and assemble on a thread of their own: a show's meta is hundreds of
         // kilobytes of JSON, and reading it where it arrived, on the GUI thread, stalled it 20 to 60 ms
         // whenever the network answered. `work` runs something there; what it produces comes `back` here.
-        m_live->moveToThread(&m_thread); m_franchise->moveToThread(&m_thread);
+        m_cache->moveToThread(&m_thread); m_live->moveToThread(&m_thread); m_franchise->moveToThread(&m_thread);
         connect(m_franchise, &Franchise::ready, this, &Catalog::franchiseReady);
         connect(m_franchise, &Franchise::failed, this, &Catalog::franchiseFailed);
         m_thread.start();
@@ -204,7 +204,7 @@ public:
         core->start();
         if (core->ready()) load();
     }
-    ~Catalog() override { m_thread.quit(); m_thread.wait(); delete m_live; delete m_franchise; }
+    ~Catalog() override { m_thread.quit(); m_thread.wait(); delete m_live; delete m_franchise; delete m_cache; }
     bool ready() const { return m_ready; }
     QVariantList continueWatching() const { return m_data ? m_data->continueWatching : QVariantList(); }
     QVariantList popular() const { return m_data ? m_data->popular : QVariantList(); }
@@ -300,13 +300,13 @@ public:
     // which kind of title a search shows ("anime", "series" or "movie"): the last one picked, kept between
     // runs (a preview starts on anime and keeps nothing)
     QString searchKind() {
-        if (m_searchKind.isEmpty()) m_searchKind = Http::replaying() ? QString("anime") : m_choices.data().value("searchKind").toString("anime");
+        if (m_searchKind.isEmpty()) m_searchKind = Net::replaying() ? QString("anime") : m_choices.data().value("searchKind").toString("anime");
         return m_searchKind;
     }
     void setSearchKind(const QString &kind) {
         if (kind == searchKind()) return;
         m_searchKind = kind;
-        if (!Http::replaying()) { m_choices.data()["searchKind"] = kind; m_choices.save(); }
+        if (!Net::replaying()) { m_choices.data()["searchKind"] = kind; m_choices.save(); }
         emit searchKindChanged();
     }
     // The week ahead, a day at a time from `now`: [{ title ("Today", "Tomorrow", "Thursday"), date,
@@ -655,8 +655,9 @@ private:
         emit seasonLoaded();
     }
     QThread m_thread;
-    Live *m_live = new Live;                               // both live on m_thread
-    Franchise *m_franchise = new Franchise;
+    query::Queries *m_cache = new query::Queries;          // the data thread's cache; these three live on m_thread
+    Live *m_live = new Live(m_cache);
+    Franchise *m_franchise = new Franchise(m_cache);
     // AniList's shows (Live::shown) as the screens show a title: a search's anime, as a season's chart has them
     static QVariantList shows(const QJsonArray &found) {
         Data d; Data::loadSeason(d, QJsonObject { { "shows", found } });

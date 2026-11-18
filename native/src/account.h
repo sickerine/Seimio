@@ -167,7 +167,7 @@ private:
     // the account's addons and library as Stremio has them now (other devices change them): once it is
     // known to be signed in, at the start and after a sign-in
     void sync() {
-        if (Http::replaying()) return;
+        if (Net::replaying()) return;
         for (const char *what : { "PullAddonsFromAPI", "SyncLibraryWithAPI" }) ctx(what);
     }
     // The account and the library's ids as the core has them now, read on a worker (the library is 70 KB
