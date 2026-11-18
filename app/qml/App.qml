@@ -523,7 +523,11 @@ WebOSWindow {
                 // opened had it blurred again every frame of the fade (five passes more), and the page opened
                 // at 30 fps, six or seven late frames.
                 readonly property bool leaving: !wanted && opacity > 0.01
-                frozen: true; sourceBusy: !leaving && hero.settling; sourceMoving: !leaving && hero.fading
+                frozen: true; sourceBusy: !leaving && hero.settling; sourceMoving: wanted && hero.fading
+                // The filter bars of a grid tab are glass made of this blur, also over a clear backdrop: left
+                // alone there, it went stale and the bars wore a blur of whatever was up when it last showed.
+                // (Not every frame of a crossfade for them: 20 a second while the backdrop settles is plenty.)
+                needed: app.onHome && (app.animeTab || app.browseTab)
                 onWantedChanged: if (wanted) refresh()      // back before it had gone: of the backdrop as it is now
                 // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
                 hideCovered: true

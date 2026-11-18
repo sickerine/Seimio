@@ -11,7 +11,9 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   and compares them with `tools/preview/baseline/`. A CHANGED state leaves the render and a brightened
   diff in `.lab/shots/`. Look at both: an intended change gets `tools/preview/shots.sh --approve <state>`,
   anything else gets fixed. A new control or state goes into the gallery or the state list too.
-  Renders load images from a fixed cache (`.lab/preview-images`, with redirects and missing stills pinned
+  A preview's window is the app's size, larger than the Mac's screen: macOS doesn't draw a window that
+  is wholly behind another, and a capture asked of one never comes (the galleries', when they were
+  smaller). Renders load images from a fixed cache (`.lab/preview-images`, with redirects and missing stills pinned
   in `pinned.json`); a state that had to fetch one renders again, so no render shows art half arrived.
 - The TV check deploys and runs `tools/tour.sh home|calendar|show|menu|play|streams|player|browse` against the frame budget in
   `tour.sh`. A new screen or interaction gets a route there too. TV runs vary by about 2x, so judge a
@@ -30,12 +32,13 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   4. To find which layer makes a transition heavy, hide one before the transition and time it again;
      hide nothing that has to take the key (a hidden grid can't be pressed, and the transition then
      never happens).
-  A GUI stall line ends with `busy`, the GUI thread's own CPU time in the gap: close to the gap means
+  A `gui stall`, `gui waited` or `gui tick` (a late animation tick) line ends with `busy`, the GUI thread's own CPU time in the gap: close to the gap means
   our code (JavaScript, bindings, item creation) ran; a few ms means the thread was blocked or starved,
   which under the video is the TV holding the swap (the threaded loop's sync waits for it), not
   something to fix in QML. A stream of 33 ms ticks with `busy 1` is the GUI thread getting its turn
-  every other frame: something is animating on the render thread (see `Ambient`). The time a tick
-  waited to hand its frame over is measured and doesn't count as a stall.
+  every other frame: something is animating on the render thread (see `Ambient`). A late tick with
+  little work in it is logged as `gui waited` and isn't a stall; with the sampler on, a GUI thread 40 ms
+  overdue is sampled whether it runs or not, so `tools/lab-stacks.py <since> 0` shows what it waited in.
   Timing logs perturb the TV; take counts from runs without them. The lab's own report must stay cheap:
   the timing log goes to the lab server from a thread of its own (`LogTap.send`), because turned into
   JSON by the GUI thread it was a 30 ms stall at every report of a timed run. Raise a budget only with
@@ -48,7 +51,10 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   followed by one of 10 to 14, two frames in two refreshes, so a gap up to 25 ms waits for the next
   frame and counts as on time if the pair is within 35 ms. A late frame's log line says why (`frame`:
   its own time; `gui`: the GUI thread's work in the gap). GUI stalls are counted apart, by a 16 ms heartbeat on
-  the GUI thread during tours, so a long one counts whether or not anything was drawing.
+  the GUI thread during tours, so a long one counts whether or not anything was drawing: a stall is more
+  than 50 ms of the GUI thread's own CPU time between two ticks. (Counted by the gap between ticks, a
+  35 ms piece of work read as a stall of 50 to 100 ms on some runs: the timer's phase and the waits on
+  the render thread and the compositor came with it.)
 
 ## Performance rules
 
@@ -167,6 +173,9 @@ Each rule comes from a measured stall on the C5.
 - A frost follows its source only while it is wanted. On its way out its blur is left as it is
   (`backdropFrost.leaving`): a backdrop still crossfading under it as a page opened had it blurred again
   every frame of the fade, five passes more, and the page opened at 30 fps.
+  - A grid coming on screen shows its rows a frame apart (`CardGrid.arrived`): a tab's first visit drew
+    two rows of new posters in one frame, 25 to 35 ms. Drawing a tab ahead at rest instead (faintly, as
+    it is built) was tried and taken out: its heavy frames come 8 s after launch, when the first keys do.
 - A layer is drawn again whenever its item comes back on screen, at any opacity: the calendar's 42 days
   (a texture each) cost 13 to 15 ms in the frame Home returns in. Hiding the days a peek doesn't show is
   worse: they then draw, and send their art to the GPU, only as the month opens (28 days in one 134 ms

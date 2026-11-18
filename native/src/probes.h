@@ -47,11 +47,14 @@ inline void labLog(const QString &line, double at = monoMs()) {
 // is running (its state in /proc) and, if it is, signals it; the handler notes where it was (the program
 // counter, the caller and the call stack). The watcher names the frames and logs each as
 // "stack leaf < caller < ...", stamped with when it was taken, so a GUI stall can be read as what ran in
-// it (tools/lab-stacks.py). A GUI thread at rest is never interrupted.
+// it (tools/lab-stacks.py). A GUI thread at rest is never interrupted; one whose heartbeat is 40 ms
+// overdue is, running or not, so a stall it spent waiting (on a file, a service, the display) shows what
+// it waited in.
 // For lab runs only, behind its switch: walking the stack inside a signal handler is not safe everywhere
 // (a thread stopped inside the loader or the allocator can hang there), and the app never does it unasked.
 // With the window given, the render thread is sampled the same way (its lines start "rstack"): what the
 // renderer does in a frame that takes too long.
+inline std::atomic<double> g_guiBeat{0};      // when FrameStats' heartbeat last ticked on the GUI thread (0: no heartbeat)
 struct GuiSample { double at; int count; void *frames[20]; };
 inline GuiSample g_samples[2][256];           // the GUI thread's and the render thread's: one writer each
 inline std::atomic<int> g_sampled[2];
@@ -140,10 +143,11 @@ private:
 // them on the GUI thread, where its own work shows up as fake late frames), grouped by `phase`.
 // Frame gaps can't tell a long stall from a pause in drawing, so GUI stalls are measured apart: with
 // `heartbeat` on (the lab sets it during tours), a 16 ms timer on the GUI thread ticks whether or not
-// anything draws, and a tick more than 50 ms late is a stall of that length, however long. Time the GUI
-// thread spent waiting to hand a frame to the render thread is not our work and comes off it: a gap most
-// of which a drawn frame spent waiting to be shown (a swap over 30 ms: the TV's compositor, over video),
-// and the wait measured at each hand-over (afterSynchronizing). Both are logged as waits and not counted.
+// anything draws. A stall is the GUI thread working: more than 50 ms of its own CPU time between two
+// ticks, which is exact whatever the timer's phase. A tick that came late with less work in it was the
+// thread waiting (for a frame to be handed over, or with the TV's compositor over video, which holds a
+// frame 100 ms and more): logged as `gui waited`, with what it waited in when the sampler is on, and not
+// counted. (Counted by the gap, a 35 ms piece of work read as a stall of 50 to 100 ms on some runs.)
 class FrameStats : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString phase READ phase WRITE setPhase)
@@ -153,23 +157,12 @@ public:
         m_beat.setTimerType(Qt::PreciseTimer); m_beat.setInterval(16);
         connect(&m_beat, &QTimer::timeout, this, [this] {
             const double now = monoMs(), gap = now - m_lastBeat, cpu = threadCpuMs(), worked = cpu - m_lastCpu;
-            const double stall = gap - m_handing.exchange(0);       // less what it waited handing frames over
-            const double before = m_lastBeat;
-            m_lastBeat = now; m_lastCpu = cpu;
+            m_lastBeat = now; m_lastCpu = cpu; g_guiBeat = now;
             if (gap <= 50) return;
             QMutexLocker l(&m_mutex);
-            // how much of the gap a drawn frame spent waiting to be shown: one whose slow swap ended in the
-            // gap, or one still waiting. Over video the TV's compositor holds a frame 100 ms and more, and
-            // the GUI thread waits with it (for the display, not only at its own hand-over).
-            double held = m_slowTo > before ? qMin(now, m_slowTo) - qMax(before, m_slowFrom) : 0;
-            const double rendered = m_rendered, swapped = m_swapped;
-            if (rendered > swapped) held = qMax(held, now - qMax(before, rendered));
-            if (held > gap / 2) { labLog(QString("gui waited on a slow swap %1 ms").arg(gap, 0, 'f', 1)); return; }
-            if (stall <= 50) { labLog(QString("gui waited %1 ms of %2 to hand a frame over, busy %3").arg(gap - stall, 0, 'f', 1).arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0)); return; }
-            m_stalls[m_phase].append(stall);
-            // `busy`: the GUI thread's own CPU time in the gap; far less than the gap means it was blocked
-            // or starved by other threads and processes, not running our code
-            labLog(QString("gui stall %1 ms busy %2").arg(stall, 0, 'f', 1).arg(worked, 0, 'f', 0));
+            if (worked <= 50) { labLog(QString("gui waited %1 ms busy %2").arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0)); return; }
+            m_stalls[m_phase].append(worked);
+            labLog(QString("gui stall %1 ms busy %2").arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0));
         });
     }
     bool heartbeat() const { return m_beat.isActive(); }
@@ -180,7 +173,7 @@ public:
         const QList<QByteArray> v = f.readAll().split(' ');
         return v.size() > 1 ? int(v[1].toLongLong() * 4096 / (1 << 20)) : 0;
     }
-    void setHeartbeat(bool on) { if (on == m_beat.isActive()) return; m_lastBeat = monoMs(); m_lastCpu = threadCpuMs(); if (on) m_beat.start(); else m_beat.stop(); }
+    void setHeartbeat(bool on) { if (on == m_beat.isActive()) return; m_lastBeat = monoMs(); m_lastCpu = threadCpuMs(); g_guiBeat = on ? m_lastBeat : 0; if (on) m_beat.start(); else m_beat.stop(); }
     QString phase() const { QMutexLocker l(&m_mutex); return m_phase; }
     void setPhase(const QString &p) { QMutexLocker l(&m_mutex); m_phase = p; QMutexLocker g(&g_logMutex); g_logPhase = p; }
     Q_INVOKABLE void attach(QObject *window) {
@@ -191,13 +184,11 @@ public:
         // alone (an animation running there), when it starts to draw
         connect(w, &QQuickWindow::beforeSynchronizing, this, [this] { m_began = monoMs(); }, Qt::DirectConnection);
         connect(w, &QQuickWindow::beforeRendering, this, [this] { if (m_began < m_swapped) m_began = monoMs(); }, Qt::DirectConnection);
-        connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
             double now = monoMs();
             timespec t; clock_gettime(m_guiClock, &t);
             const double guiCpu = t.tv_sec * 1e3 + t.tv_nsec / 1e6;
             QMutexLocker l(&m_mutex);
-            if (now - m_rendered > 30) { m_slowFrom = m_rendered; m_slowTo = now; }
             // Qt draws only when something changes. A frame is late when it breaks a run of frames (the one
             // before it came on time); one that follows a pause (nothing animating, a subtitle waiting for its
             // next line, a key press after a moment) only shows when something next changed. A pause can be
@@ -232,19 +223,9 @@ public:
             // the same for the GUI thread: a stall breaks a run of on-time ticks; a tick after a pause doesn't
             const double tick = now - m_lastTick;
             if (m_lastTick > 0 && m_lastTickGap > 0 && m_lastTickGap <= 20 && tick > 20 && tick < 150)
-                labLog(QString("gui stall %1 ms busy %2").arg(tick, 0, 'f', 1).arg(cpu - m_lastTickCpu, 0, 'f', 0));
+                labLog(QString("gui tick %1 ms busy %2").arg(tick, 0, 'f', 1).arg(cpu - m_lastTickCpu, 0, 'f', 0));
             m_lastTickGap = m_lastTick > 0 ? tick : 0;
             m_lastTick = now; m_lastTickCpu = cpu;
-            m_handFrom = now; m_handCpu = cpu;
-        }, Qt::DirectConnection);
-        // Render thread, the GUI thread still blocked: how long it has waited to hand this frame over, which
-        // is the time since its animation tick less what it worked in it (polishing). With something
-        // animating on the render thread (Ambient, at rest) the render loop runs by itself and the GUI
-        // thread waits for the frame in hand to finish, up to two frames; that wait isn't a stall.
-        connect(w, &QQuickWindow::afterSynchronizing, this, [this] {
-            timespec t; clock_gettime(m_guiClock, &t);
-            const double from = m_handFrom.exchange(0), waited = monoMs() - from - (t.tv_sec * 1e3 + t.tv_nsec / 1e6 - m_handCpu);
-            if (from > 0 && waited > 0) m_handing = m_handing + waited;
         }, Qt::DirectConnection);
     }
     // { phase: { frames, median, max, late20, late30, short12, stalls, stallMax } } since the last call
@@ -274,14 +255,11 @@ private:
     QMap<QString, QVector<double>> m_gaps, m_stalls;
     QTimer m_beat;
     double m_lastBeat = 0; double m_lastCpu = 0;
-    std::atomic<double> m_began { 0 }, m_rendered { 0 }, m_swapped { 0 };     // when the frame in hand began, was drawn, and when the last one was shown
+    std::atomic<double> m_began { 0 }, m_swapped { 0 };     // when the frame in hand began, and when the last one was shown
     double m_guiCpuAtSwap = 0;              // the GUI thread's CPU time at the last swap (under m_mutex)
     double m_held = 0;                      // a gap of 20 to 25 ms waiting for the next frame's verdict, with its
     QString m_heldPhase, m_heldLine;        // phase and its log line (under m_mutex)
-    double m_slowFrom = 0, m_slowTo = 0;    // the last slow swap: from its frame being drawn to its being shown (under m_mutex)
     clockid_t m_guiClock = 0;               // the GUI thread's CPU time, readable from the render thread
-    std::atomic<double> m_handFrom { 0 }, m_handCpu { 0 };      // the animation tick a hand-over starts from
-    std::atomic<double> m_handing { 0 };    // time waited handing frames over since the last heartbeat
 };
 
 
@@ -300,9 +278,10 @@ public:
         if (g_handlerBefore) return;
         g_handlerBefore = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &ctx, const QString &msg) {
             labLog(QString("%1 %2").arg(ctx.category ? ctx.category : "").arg(msg));
-            // not ours to fix: art that isn't there, LG's platform announcing the video window, and Qt's
-            // network code complaining about itself when a reply is aborted as it fails
-            static const QStringList noise { "QML Image:", "[Client:", "QNetworkReplyImplPrivate::error", "libpng warning" };
+            // not ours to fix: art that isn't there, LG's platform announcing the video window or a launch
+            // that came while the app was closing, and Qt's network code complaining about itself when a
+            // reply is aborted as it fails
+            static const QStringList noise { "QML Image:", "[Client:", "QNetworkReplyImplPrivate::error", "libpng warning", "Got relaunch on closing" };
             bool ours = type != QtDebugMsg && type != QtInfoMsg;
             for (const QString &n : noise) ours = ours && !msg.contains(n);
             if (ours) {
@@ -356,7 +335,8 @@ public:
             };
             for (int logged[2] = {0, 0}; m_sampling; ) {
                 usleep(4000);
-                if (running(gui)) pthread_kill(g_guiThread, SIGPROF);
+                const double beat = g_guiBeat;
+                if (running(gui) || (beat > 0 && monoMs() - beat > 40)) pthread_kill(g_guiThread, SIGPROF);
                 if (m_renderId && running(m_renderId)) pthread_kill(m_render, SIGPROF);
                 for (int ring = 0; ring < 2; ring++)
                     for (; logged[ring] != g_sampled[ring].load(std::memory_order_acquire); logged[ring]++) logGuiSample(g_samples[ring][logged[ring] & 255], ring ? "rstack " : "stack ");

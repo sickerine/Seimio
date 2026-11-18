@@ -1,4 +1,4 @@
-"""Prints, in time order, the key presses, GUI-thread stalls and late frames LabProbe logged into the lab
+"""Prints, in time order, the key presses, the GUI thread's stalls, waits and late animation ticks, and the late frames LabProbe logged into the lab
 reports (.lab/reports). It needs LogTap on: run the tour with VARIANT='{"timing": ...}'. A stall a fixed
 time after a key (e.g. 280 ms, when the selection commits) points at what that press set off.
 
@@ -33,7 +33,7 @@ def main():
             continue
         t0 = t0 or t
         if rest.startswith("key "): print(f"{t - t0:8.0f}  {KEYS.get(rest.split()[-1], rest)}")
-        elif ("gui stall" in rest or "late frame" in rest) and float(rest.split()[2]) >= least: print(f"{t - t0:8.0f}      {rest}   [{phase}]")
+        elif rest.startswith(("gui stall", "gui waited", "gui tick", "late frame")) and rest.split()[2].replace(".", "").isdigit() and float(rest.split()[2]) >= least: print(f"{t - t0:8.0f}      {rest}   [{phase}]")
 
 
 if __name__ == "__main__":

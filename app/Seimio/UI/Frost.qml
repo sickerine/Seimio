@@ -18,13 +18,15 @@ Item {
     property bool hideCovered: false
     readonly property bool covering: opacity >= 1 && hole.width <= 0
     visible: opacity > 0
+    // something reads its blur (a Glass over it) though it doesn't show itself: the blur is kept up
+    property bool needed: false
     function refresh() { blur.refresh() }
 
     BlurChain {
         id: blur
         source: frost.source
         sourceRect: Qt.rect(0, 0, frost.width, frost.height)
-        active: frost.visible
+        active: frost.visible || frost.needed
         frozen: frost.frozen
         sourceBusy: frost.sourceBusy
         sourceMoving: frost.sourceMoving

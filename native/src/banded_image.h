@@ -74,6 +74,7 @@ private:
     // and sent again
     void sceneGone() {
         QMutexLocker r(&m_rendering);
+        if (m_id && QOpenGLContext::currentContext()) QOpenGLContext::currentContext()->functions()->glDeleteTextures(1, &m_id);
         delete m_provider; m_provider = nullptr; m_id = 0; m_uploading = 0;
         QMetaObject::invokeMethod(this, [this] { load(); }, Qt::QueuedConnection);
     }
@@ -122,8 +123,9 @@ private:
         m_work = true;
         if (m_window) m_window->update();
     }
-    // GUI thread: out of one window's rendering and into another's. What it had on the GPU goes with the
-    // window it was in, on that window's render thread
+    // GUI thread: out of one window's rendering and into another's (Qt takes an item out of its window
+    // before putting it in the next). What it had on the GPU goes with the window it was in, on that
+    // window's render thread, so in the next window the picture is fetched and sent again.
     void attach(QQuickWindow *window) {
         if (window == m_window) return;
         if (m_window) {
@@ -132,17 +134,17 @@ private:
                 void run() override { delete provider; if (id && QOpenGLContext::currentContext()) QOpenGLContext::currentContext()->functions()->glDeleteTextures(1, &id); }
             };
             disconnect(m_window, nullptr, this, nullptr);
-            QMutexLocker r(&m_rendering);                   // an upload step under way ends first
+            QMutexLocker r(&m_rendering);                   // an upload step under way ends first, and none starts after
             auto *gone = new Gone; gone->provider = m_provider; gone->id = m_id;
             m_provider = nullptr; m_id = 0; m_uploading = 0;
             m_window->scheduleRenderJob(gone, QQuickWindow::BeforeSynchronizingStage);
+            m_window = nullptr; m_left = true;
         }
-        const bool moved = m_window && window;
-        { QMutexLocker r(&m_rendering); m_window = window; }
         if (!window) return;
+        { QMutexLocker r(&m_rendering); m_window = window; }
         connect(window, &QQuickWindow::afterRendering, this, [this, window] { upload(window); }, Qt::DirectConnection);
         connect(window, &QQuickWindow::sceneGraphInvalidated, this, &BandedImage::sceneGone, Qt::DirectConnection);
-        if (moved) load(); else if (m_work) window->update();
+        if (m_left) { m_left = false; load(); } else if (m_work) window->update();
     }
     // render thread, after a frame's drawing: one band more of the picture in hand
     void upload(QQuickWindow *window) {
@@ -195,6 +197,7 @@ private:
     std::atomic<bool> m_work{false};
     QMutex m_rendering;
     QQuickWindow *m_window = nullptr;                       // written on the GUI thread, under m_rendering
+    bool m_left = false;                                    // it has been in a window before: its picture went with that one
     // render thread (the GUI thread only under m_rendering)
     mutable BandedProvider *m_provider = nullptr;
     GLuint m_id = 0;                                        // the texture being filled

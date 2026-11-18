@@ -126,30 +126,47 @@ F. Performance and polish across all of it, against the budgets.
 
 ## Open performance items (from the 2026-11-18 round)
 
-What the second pass found (the lab can now say what the GUI thread ran in a stall, `tools/lab-stacks.py`):
+What the performance pass found, once the lab could name things (`tools/lab-stacks.py` for what the GUI
+thread ran in a stall, a late frame's log line for why it was late, Qt's texture and glyph timing for
+what reached the GPU in it):
 
-- The "GUI time outside our handlers" was the JavaScript engine collecting its garbage, 25 to 34 ms a
-  time, in the middle of moves. It is collected in the quiet second now, takes 22 ms with a lighter
-  calendar, and what moves by itself runs on the render thread at rest, so nothing is held up by it.
-- Timed runs had been measuring themselves: the lab's report cost the GUI thread 30 ms every 3 s.
+| What held frames up | What it cost | What changed |
+|---|---|---|
+| The JavaScript engine collecting garbage mid-move | 25 to 34 ms each | collected in the quiet second; 22 ms with a lighter calendar |
+| A backdrop sent to the GPU whole | 15 to 20 ms in each crossfade's first frame | `BandedImage`: a band a frame, before the crossfade |
+| A frost blurring a crossfading backdrop while it faded out | 30 fps for 300 ms as a page opened from a scrolled grid | its blur stays as it is on the way out |
+| Letters reaching the glyph texture on first use | 2 to 7 ms a batch | `Letters` writes the alphabet at launch |
+| Calendar days drawn into their textures a week at a time | 20 to 40 ms frames as the month opened or turned | a day a frame |
+| A page built the moment its title arrived | 25 ms, with 20 ms to take the title in | the quiet starts 300 ms after OK; taken in and opened on separate frames |
+| The stream sheet's rows made at once | 53 ms on the GUI thread | made between frames |
+| Network answers parsed on the GUI thread | stalls of 50 to 120 ms | a data thread |
 
-Late frames a tour (budget 8; 40 for play and player), the full check before this pass and two after it:
-home 22 → 11, 10; calendar 17 → 11, 11; show 6 → 2, 2; menu 4 → 3, 3; play 22 → 14, 28; streams 11 →
-12, 10; player 40 → 40, 42; browse 17 → 12, 14. Single runs of home since: 8, 10, 11, 14, 16. Frames
-over 30 ms are now few outside the title opening below (home 1 to 6, calendar 2, streams 1 to 2). Still
-open:
+The lab had been wrong in four ways, each measured before it was changed: its own report cost 30 ms every
+3 s of a timed run; a pause under 150 ms with nothing moving read as a late frame; a stamp 3 to 4 ms late
+read as a frame shown late (more than half of the 20 to 22 ms gaps were followed by one of 10 to 14 ms);
+and the GUI thread waiting to hand a frame over, or on the compositor over video, read as a stall (a
+stall is now more than 50 ms of the GUI thread's own work, which is what the budget's words say).
 
-- A title or a show opened from a scrolled grid (the backdrop frosted) runs at 30 fps for about 300 ms:
-  seven late frames, the largest cluster left. From the first row (no frost) none is late; with the
-  backdrop hidden the same frames draw in 2.5 ms instead of 10. Two things were tried and changed
-  nothing, so they are not it: the frost reading its blur once a pixel instead of four times, and the
-  backdrop mixing its frost in its own pass instead of a second layer over it. Not yet tried: what the
-  backdrop's pass costs while its frost is between 0 and 1 with the page's glass buttons capturing it.
-- A backdrop's first frame is late by up to 10 ms: its 1920 x 1080 texture reaches the GPU in that frame
-  (15 to 18 ms of the frame). One a crossfade; nothing moves but the drift when it happens.
-- Passing along the tab bar at 400 ms a tab costs one or two frames a tab on some runs and none on
-  others. Each screen coming back draws its layers again (the calendar's 42 days: 13 to 15 ms).
-- Opening a franchise page that wasn't built ahead is a ~50 ms GUI stall (the row's cards and the season
-  bar), 127 ms once with a collection on top. A staged load (header, then row) would halve it.
-- About a third of the frames counted late are 20 to 21 ms apart, just over the line the tours draw at
-  20 ms: the stamp's own jitter, not a missed frame (a missed one is 25 or 33 ms).
+Late frames a tour (budget 8; 40 for play and player), the full check before the pass and the range of
+the last five after it, each of which passed every tour's budgets:
+
+| Tour | Before | After |
+|---|---|---|
+| home | 22 | 2 to 8 |
+| calendar | 17 | 2 to 6 |
+| show | 6 | 0 to 2 |
+| menu | 4 | 0 to 1 |
+| play | 22 | 4 to 9 |
+| streams | 11 | 0 to 4 |
+| player | 40 | 8 to 14 |
+| browse | 17 | 1 to 4 |
+
+Still there, and why:
+
+- A tab's first visit after launch still costs a frame of 20 to 30 ms: its bars' glass and its first row
+  of posters reach the GPU then (the rows after it come a frame apart). Drawing the Anime tab ahead at
+  rest was tried and taken out: its heavy frames came 8 s after launch, with the first key presses.
+- The first key after a rest shows one frame later: what moves by itself comes back from the render
+  thread.
+- A title or a show opened from a grid within 1.2 s of landing on it waits for the network before its
+  page opens (about 900 ms); nothing is drawn late, but nothing happens either.

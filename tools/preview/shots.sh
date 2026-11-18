@@ -42,10 +42,12 @@ for s in "${states[@]}"; do
   at=2000
   unset SEIMIO_ACCOUNT; [ "$s" = signin ] && { rm -rf "$OUT/signed-out"; export SEIMIO_ACCOUNT="$OUT/signed-out"; }
   # a render that fetched an image caught it whenever it arrived (the data plugin says "fetched"); the next
-  # one has it on disk
-  for try in 1 2; do
+  # one has it on disk. And one that gave no picture is asked again: macOS doesn't draw a window while it
+  # is covered or the display is off, and the capture then never comes (a render takes about 6 s).
+  for try in 1 2 3; do
     rm -f "$OUT/$s.png" "$OUT/$s-diff.png"
-    log=$(cd "$REPO/app" && perl -e 'alarm 60; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 $at "$day" 2>&1)
+    log=$(cd "$REPO/app" && perl -e 'alarm 25; exec @ARGV' /opt/homebrew/opt/qt@5/bin/qml -I "$P/imports" -I "$REPO/app" "$P/shot.qml" -- "$screen" "$OUT/$s.png" "$(js "$s")" 5000 $at "$day" 2>&1)
+    [ -f "$OUT/$s.png" ] || continue
     case "$log" in *"fetched "*) ;; *) break;; esac
   done
   [ -f "$OUT/$s.png" ] || { echo "  $s: render failed"; fail=1; continue; }

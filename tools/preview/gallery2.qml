@@ -6,6 +6,9 @@ import Seimio.UI 1.0
 WebOSWindow {
     id: win
     visible: true
+    // the app's size: a smaller window can sit wholly behind another one, and macOS doesn't draw a window
+    // that is covered, so its capture never came
+    width: 1920; height: 1080
     Rectangle { width: 1920; height: 1080; color: "#202024" }   // the grab has no window colour behind it
     Column {
         x: 80; y: 80; spacing: 56

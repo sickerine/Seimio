@@ -77,6 +77,12 @@ FocusScope {
     onCoversChanged: holdCovers()
     onHeldChanged: holdCovers()
 
+    // Coming on screen, its rows show a frame apart, top first: what the GPU sees for the first time costs
+    // the frame that shows it, and a tab's first visit drew two rows of posters in one, 25 to 35 ms
+    property int arrived: 4
+    onVisibleChanged: if (visible) { arrived = 0; arriving.restart() }
+    Timer { id: arriving; interval: 16; repeat: true; onTriggered: if (++grid.arrived >= list.slots) stop() }
+
     SequentialAnimation {
         id: swap
         NumberAnimation { target: list; property: "shown"; to: 0; duration: 140; easing.type: Easing.InQuad }
@@ -132,7 +138,7 @@ FocusScope {
                 readonly property bool schedule: !!(r && r.schedule)
                 readonly property bool titled: !!(r && (r.schedule || r.shelf))      // a row of its own: a title over cards that slide
                 // a slot fully off screen isn't drawn (Qt draws what's off screen)
-                visible: r !== null && y < grid.height && y + height > 0
+                visible: r !== null && y < grid.height && y + height > 0 && idx - list.first <= grid.arrived
                 y: grid.rowTop + idx * list.stride - list.scrollY
                 // a slot handed another row (the pool recycles as the list scrolls) takes that row's place
                 // along itself, not the place of the row it showed before
