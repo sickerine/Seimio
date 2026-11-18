@@ -61,9 +61,12 @@ Each rule comes from a measured stall on the C5.
 - Hidden screens take their data through an explicit call (`ShowScreen.load()`, `showSeason()`), never
   a binding to the Home selection. Build expensive screens ahead of time while Home is idle: `App.still`
   fires once nothing has moved for a second (a key, rows coming in, a backdrop crossfade all restart it
-  through `Remote.stir()`), and the quiet then takes its work a piece at a time, a few frames apart
+  through `Remote.stir()`, and so does any change of screen), and the quiet then takes its work a piece
+  at a time, a few frames apart
   (`App.quietWork`): the Anime tab once, the selection's page, then the garbage. A page built the moment
-  its franchise arrived landed on the tab bar as a 90 ms frame.
+  its franchise arrived landed on the tab bar as a 90 ms frame. OK on a title that has to come in first
+  is a wait with nothing moving: the quiet begins 300 ms after it, so the page built on arrival (25 ms)
+  holds no frame up.
 - The JavaScript engine's garbage is collected in that quiet (`gc()`), not when the engine decides to: a
   collection stops the GUI thread for 22 to 35 ms on the TV and came in the middle of a move, sometimes
   twice as a page opened. Its length follows the number of QML objects alive (it walks every one that
@@ -144,6 +147,18 @@ Each rule comes from a measured stall on the C5.
   off-screen cards (below) it held the Anime schedule at 30 fps (55 late frames a tour, now ~10).
 - Off screen is not free: a strip's cards and a list's rows that are fully off screen are `visible:
   false`. A sliding row keeps cards past both edges, and a recycled row slot sits below the screen.
+- What the GPU sees for the first time costs the frame that shows it, so it is sent ahead or in pieces:
+  - A picture the size of the screen goes up a band a frame (`BandedImage`, the backdrop's): sent whole it
+    took 15 to 20 ms in the frame that first drew it, a late frame at every backdrop change (Qt's own
+    texture log says 3 ms; the driver does the rest at first use). Never write to a texture the last
+    frame read: the driver stalls 10 to 15 ms.
+  - Letters go to the glyph texture in batches of 2 to 7 ms. `Letters` writes the whole alphabet in each
+    weight at launch, off screen, so a title that comes in later uploads nothing.
+  - `VARIANT` with `qt.scenegraph.time.texture.debug=true` and `...time.glyph.debug=true` lists both per
+    frame.
+- A frost follows its source only while it is wanted. On its way out its blur is left as it is
+  (`backdropFrost.leaving`): a backdrop still crossfading under it as a page opened had it blurred again
+  every frame of the fade, five passes more, and the page opened at 30 fps.
 - A layer is drawn again whenever its item comes back on screen, at any opacity: the calendar's 42 days
   (a texture each) cost 13 to 15 ms in the frame Home returns in. Hiding the days a peek doesn't show is
   worse: they then draw, and send their art to the GPU, only as the month opens (28 days in one 134 ms

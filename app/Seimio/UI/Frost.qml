@@ -18,6 +18,7 @@ Item {
     property bool hideCovered: false
     readonly property bool covering: opacity >= 1 && hole.width <= 0
     visible: opacity > 0
+    function refresh() { blur.refresh() }
 
     BlurChain {
         id: blur

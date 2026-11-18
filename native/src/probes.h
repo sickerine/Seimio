@@ -201,7 +201,8 @@ public:
             const double gap = now - m_last, idle = gap - (guiCpu - m_guiCpuAtSwap) - (now - m_began);
             if (m_last > 0 && m_lastGap > 0 && m_lastGap <= 20 && gap < 150 && idle <= 30) {
                 m_gaps[m_phase].append(gap);
-                if (gap > 20) labLog(QString("late frame %1 ms").arg(gap, 0, 'f', 1));
+                // with why: the frame's own time from its hand-over to the screen, and the GUI thread's work in the gap
+                if (gap > 20) labLog(QString("late frame %1 ms (frame %2, gui %3)").arg(gap, 0, 'f', 1).arg(now - m_began, 0, 'f', 0).arg(guiCpu - m_guiCpuAtSwap, 0, 'f', 0));
             }
             m_lastGap = m_last > 0 ? gap : 0;
             m_last = now; m_swapped = now; m_guiCpuAtSwap = guiCpu;

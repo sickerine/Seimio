@@ -106,7 +106,10 @@ WebOSWindow {
     // the season came in after the quiet began: the Anime tab doesn't wait for the next one
     Connections { target: catalog; onSeasonLoaded: if (!still.running && !quiet.running) app.quietWork() }
     // (the work a few frames after the rest begins: what moves by itself has gone to the render thread by then)
-    Timer { id: still; interval: 1000; onTriggered: { Remote.resting = !probe.variant.noRest; quiet.restart() } }
+    // OK on a title that has to come in first is a wait with nothing moving, so the quiet begins as soon as
+    // the press has shown: a page built the moment its title arrived, 25 ms of it, held up a frame when that
+    // was inside the second after the key.
+    Timer { id: still; interval: app.franchiseOpening ? 300 : 1000; onTriggered: { Remote.resting = !probe.variant.noRest; quiet.restart() } }
     Timer { id: quiet; interval: 64; onTriggered: app.quietWork() }
     // Home's own start (its art decodes for about 5 s after launch) is not idleness: the Anime tab waits it out
     property bool started: false
@@ -342,7 +345,7 @@ WebOSWindow {
         }
     }
     function openMenu() { commit(); playMenu = false; layer = "menu"; probe.captures() }
-    onLayerChanged: { probe.act(layer); probe.captures() }
+    onLayerChanged: { Remote.stir(); probe.act(layer); probe.captures() }      // a screen coming or going is movement, whoever asked
 
     // effects that are needed later are drawn invisibly for a moment at startup, so their shaders
     // compile before anyone opens them
@@ -497,10 +500,16 @@ WebOSWindow {
                 id: backdropFrost
                 anchors.fill: parent
                 source: hero
-                frozen: true; sourceBusy: hero.settling; sourceMoving: hero.fading
+                readonly property bool wanted: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player"
+                // On its way out its blur stays as it is: a backdrop still crossfading under it as a page
+                // opened had it blurred again every frame of the fade (five passes more), and the page opened
+                // at 30 fps, six or seven late frames.
+                readonly property bool leaving: !wanted && opacity > 0.01
+                frozen: true; sourceBusy: !leaving && hero.settling; sourceMoving: !leaving && hero.fading
+                onWantedChanged: if (wanted) refresh()      // back before it had gone: of the backdrop as it is now
                 // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
                 hideCovered: true
-                opacity: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player" ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
+                opacity: wanted ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
                 Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
             }
             Scrim {
@@ -671,6 +680,7 @@ WebOSWindow {
             onTriggered: { app.profileOpen = false; account.signOut() }
         }
         SignInScreen { anchors.fill: parent; active: app.layer === "signin"; account: account }
+        Letters { }
         StreamScreen {
             id: streamPage
             focus: app.layer === "streams"

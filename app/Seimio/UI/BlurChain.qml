@@ -25,8 +25,10 @@ Item {
     readonly property size quarterSize: Qt.size(Math.max(1, Math.round(sourceRect.width / 4)), Math.max(1, Math.round(sourceRect.height / 4)))
     readonly property size outputSize: Qt.size(Math.max(1, Math.round(sourceRect.width / 8)), Math.max(1, Math.round(sourceRect.height / 8)))
 
-    onActiveChanged: if (active && frozen) quarter.scheduleUpdate()
-    onSourceBusyChanged: if (!sourceBusy && active && frozen) quarter.scheduleUpdate()
+    // a frozen chain captures again, now
+    function refresh() { if (active && frozen) quarter.scheduleUpdate() }
+    onActiveChanged: refresh()
+    onSourceBusyChanged: if (!sourceBusy) refresh()
 
     ShaderEffectSource {
         id: quarter

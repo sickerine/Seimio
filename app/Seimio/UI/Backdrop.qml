@@ -13,6 +13,7 @@
 // backdrop costs one full-screen pass with no blending, even mid-crossfade; at rest only the shown one
 // is loaded. `pan` shifts the picture left by that many pixels (parallax).
 import QtQuick 2.12
+import Seimio.Native 1.0
 
 Item {
     id: root
@@ -62,14 +63,16 @@ Item {
             root.apply();
         }
     }
-    Image {
+    // (BandedImage: a picture this size reaches the GPU over eight frames before it is Ready, not in the
+    // crossfade's first frame, which was late for it every time)
+    BandedImage {
         id: l0; property string url
-        source: url; visible: false; asynchronous: true; sourceSize: root.decodeSize
+        source: url; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(0, status === Image.Ready)
     }
-    Image {
+    BandedImage {
         id: l1; property string url
-        source: url; visible: false; asynchronous: true; sourceSize: root.decodeSize
+        source: url; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(1, status === Image.Ready)
     }
     // The drift: the picture zooms from 1 to 1.07 and back on a sine, 36 s the round (`drift` goes once

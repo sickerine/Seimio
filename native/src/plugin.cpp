@@ -14,6 +14,7 @@
 #include "subtitle_layer.h"
 #include "tee.h"
 #include "probes.h"
+#include "banded_image.h"
 #include "window_tools.h"
 
 // qml-runner gets Qt's single-threaded "basic" render loop on webOS: key handling, JS, animation and
@@ -61,6 +62,7 @@ public:
         qmlRegisterType<KeyLatency>(uri, 1, 0, "KeyLatency");
         qmlRegisterType<FrameStats>(uri, 1, 0, "FrameStats");
         qmlRegisterType<LogTap>(uri, 1, 0, "LogTap");
+        qmlRegisterType<BandedImage>(uri, 1, 0, "BandedImage");
         qmlRegisterType<WindowTools>(uri, 1, 0, "WindowTools");
     }
     void initializeEngine(QQmlEngine *engine, const char *) override {
