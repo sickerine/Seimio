@@ -40,4 +40,5 @@ docker run --rm -v ~/Library/Caches/webos-sdk:/sdk -v "$REPO":/repo -w /repo/nat
   cp src/qmldir out/
   cp /repo/third_party/libass/out/lib/libass.so.9.*.* out/libass.so.9
   arm-webos-linux-gnueabi-readelf -d out/libseimionative.so | grep -c NEEDED
+  bash /repo/native/check-symbols.sh out/libseimionative.so out/libseimiodata.so
 '

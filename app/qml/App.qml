@@ -138,6 +138,14 @@ WebOSWindow {
     }
     // the title a page renders: Home's selection, or the one in hand once a page has it
     readonly property var pageItem: onHome || !held ? displayItem : held.item
+    // The backdrop a title has: its own, or what the catalog knows of it (a library title is a name and a
+    // poster), or its franchise's once that has come in (`arrivals`: one more has)
+    property int arrivals: 0
+    function backdropOf(item) {
+        if (!item) return "";
+        var f = arrivals >= 0 ? franchises[item.id] : null;
+        return item.backdrop || catalog.backdrop(item.id) || (f && f.item.backdrop) || "";
+    }
     // The episode playing as IMDb numbers it ("tt…:season:episode"), for the skip databases keyed that way:
     // only an episode of a numbered season that is one entry counted from 1. A later part of a split
     // season, a film and a special are numbered otherwise there, and another episode's intro is worse
@@ -393,12 +401,20 @@ WebOSWindow {
         probe.captures();                                  // lab: a page over a page is a screen change too
     }
     function selected(sourceId, item) { var s = focusItem; return !!s && (s.id === sourceId || s.id === item.id) }
+    // the title OK asked for has come in: its page opens a few frames later, if it is still the selection
+    Timer {
+        id: arrived
+        property string source
+        property var title: null
+        interval: 48
+        onTriggered: if (app.onHome && app.selected(source, title)) { app.commit(); app.openFranchise(title) }
+    }
     Connections {
         target: catalog
         onFranchiseReady: {
             delete app.franchiseLoading[sourceId];
             var f = { item: item, show: show };
-            app.franchises[sourceId] = f; app.franchises[item.id] = f;
+            app.franchises[sourceId] = f; app.franchises[item.id] = f; app.arrivals++;
             if (sourceId === app.franchiseRefresh) {         // asked for again after the watch state changed
                 app.franchiseRefresh = "";
                 if (app.held && (app.held.item.id === item.id || app.held.item.id === sourceId)) app.rehold(item, show);
@@ -415,7 +431,9 @@ WebOSWindow {
             if (!app.onHome || !app.selected(sourceId, item)) { if (sourceId === app.franchiseOpening) app.franchiseOpening = ""; return }
             if (sourceId !== app.franchiseOpening) { app.buildAhead(sourceId, item, show); return }
             app.franchiseOpening = "";
-            app.commit(); app.openFranchise(item);
+            // (a few frames after it came in: taking it in, 20 ms of it for a long show, and building its
+            // page, 25 ms, were one stall of 60 to 70 ms)
+            arrived.source = sourceId; arrived.title = item; arrived.restart();
         }
         onFranchiseFailed: {
             delete app.franchiseLoading[sourceId];
@@ -487,7 +505,7 @@ WebOSWindow {
                 id: hero
                 width: parent.width; height: parent.height
                 // an anime franchise's page wears the backdrop of the entry it's on (ShowScreen.backdrop)
-                target: app.layer === "show" && showPage.backdrop ? showPage.backdrop : app.pageItem ? app.pageItem.backdrop || "" : ""
+                target: app.layer === "show" && showPage.backdrop ? showPage.backdrop : app.backdropOf(app.pageItem)
                 // parallax: the backdrop drifts a little against moves along a row
                 pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
                 Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }

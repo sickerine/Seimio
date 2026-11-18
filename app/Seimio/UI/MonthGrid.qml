@@ -186,7 +186,10 @@ FocusScope {
                     var above = row < grid.peekRow;
                     var show = grid.revealAll ? 1 : (row === grid.peekRow ? 0.3 : 0);
                     if (!animate) { reveal.stop(); grow.opacity = show; return }
-                    revealPause.duration = grid.revealAll && above ? 60 + (grid.peekRow - 1 - row) * 80 : 0;
+                    // (and a day a frame along each week: a day is drawn into its texture when it first shows,
+                    // about 2 ms each, and a week of them in one frame, or the three weeks below at once, was
+                    // a 20 to 40 ms frame)
+                    revealPause.duration = !grid.revealAll ? 0 : (above ? 60 + (grid.peekRow - 1 - row) * 80 : (row - grid.peekRow) * 60) + col * 16;
                     showAnim.to = show; showAnim.duration = show > 0 ? 400 : 160;
                     reveal.restart();
                 }
@@ -218,7 +221,7 @@ FocusScope {
                         arrive.stop(); leave.stop();
                         if (cell.row === fromRow) { enter.stop(); cell.opacity = 1; return }
                         cell.opacity = 0;
-                        enterPause.duration = Math.abs(cell.row - fromRow) * 90;
+                        enterPause.duration = Math.abs(cell.row - fromRow) * 90 + cell.col * 16;     // (a day a frame, as in settle)
                         enter.restart();
                     }
                 }

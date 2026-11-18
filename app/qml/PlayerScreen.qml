@@ -133,6 +133,12 @@ FocusScope {
     property var pendingChapters: []
     property bool sheetReady: false
     Timer { running: media.playing && !page.sheetReady; interval: 3000; onTriggered: page.sheetReady = true }
+    // ... and a row a frame: the list starts one pixel tall, so it makes its first row at once and the rest
+    // as its cache, which a ListView fills between frames; all nine at once were 53 ms on the GUI thread
+    // (again for each list that comes while the sheet is closed: another episode's streams)
+    property bool sheetWhole: false
+    Connections { target: page.streams; onModelAboutToBeReset: if (!sheet.open) page.sheetWhole = false }
+    Timer { running: page.sheetReady && !page.sheetWhole; interval: 800; onTriggered: page.sheetWhole = true }
     // chapters after the skip lookup (a file that keeps them at its end) count too: it runs again
     Timer { id: chaptersIn; interval: 300; onTriggered: { page.chapters = page.chapters.concat(page.pendingChapters); page.pendingChapters = []; if (media.loaded) askSkip.restart() } }
     Tee {
@@ -797,7 +803,8 @@ FocusScope {
         Text { x: 56; y: 64; text: "Streams"; color: Theme.ink; font.family: Theme.face; font.pixelSize: 40; font.weight: Font.Bold }
         ListView {
             id: streamList
-            x: 32; y: 170; width: parent.width - 64; height: parent.height - 200
+            x: 32; y: 170; width: parent.width - 64; height: page.sheetWhole || sheet.open ? parent.height - 200 : 1
+            cacheBuffer: 1200
             clip: true; spacing: 10
             focus: sheet.open
             // the rows are built a moment after playback starts, while nothing on screen moves, so neither

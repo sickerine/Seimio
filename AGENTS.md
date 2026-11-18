@@ -43,7 +43,11 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   the video nothing animates, and Qt draws only when a subtitle line or the overlay changes, so the gap
   before a frame after a pause isn't lateness. A pause can be short (a frosted backdrop doesn't drift,
   so nothing draws between one move ending and the next key): the gap counts only if the GUI thread's
-  work in it and the frame's own time from hand-over to screen account for all but 30 ms of it. GUI stalls are counted apart, by a 16 ms heartbeat on
+  work in it and the frame's own time from hand-over to screen account for all but 30 ms of it. And a
+  stamp a few ms late is not a frame shown late: of the 20 to 22 ms gaps measured, more than half were
+  followed by one of 10 to 14, two frames in two refreshes, so a gap up to 25 ms waits for the next
+  frame and counts as on time if the pair is within 35 ms. A late frame's log line says why (`frame`:
+  its own time; `gui`: the GUI thread's work in the gap). GUI stalls are counted apart, by a 16 ms heartbeat on
   the GUI thread during tours, so a long one counts whether or not anything was drawing.
 
 ## Performance rules
@@ -156,6 +160,10 @@ Each rule comes from a measured stall on the C5.
     weight at launch, off screen, so a title that comes in later uploads nothing.
   - `VARIANT` with `qt.scenegraph.time.texture.debug=true` and `...time.glyph.debug=true` lists both per
     frame.
+- What a list makes, it makes a row a frame: a ListView one pixel tall with a `cacheBuffer` builds its
+  first row at once and the rest between frames (the player's stream sheet: nine rows at once were 53 ms
+  on the GUI thread), and a title that arrives from the network is taken in on one frame and its page
+  opened on the next (together they were one 60 to 70 ms stall).
 - A frost follows its source only while it is wanted. On its way out its blur is left as it is
   (`backdropFrost.leaving`): a backdrop still crossfading under it as a page opened had it blurred again
   every frame of the fade, five passes more, and the page opened at 30 fps.

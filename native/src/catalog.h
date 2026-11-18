@@ -357,6 +357,12 @@ public:
     Q_INVOKABLE int episodeCount(const QString &id) const { return m_data ? m_data->episodeCounts.value(id, 0) : 0; }
     // whether a title is one the catalog has whole (Continue Watching's, with their seasons); any other is fetched
     Q_INVOKABLE bool holds(const QString &id) const { return m_data && m_data->held.contains(id); }
+    // The backdrop of a title that comes without one (the library lists a name and a poster): the one it
+    // has here if it's held, Cinemeta's for an IMDb title, nothing otherwise (until it is fetched)
+    Q_INVOKABLE QString backdrop(const QString &id) const {
+        if (m_data && m_data->held.contains(id)) return m_data->held.value(id);
+        return id.startsWith("tt") ? Live::metahub("background", id) : QString();
+    }
     // a day's releases, library shows first
     Q_INVOKABLE QVariantList day(const QString &key) const {
         QVariantList out;
@@ -377,7 +383,7 @@ signals:
 private:
     struct Data {
         QVariantList continueWatching, popular;
-        QSet<QString> held;                     // Continue Watching's ids
+        QHash<QString, QString> held;           // Continue Watching's and the library's shows: id -> backdrop
         QHash<QString, QVariant> shows;
         QHash<QString, int> episodeCounts;
         Calendar calendar;
@@ -408,7 +414,7 @@ private:
                                   {"episode", i["episode"].toString()}, {"progress", i["progress"].toDouble()} };
                 // a library show that isn't being watched: on the calendar, not on Continue Watching
                 if (!i["kept"].toBool()) d.continueWatching.append(item);
-                d.held << item["id"].toString();
+                d.held[item["id"].toString()] = item["backdrop"].toString();
                 byId[item["id"].toString()] = item;
             }
             for (const QJsonValue &row : docs.rows) {

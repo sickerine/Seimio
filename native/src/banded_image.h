@@ -8,6 +8,10 @@
 // down to fit `sourceSize`, never up, as Image does, and uploaded after each frame's drawing into a texture
 // nothing reads yet: the TV's driver stalls 10-15 ms when a texture the last frame read is written to.
 // `status` (Image's values) turns Ready when all of it is there, and only then does a shader get it.
+//
+// Two threads: the GUI thread owns the source and the decoded picture, the render thread the textures.
+// `m_mutex` covers what is handed from one to the other; `m_rendering` is held for a whole upload step, so
+// the GUI thread can wait one out before it lets go of a window or is destroyed.
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QSGTextureProvider>
@@ -41,18 +45,51 @@ class BandedImage : public QQuickItem {
     Q_PROPERTY(int status READ status NOTIFY statusChanged)         // Image's: 0 Null, 1 Ready, 2 Loading, 3 Error
 public:
     enum Status { Null, Ready, Loading, Error };
+    // (nothing may leave a destructor, and the compiler's own way of saying so, __cxa_call_terminate, is
+    // newer than the TV's C++ runtime: with it the plugin doesn't load. native/check-symbols.sh watches)
+    ~BandedImage() override { try { drop(); attach(nullptr); } catch (...) { } }
     QUrl source() const { return m_source; }
     int status() const { return m_status; }
     void setSource(const QUrl &url) {
         if (url == m_source) return;
         m_source = url; emit sourceChanged();
+        load();
+    }
+    bool isTextureProvider() const override { return true; }
+    // render thread. A shader always has something to read: until a picture is in, one black pixel
+    QSGTextureProvider *textureProvider() const override {
+        if (!m_provider) { m_provider = new BandedProvider; m_provider->shown = blank(window()); }
+        return m_provider;
+    }
+signals:
+    void sourceChanged();
+    void statusChanged();
+protected:
+    void itemChange(ItemChange change, const ItemChangeData &data) override {
+        if (change == ItemSceneChange) attach(data.window);
+        QQuickItem::itemChange(change, data);
+    }
+private:
+    // render thread: the scene graph and every texture in it are gone, so what was on the GPU is fetched
+    // and sent again
+    void sceneGone() {
+        QMutexLocker r(&m_rendering);
+        delete m_provider; m_provider = nullptr; m_id = 0; m_uploading = 0;
+        QMetaObject::invokeMethod(this, [this] { load(); }, Qt::QueuedConnection);
+    }
+    static QSGTexture *blank(QQuickWindow *window) { QImage none(1, 1, QImage::Format_RGBX8888); none.fill(Qt::black); return window->createTextureFromImage(none); }
+    void setStatus(int s) { if (s != m_status) { m_status = s; emit statusChanged(); } }
+    void drop() { if (m_reply) { m_reply->disconnect(this); m_reply->abort(); m_reply->deleteLater(); m_reply = nullptr; } }
+
+    // GUI thread: fetches and decodes `source`; the picture it had goes at once
+    void load() {
         const int ticket = ++m_ticket;
-        if (m_reply) { m_reply->disconnect(this); m_reply->abort(); m_reply->deleteLater(); m_reply = nullptr; }
-        hand(QImage(), ticket);                              // the picture it had goes
+        drop();
+        hand(QImage(), ticket);
         setImplicitSize(0, 0);
-        if (url.isEmpty()) { setStatus(Null); return; }
+        if (m_source.isEmpty()) { setStatus(Null); return; }
         setStatus(Loading);
-        QNetworkRequest request(url);
+        QNetworkRequest request(m_source);
         request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
         m_reply = qmlEngine(this)->networkAccessManager()->get(request);
         connect(m_reply, &QNetworkReply::finished, this, [this, ticket, reply = m_reply] {
@@ -78,54 +115,49 @@ public:
             worker->start();
         });
     }
-    bool isTextureProvider() const override { return true; }
-    // render thread. A shader always has something to read: until a picture is in, one black pixel
-    QSGTextureProvider *textureProvider() const override {
-        if (!m_provider) {
-            m_provider = new BandedProvider;
-            QImage none(1, 1, QImage::Format_RGBX8888); none.fill(Qt::black);
-            m_provider->shown = window()->createTextureFromImage(none);
-        }
-        return m_provider;
-    }
-signals:
-    void sourceChanged();
-    void statusChanged();
-protected:
-    void itemChange(ItemChange change, const ItemChangeData &data) override {
-        if (change == ItemSceneChange && data.window)
-            connect(data.window, &QQuickWindow::afterRendering, this, &BandedImage::upload, Qt::ConnectionType(Qt::DirectConnection | Qt::UniqueConnection));
-        QQuickItem::itemChange(change, data);
-    }
-    void releaseResources() override {
-        struct Gone : QRunnable { BandedProvider *provider; void run() override { delete provider; } };
-        if (!m_provider || !window()) return;
-        auto *gone = new Gone; gone->provider = m_provider; m_provider = nullptr;
-        window()->scheduleRenderJob(gone, QQuickWindow::BeforeSynchronizingStage);
-    }
-private:
-    void setStatus(int s) { if (s != m_status) { m_status = s; emit statusChanged(); } }
-    // GUI thread: the picture for the render thread to take (none: its texture goes)
+    // GUI thread: the picture for the render thread to take (none: its texture goes). Each hand-over has
+    // its own number: a picture decoded while the render thread was still clearing the last one is another
     void hand(const QImage &image, int ticket) {
-        { QMutexLocker l(&m_mutex); m_image = image; m_handed = ticket; }
+        { QMutexLocker l(&m_mutex); m_image = image; m_handedFor = ticket; ++m_handed; }
         m_work = true;
-        if (window()) window()->update();
+        if (m_window) m_window->update();
+    }
+    // GUI thread: out of one window's rendering and into another's. What it had on the GPU goes with the
+    // window it was in, on that window's render thread
+    void attach(QQuickWindow *window) {
+        if (window == m_window) return;
+        if (m_window) {
+            struct Gone : QRunnable {
+                BandedProvider *provider; GLuint id;
+                void run() override { delete provider; if (id && QOpenGLContext::currentContext()) QOpenGLContext::currentContext()->functions()->glDeleteTextures(1, &id); }
+            };
+            disconnect(m_window, nullptr, this, nullptr);
+            QMutexLocker r(&m_rendering);                   // an upload step under way ends first
+            auto *gone = new Gone; gone->provider = m_provider; gone->id = m_id;
+            m_provider = nullptr; m_id = 0; m_uploading = 0;
+            m_window->scheduleRenderJob(gone, QQuickWindow::BeforeSynchronizingStage);
+        }
+        const bool moved = m_window && window;
+        { QMutexLocker r(&m_rendering); m_window = window; }
+        if (!window) return;
+        connect(window, &QQuickWindow::afterRendering, this, [this, window] { upload(window); }, Qt::DirectConnection);
+        connect(window, &QQuickWindow::sceneGraphInvalidated, this, &BandedImage::sceneGone, Qt::DirectConnection);
+        if (moved) load(); else if (m_work) window->update();
     }
     // render thread, after a frame's drawing: one band more of the picture in hand
-    void upload() {
+    void upload(QQuickWindow *window) {
         if (!m_work) return;
-        QImage image; int ticket;
-        { QMutexLocker l(&m_mutex); image = m_image; ticket = m_handed; }
+        QMutexLocker r(&m_rendering);
+        if (window != m_window) return;
+        QImage image; int ticket, handed;
+        { QMutexLocker l(&m_mutex); image = m_image; ticket = m_handedFor; handed = m_handed; }
         QOpenGLFunctions *gl = QOpenGLContext::currentContext()->functions();
-        if (ticket != m_uploading) {                        // another picture than the one being sent, or none
+        if (handed != m_uploading) {                        // another hand-over than the one being sent
             if (m_id) { gl->glDeleteTextures(1, &m_id); m_id = 0; }
-            m_uploading = ticket; m_row = 0;
-            if (image.isNull()) {
-                QImage none(1, 1, QImage::Format_RGBX8888); none.fill(Qt::black);
-                static_cast<BandedProvider *>(textureProvider())->show(window()->createTextureFromImage(none));
-            }
+            m_uploading = handed; m_row = 0;
+            if (image.isNull()) static_cast<BandedProvider *>(textureProvider())->show(blank(window));
         }
-        if (image.isNull()) { done(ticket); return; }
+        if (image.isNull()) { done(handed); return; }
         if (!m_id) {
             gl->glGenTextures(1, &m_id);
             gl->glBindTexture(GL_TEXTURE_2D, m_id);
@@ -136,32 +168,34 @@ private:
             gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width(), image.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         } else gl->glBindTexture(GL_TEXTURE_2D, m_id);
         const int rows = qMin(int(Band), image.height() - m_row);
+        gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);          // RGBX rows are four bytes a pixel, back to back
         gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, m_row, image.width(), rows, GL_RGBA, GL_UNSIGNED_BYTE, image.constScanLine(m_row));
         gl->glBindTexture(GL_TEXTURE_2D, 0);
         m_row += rows;
-        if (m_row < image.height()) { window()->update(); return; }       // a frame more, for the next band
-        QSGTexture *whole = window()->createTextureFromId(m_id, image.size(), QQuickWindow::TextureOwnsGLTexture);
+        if (m_row < image.height()) { window->update(); return; }       // a frame more, for the next band
+        QSGTexture *whole = window->createTextureFromId(m_id, image.size(), QQuickWindow::TextureOwnsGLTexture);
         whole->setFiltering(QSGTexture::Linear);
         m_id = 0;
         static_cast<BandedProvider *>(textureProvider())->show(whole);
-        done(ticket);                                       // the GPU has it now
+        done(handed);                                       // the GPU has it now
         QMetaObject::invokeMethod(this, [this, ticket] { if (ticket == m_ticket) setStatus(Ready); }, Qt::QueuedConnection);
     }
-
-    // nothing more to send, unless another picture was handed over meanwhile
-    void done(int ticket) { QMutexLocker l(&m_mutex); if (m_handed == ticket) { m_image = QImage(); m_work = false; } }
+    // render thread: nothing more to send, unless something else was handed over meanwhile
+    void done(int handed) { QMutexLocker l(&m_mutex); if (m_handed == handed) { m_image = QImage(); m_work = false; } }
 
     enum { Band = 136 };                                    // rows a frame: an eighth of 1080
     QUrl m_source;
     QSize m_sourceSize;
     int m_status = Null;
-    int m_ticket = 0;                                       // which picture is wanted (GUI thread)
+    int m_ticket = 0;                                       // which fetch is the one wanted (GUI thread)
     QNetworkReply *m_reply = nullptr;
     QMutex m_mutex;
     QImage m_image;                                         // decoded and waiting for the GPU (under m_mutex)
-    int m_handed = 0;                                       // its ticket (under m_mutex)
+    int m_handedFor = 0, m_handed = 0;                      // its fetch, and which hand-over it is (under m_mutex)
     std::atomic<bool> m_work{false};
-    // render thread
+    QMutex m_rendering;
+    QQuickWindow *m_window = nullptr;                       // written on the GUI thread, under m_rendering
+    // render thread (the GUI thread only under m_rendering)
     mutable BandedProvider *m_provider = nullptr;
     GLuint m_id = 0;                                        // the texture being filled
     int m_uploading = 0, m_row = 0;

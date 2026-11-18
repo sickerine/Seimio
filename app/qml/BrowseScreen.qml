@@ -63,7 +63,7 @@ FocusScope {
         id: controls
         z: 2                                     // the rows pass under it once it's at the top
         x: Theme.margin
-        y: browse.scrolled ? 44 : browse.hero ? 560 : 150
+        y: browse.scrolled ? 44 : browse.hero ? 560 : 169      // (with no info above: midway between the tab bar and the cards, 61 px from each)
         width: bars.width; height: 64
         focus: browse.row < 0
         Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }

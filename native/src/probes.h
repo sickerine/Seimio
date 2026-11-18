@@ -141,9 +141,9 @@ private:
 // Frame gaps can't tell a long stall from a pause in drawing, so GUI stalls are measured apart: with
 // `heartbeat` on (the lab sets it during tours), a 16 ms timer on the GUI thread ticks whether or not
 // anything draws, and a tick more than 50 ms late is a stall of that length, however long. Time the GUI
-// thread spent waiting to hand a frame to the render thread is not our work and comes off it: a tick that
-// ends just after a slow swap (over 30 ms: the TV's compositor, over video), and the wait measured at each
-// hand-over (afterSynchronizing). Both are logged as waits and not counted.
+// thread spent waiting to hand a frame to the render thread is not our work and comes off it: a gap most
+// of which a drawn frame spent waiting to be shown (a swap over 30 ms: the TV's compositor, over video),
+// and the wait measured at each hand-over (afterSynchronizing). Both are logged as waits and not counted.
 class FrameStats : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString phase READ phase WRITE setPhase)
@@ -154,10 +154,17 @@ public:
         connect(&m_beat, &QTimer::timeout, this, [this] {
             const double now = monoMs(), gap = now - m_lastBeat, cpu = threadCpuMs(), worked = cpu - m_lastCpu;
             const double stall = gap - m_handing.exchange(0);       // less what it waited handing frames over
+            const double before = m_lastBeat;
             m_lastBeat = now; m_lastCpu = cpu;
             if (gap <= 50) return;
             QMutexLocker l(&m_mutex);
-            if (now - m_slowSwap < 15) { labLog(QString("gui waited on a slow swap %1 ms").arg(gap, 0, 'f', 1)); return; }
+            // how much of the gap a drawn frame spent waiting to be shown: one whose slow swap ended in the
+            // gap, or one still waiting. Over video the TV's compositor holds a frame 100 ms and more, and
+            // the GUI thread waits with it (for the display, not only at its own hand-over).
+            double held = m_slowTo > before ? qMin(now, m_slowTo) - qMax(before, m_slowFrom) : 0;
+            const double rendered = m_rendered, swapped = m_swapped;
+            if (rendered > swapped) held = qMax(held, now - qMax(before, rendered));
+            if (held > gap / 2) { labLog(QString("gui waited on a slow swap %1 ms").arg(gap, 0, 'f', 1)); return; }
             if (stall <= 50) { labLog(QString("gui waited %1 ms of %2 to hand a frame over, busy %3").arg(gap - stall, 0, 'f', 1).arg(gap, 0, 'f', 1).arg(worked, 0, 'f', 0)); return; }
             m_stalls[m_phase].append(stall);
             // `busy`: the GUI thread's own CPU time in the gap; far less than the gap means it was blocked
@@ -190,7 +197,7 @@ public:
             timespec t; clock_gettime(m_guiClock, &t);
             const double guiCpu = t.tv_sec * 1e3 + t.tv_nsec / 1e6;
             QMutexLocker l(&m_mutex);
-            if (now - m_rendered > 30) m_slowSwap = now;
+            if (now - m_rendered > 30) { m_slowFrom = m_rendered; m_slowTo = now; }
             // Qt draws only when something changes. A frame is late when it breaks a run of frames (the one
             // before it came on time); one that follows a pause (nothing animating, a subtitle waiting for its
             // next line, a key press after a moment) only shows when something next changed. A pause can be
@@ -199,10 +206,21 @@ public:
             // the frame's own time from its hand-over to the screen. Over 30 ms of that, nobody was asking
             // for a frame (a frame waits up to one refresh for its turn anyway).
             const double gap = now - m_last, idle = gap - (guiCpu - m_guiCpuAtSwap) - (now - m_began);
+            // A stamp a few ms late is not a frame shown late. Of the gaps of 20 to 22 ms measured over two
+            // tours, more than half were followed by one of 10 to 14: the two frames took two refreshes
+            // between them, each shown in its own. So a gap up to 25 ms waits for the next frame: made up
+            // for (35 ms the pair, two refreshes and the stamps' slack), it counts as on time.
+            if (m_held > 0) {
+                const bool madeUp = m_held + gap <= 35;
+                m_gaps[m_heldPhase].append(madeUp ? 16.7 : m_held);
+                if (madeUp) m_lastGap = 16.7; else labLog(m_heldLine);
+                m_held = 0;
+            }
             if (m_last > 0 && m_lastGap > 0 && m_lastGap <= 20 && gap < 150 && idle <= 30) {
-                m_gaps[m_phase].append(gap);
                 // with why: the frame's own time from its hand-over to the screen, and the GUI thread's work in the gap
-                if (gap > 20) labLog(QString("late frame %1 ms (frame %2, gui %3)").arg(gap, 0, 'f', 1).arg(now - m_began, 0, 'f', 0).arg(guiCpu - m_guiCpuAtSwap, 0, 'f', 0));
+                const QString line = gap > 20 ? QString("late frame %1 ms (frame %2, gui %3)").arg(gap, 0, 'f', 1).arg(now - m_began, 0, 'f', 0).arg(guiCpu - m_guiCpuAtSwap, 0, 'f', 0) : QString();
+                if (gap > 20 && gap <= 25) { m_held = gap; m_heldPhase = m_phase; m_heldLine = line; }
+                else { m_gaps[m_phase].append(gap); if (gap > 20) labLog(line); }
             }
             m_lastGap = m_last > 0 ? gap : 0;
             m_last = now; m_swapped = now; m_guiCpuAtSwap = guiCpu;
@@ -233,6 +251,8 @@ public:
     Q_INVOKABLE QVariantMap take() {
         QMutexLocker l(&m_mutex);
         QVariantMap out;
+        // a gap still waiting for its next frame, with none coming: nothing made up for it
+        if (m_held > 0 && monoMs() - m_last > 35) { m_gaps[m_heldPhase].append(m_held); labLog(m_heldLine); m_held = 0; }
         for (auto it = m_stalls.begin(); it != m_stalls.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
         for (auto it = m_gaps.begin(); it != m_gaps.end(); ++it) {
             QVector<double> g = it.value(); std::sort(g.begin(), g.end());
@@ -256,7 +276,9 @@ private:
     double m_lastBeat = 0; double m_lastCpu = 0;
     std::atomic<double> m_began { 0 }, m_rendered { 0 }, m_swapped { 0 };     // when the frame in hand began, was drawn, and when the last one was shown
     double m_guiCpuAtSwap = 0;              // the GUI thread's CPU time at the last swap (under m_mutex)
-    double m_slowSwap = 0;                  // when the last slow swap ended (under m_mutex)
+    double m_held = 0;                      // a gap of 20 to 25 ms waiting for the next frame's verdict, with its
+    QString m_heldPhase, m_heldLine;        // phase and its log line (under m_mutex)
+    double m_slowFrom = 0, m_slowTo = 0;    // the last slow swap: from its frame being drawn to its being shown (under m_mutex)
     clockid_t m_guiClock = 0;               // the GUI thread's CPU time, readable from the render thread
     std::atomic<double> m_handFrom { 0 }, m_handCpu { 0 };      // the animation tick a hand-over starts from
     std::atomic<double> m_handing { 0 };    // time waited handing frames over since the last heartbeat
