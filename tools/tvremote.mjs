@@ -1,6 +1,7 @@
 // LG network remote (the SSAP API phone remotes use). Pairs once (accept the prompt on the TV), then sends
 // remote buttons through the TV's real input path.
 // usage: node tvremote.mjs pair | node tvremote.mjs press RIGHT 30 300   (button, count, ms between) | node tvremote.mjs type "some text"
+// A long OK is `press ENTER 16 40`: the app takes presses under 90 ms apart as one hold (Remote.qml), as LG's own remote sends them.
 import { readFileSync, writeFileSync } from "fs";
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // the TV's certificate is self-signed
 const TV = process.env.TV_HOST || "192.168.1.37";

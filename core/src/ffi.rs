@@ -70,6 +70,15 @@ pub extern "C" fn seimio_core_select(what: *const c_char, choice: *const c_char)
     }
 }
 
+/// One episode watched or not (`mark_video` in lib.rs). Null when asked; otherwise why not (freed by the caller).
+#[no_mangle]
+pub extern "C" fn seimio_core_mark_video(kind: *const c_char, meta: *const c_char, base: *const c_char, video: *const c_char, watched: bool) -> *mut c_char {
+    match crate::mark_video(&text(kind), &text(meta), &text(base), &text(video), watched) {
+        Ok(()) => std::ptr::null_mut(),
+        Err(why) => c(&why).into_raw(),
+    }
+}
+
 /// State shaped for the app (`view` in lib.rs), or null.
 #[no_mangle]
 pub extern "C" fn seimio_core_view(name: *const c_char) -> *mut c_char {

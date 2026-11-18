@@ -46,7 +46,7 @@ WebOSWindow {
         }
         Row {
             spacing: 32
-            Repeater { model: ["play", "plus", "check", "search", "info", "star", "pin", "chevrons"]; Icon { name: modelData; width: 40; height: 40 } }
+            Repeater { model: ["play", "plus", "check", "search", "info", "star", "pin", "chevrons", "minus", "close"]; Icon { name: modelData; width: 40; height: 40 } }
         }
         Row {
             spacing: 32

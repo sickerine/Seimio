@@ -3,6 +3,7 @@
 // rules) for Qt. One for the process, on the thread that first asks for it (the GUI's). The core runs on
 // its own threads; what it says comes back here through queued calls, and its HTTP is answered by Http.
 //   dispatch(model, action)   the core's Action as JSON, to one of its models or ("") to all
+//   markVideo(type, meta, base, video, watched)   one episode, which the core does on its details of the title
 //   state(model), view(name)  JSON, read on any thread
 //   changed(models)           those models' state is new;  event(name, args)  the core's events
 #include <QCoreApplication>
@@ -20,6 +21,7 @@ char *seimio_core_dispatch(const char *model, const char *action);
 char *seimio_core_state(const char *model);
 char *seimio_core_view(const char *name);
 char *seimio_core_select(const char *what, const char *choice);
+char *seimio_core_mark_video(const char *type, const char *meta, const char *base, const char *video, bool watched);
 void seimio_core_free(char *);
 }
 
@@ -47,6 +49,13 @@ public:
     // one choice of a browsable model's filters (`select` in core/src/lib.rs)
     void select(const QByteArray &what, const QByteArray &choice) {
         if (char *why = seimio_core_select(what.constData(), choice.constData())) { qWarning("core: %s = %s: %s", what.constData(), choice.constData(), why); seimio_core_free(why); }
+    }
+    // one episode of a title (`type`, `meta`) watched or not, against the list of episodes of the addon at
+    // `base` (`mark_video` in core/src/lib.rs); one that can't be marked is a warning, now or later
+    void markVideo(const QString &type, const QString &meta, const QString &base, const QString &video, bool watched) {
+        if (char *why = seimio_core_mark_video(type.toUtf8().constData(), meta.toUtf8().constData(), base.toUtf8().constData(), video.toUtf8().constData(), watched)) {
+            qWarning("core: not marked: %s", why); seimio_core_free(why);
+        }
     }
     static QJsonDocument state(const char *model) { return taken(seimio_core_state(model)); }
     static QJsonDocument view(const char *name) { return taken(seimio_core_view(name)); }
@@ -79,6 +88,7 @@ private:
             if (k == "ready") { core->m_ready = true; emit core->readyChanged(); }
             else if (k == "state") { QStringList models; for (const QJsonValue &v : QJsonDocument::fromJson(j).array()) models << v.toString(); emit core->changed(models); }
             else if (k == "event") { const QJsonObject e = QJsonDocument::fromJson(j).object(); emit core->event(e.value("event").toString(), e.value("args").toObject()); }
+            else if (k == "unmarked") qWarning("core: not marked: %s", j.constData());
         }, Qt::QueuedConnection);
     }
     static void onFetch(void *user, quint64 id, const char *method, const char *url, const char *, const uchar *body, size_t len) {

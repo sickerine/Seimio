@@ -2,8 +2,8 @@
 // thread) grouped by `phase`, key latency, and keys seen to the Mac's lab server. It reads switches
 // from the server at launch ({ "captureAt": [ms...], "autopop": true }) and can capture the TV's
 // screen through LG's capture service. { "openMenu": true } opens quick actions 2 s after launch, for
-// testing the menu with the network remote, which can't long-press; { "openStreams": ms } opens the stream
-// list for the title on screen that long after launch, for the same reason. { "noAi": true } keeps the AI
+// a tour, whose keys are single presses (a long OK takes `tvremote.mjs press ENTER 16 40`); { "openStreams": ms }
+// opens the stream list for the title on screen that long after launch, for the same reason. { "noAi": true } keeps the AI
 // pick from being called (no key), so tours cost nothing. { "timing": true } adds Qt's own
 // per-frame render loop timing (GUI-thread sync vs render thread) to each report, along with stamped
 // key presses, late frames and GUI-thread stalls; a string instead of true sets other Qt log rules

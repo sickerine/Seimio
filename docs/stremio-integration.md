@@ -63,6 +63,12 @@ only makes sense if all of them agree. The details that matter:
   the Kitsu addon doesn't serve, so an anime library gets nothing. Ours (Cinemeta episodes and AniList's
   air times) stays; it takes the library's titles from the core.
 - The account has no avatar set (`user.avatar` is empty).
+- **An episode marked** (`core-lab <dir> 'mark:series,tt33043892,https://v3-cinemeta.strem.io/manifest.json,tt33043892:2:5,true'`): the title's
+  `watched` field went from `tt33043892:2:3:33:…` to `tt33043892:2:5:35:…` in 760 ms (Cinemeta's meta
+  150 ms of it) and was pushed; marked back, the field was the first one again. Its `lastWatched` moved to
+  that episode's air date, a date still ahead, and did not move back.
+- **Off Continue Watching**: a film played for a minute through the Player model was first on Continue
+  Watching; `RewindLibraryItem` and `DismissNotificationItem` took it off (`timeOffset` 0), pushed in 260 ms.
 
 HTTP goes through the host: the core hands each request to a callback and the app answers with Qt's network
 stack. One client, one certificate store, and the previews' record and replay cover the core too. The
@@ -77,13 +83,32 @@ QML  ──  Account (Seimio.Data)  ──  core.h (C++)  ──  libseimio_core
               └─ Catalog/Live take Continue Watching and the library from it
 ```
 
-- **`core/`** (Rust): `TvModel` = `ctx`, `link`, `continue_watching`, `library`, `discover`, `player`.
-  C interface: `start(dir, onEvent, onFetch)`, `dispatch(model, actionJson)`, `state(model)`, `view(name)`
-  (JSON shaped for the UI where the core's own is too large), `fetched(id, status, body)`.
+- **`core/`** (Rust): `TvModel` = `ctx`, `link`, `continue_watching`, `library`, `discover`, `player`,
+  `details`. C interface: `start(dir, onEvent, onFetch)`, `dispatch(model, actionJson)`, `state(model)`,
+  `view(name)` (JSON shaped for the UI where the core's own is too large), `fetched(id, status, body)`,
+  `mark_video(type, meta, base, video, watched)`.
+- **One episode watched or not** is the core's `MarkVideoAsWatched`, which it does on its details of the
+  title (`details`: the meta from the account's addons, the library item, its watched field). The core
+  marks against the first meta that is ready, in the order of the account's addons; they answer in any
+  order and their episode lists differ (this account has Cinemeta and a second meta addon for the same
+  ids). So `mark_video` names the addon the app shows the title from (`base`: Cinemeta's, or the Kitsu
+  addon's for an anime) and marks only when that one is what the core will use: it has answered and every
+  addon before it has failed. Otherwise the mark fails with a reason (a warning, and an `unmarked` event
+  when it fails later) and nothing is written. Marks wait in a queue, a title at a time. Marking the
+  episode you are on moves Continue Watching to the next; marking one whose air date is after the title's
+  last-watched date moves that date to it, which is why nothing that airs later has the entry.
+- **A film or a related show watched or not** is the title's own state (`MetaItemMarkAsWatched`,
+  `timesWatched`), as on its page: `Franchise` reads a film's and a related show's check from it.
+- **Off Continue Watching** is what Stremio's own Dismiss sends: `RewindLibraryItem` (the title back to its
+  start; it stays in the library and what was watched stays watched) and `DismissNotificationItem` (its
+  new-episode notices). The core's rules decide the rest, and two of them show: a film marked watched
+  leaves Continue Watching, and so does a title added to the library and removed again (it is no longer
+  `temp`).
 - **`native/src/core.h`**: owns the core, hops its callbacks to Qt's thread, answers `fetch` with the same
   HTTP helper `Live` uses (moved out of `Live` so both share it and its replay).
 - **`Account`** (QML type): `signedIn`, `email`, `avatar`; `link` (code, address, QR, waiting or failed);
-  `signOut()`; `inLibrary(id)`, `addToLibrary(item)`, `removeFromLibrary(id)`, `markWatched(id, bool)`;
+  `signOut()`; `inLibrary(id)`, `addToLibrary(item)`, `removeFromLibrary(id)`, `markWatched(item, bool)`,
+  `markEpisode(videoId, bool)`, `stopWatching(id)`;
   the player's reports (`playing`, `timeChanged`, `seeked`, `paused`, `ended`, `stopped`). Its lists
   (the library page, a Discover page) are `QAbstractListModel`s filled off the GUI thread.
 - **Data**: `Live` takes Continue Watching and the library's state from the core instead of
@@ -108,7 +133,14 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
    tab): filters for the list (Popular, New, Featured, the account's other catalogs) and the genre.
 5. **Search**: the search tab opens into a text field and the TV's keyboard comes up. Results under it as
    three rows: Movies, Series, Anime.
-6. **Add to library / Remove from library** on the show and title pages, by the core's state.
+6. **Add to library / Remove from library** and **Mark watched / Mark unwatched** on the show and title
+   pages, by the core's state, and in Home's menu (a long OK on a Continue Watching card), which also has
+   **Remove from Continue Watching**. A long OK on any card of a show's row opens its menu, and what the
+   card is says what the menu has (`App.menuEntries`): Play AI Pick and Play from Stream for what plays
+   (an episode, a film), the library's two entries for a title (a film, a related show), watched or not for
+   an episode. Nothing that airs later is marked. A menu lists what it opened with until it has closed
+   (`QuickMenu`'s `Latch`): its labels follow what they did. The page under it is built again where it is
+   (`ShowScreen.refresh`): the focus stays on the card and Play names what it named.
 7. **Calendar**: library titles' releases, first in each day.
 
 ## Phases
@@ -140,6 +172,7 @@ what reached the GPU in it):
 | A page built the moment its title arrived | 25 ms, with 20 ms to take the title in | the quiet starts 300 ms after OK; taken in and opened on separate frames |
 | The stream sheet's rows made at once | 53 ms on the GUI thread | made between frames |
 | Network answers parsed on the GUI thread | stalls of 50 to 120 ms | a data thread |
+| Every title's meta asked for again when the account's watch state changed | the row followed a removal 2.2 s after the press | metas and a franchise's fetch kept ten minutes: 0.7 s (0.4 s of it the wait for more changes) |
 
 The lab had been wrong in four ways, each measured before it was changed: its own report cost 30 ms every
 3 s of a timed run; a pause under 150 ms with nothing moving read as a late frame; a stamp 3 to 4 ms late

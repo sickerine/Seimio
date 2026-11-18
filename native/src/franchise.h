@@ -43,7 +43,16 @@ public:
     void setLibrary(const QJsonObject &library) { m_library = library; }
 
     // `source`: { id: "anilist:N" or "kitsu:N", and what the screen showed (kept as it is) }
+    // Asked for again within ten minutes (the watch state changed under its page, the page opened again),
+    // what was fetched is put together again with the library as it is now: nothing is asked of the network.
     void load(const QVariantMap &source) {
+        const auto kept = m_kept.constFind(source["id"].toString());
+        if (kept != m_kept.constEnd() && QDateTime::currentMSecsSinceEpoch() - kept->second < Live::kKept) {
+            auto again = std::make_shared<Job>(*kept->first);       // (its own: the last one may still be on its worker)
+            again->source = source; again->sourceId = source["id"].toString();
+            finish(again);
+            return;
+        }
         auto job = std::make_shared<Job>(); job->source = source; job->sourceId = source["id"].toString();
         const QString kind = job->sourceId.section(':', 0, 0), id = job->sourceId.section(':', 1, 1);
         get("https://arm.haglund.dev/api/v2/ids?source=" + kind + "&id=" + id, [this, job](const QByteArray &body, bool ok) {
@@ -68,6 +77,7 @@ private:
     };
     Http m_http { this };
     QJsonObject m_library;
+    QHash<QString, QPair<std::shared_ptr<Job>, qint64>> m_kept;      // what was fetched for a source, and when (`load`)
 
     void get(const QString &url, std::function<void(const QByteArray &, bool)> done) { send(url, QByteArray(), done); }
     void send(const QString &url, const QByteArray &body, std::function<void(const QByteArray &, bool)> done) {
@@ -236,6 +246,11 @@ private:
     }
     void finish(std::shared_ptr<Job> job) {
         if (!job->kitsu.contains(job->picked)) { emit failed(job->sourceId, "Couldn't load its episodes"); return; }
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        for (auto it = m_kept.begin(); it != m_kept.end();) it = now - it->second < Live::kKept ? std::next(it) : m_kept.erase(it);
+        // by what asked for it and by its Kitsu id, which is what its page asks again with (put together
+        // again, it keeps the age of its fetch)
+        for (const QString &key : { job->sourceId, "kitsu:" + QString::number(job->picked) }) if (!m_kept.contains(key)) m_kept[key] = { job, now };
         job->library = m_library;
         auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
         QThread *worker = QThread::create([out, job] { *out = build(*job); });
@@ -243,6 +258,9 @@ private:
         connect(worker, &QThread::finished, worker, &QObject::deleteLater);
         worker->start();
     }
+    // a title (a film, a related show) is watched as Stremio says a library item is: it has been, at least
+    // once (`state`: its library item's)
+    static bool watchedTitle(const QJsonObject &state) { return state.value("timesWatched").toInt() > 0; }
     static QString clean(QString text) {
         text.replace(QRegularExpression("<[^>]+>|\\(Source:[^)]*\\)"), " ");
         return text.simplified();
@@ -315,7 +333,8 @@ private:
                                       { "released", released == "1970-01-01" ? QString() : released }, { "runtime", e.value("runtime").toString() },
                                       { "thumb", p.film ? p.meta.value("background").toString() : e.value("thumbnail").toString() },
                                       { "type", p.film ? "movie" : "series" }, { "entry", entry }, { "poster", p.film ? p.meta.value("poster").toString() : QString() },
-                                      { "watched", seen.contains(vid) }, { "progress", vid == stCurrent && duration > 0 ? qRound(1000 * offsetMs / duration) / 10.0 : 0 } };
+                                      { "watched", p.film ? watchedTitle(st) : seen.contains(vid) },
+                                      { "progress", vid == stCurrent && duration > 0 ? qRound(1000 * offsetMs / duration) / 10.0 : 0 } };
                 if (p.film) break;
             }
             if (mine.isEmpty()) continue;
@@ -355,7 +374,7 @@ private:
                                      { "episodes", m.value("videos").toArray().size() } };
             related << QVariantMap { { "id", r["id"] }, { "type", "show" }, { "relation", r["relation"] }, { "episode", related.size() + 1 }, { "title", r["title"] },
                                      { "thumb", m.value("background").toString() }, { "poster", r["poster"] }, { "overview", clean(m.value("description").toString()) },
-                                     { "released", QString() }, { "entry", entry } };
+                                     { "released", QString() }, { "entry", entry }, { "watched", watchedTitle(job.library.value(r["id"].toString()).toObject()) } };
         }
         if (!related.isEmpty()) seasons << QVariantMap { { "season", 0 }, { "label", "Related" }, { "kind", "related" }, { "episodes", related } };
         QVariantMap item = job.source;

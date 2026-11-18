@@ -11,7 +11,7 @@ with a C++ plugin for LG's media server and libass subtitles. Built and measured
 | `app/Seimio/UI/` | The UI library (`import Seimio.UI 1.0`): theme, controls, glass and frost, cards, strips |
 | `app/qml/` | Screens built from the library: Home, the show page, the title page (movies, single episodes), quick actions |
 | `native/` | The `Seimio.Native` plugin (Luna calls, the media server player, libass subtitles, window properties, lab probes) and `Seimio.Data` (the catalog and the calendar model, in C++) |
-| `core/` | stremio-core built natively for the TV (currently a probe; the app still uses lab data) |
+| `core/` | Stremio's own core (stremio-core, Rust) behind a C interface, built for the TV and the Mac: the account, the library, Continue Watching, watch state |
 | `third_party/libass/` | libass with FriBidi and HarfBuzz, built for the TV |
 | `tools/` | Deploy, remote-driven tours, the lab server, art fetching, Mac previews |
 | `lab/` | Earlier experiments (web motion lab, QML benchmarks, video tests) |

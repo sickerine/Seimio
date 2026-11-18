@@ -1,5 +1,5 @@
 //! The core from a terminal, for experiments: HTTP through curl, state printed as JSON.
-//! usage: core-lab <storage-dir> <steps...>   each step: `wait:<ms>`, `state:<model>`, `view:<name>`, `select:<what>=<choice>`, `<model>|<action json>` ("" for all)
+//! usage: core-lab <storage-dir> <steps...>   each step: `wait:<ms>`, `state:<model>`, `view:<name>`, `select:<what>=<choice>`, `mark:<type>,<meta id>,<the addon's manifest address>,<video id>,<true|false>`, `<model>|<action json>` ("" for all)
 use std::{io::Read, process::{Command, Stdio}, sync::mpsc, time::{Duration, Instant}};
 
 use seimio_core::env::{fetched, Fetch};
@@ -45,6 +45,11 @@ fn main() {
         else if let Some(model) = step.strip_prefix("state:") { println!("{}", seimio_core::state(model).unwrap_or_else(|| "null".into())); }
         else if let Some((what, choice)) = step.strip_prefix("select:").and_then(|s| s.split_once('=')) {
             if let Err(e) = seimio_core::select(what, choice) { eprintln!("select failed: {e}"); }
+            drain(50);
+        }
+        else if let Some(mark) = step.strip_prefix("mark:") {
+            let p: Vec<_> = mark.split(',').collect();
+            if let Err(e) = seimio_core::mark_video(p[0], p[1], p[2], p[3], p[4] == "true") { eprintln!("mark failed: {e}"); }
             drain(50);
         }
         else if let Some(name) = step.strip_prefix("view:") { println!("{}", seimio_core::view(name).unwrap_or_else(|| "null".into())); }

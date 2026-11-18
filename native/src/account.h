@@ -24,7 +24,8 @@ class Account : public QObject {
     Q_PROPERTY(QString email READ email NOTIFY changed)
     Q_PROPERTY(QString avatar READ avatar NOTIFY changed)
     Q_PROPERTY(QVariantMap link READ link NOTIFY linkChanged)
-    Q_PROPERTY(int libraryRevision READ libraryRevision NOTIFY libraryChanged)   // read with inLibrary() or watched(), so a binding follows
+    // read with inLibrary() or watched(), so a binding follows; it also moves when an episode's watched state does
+    Q_PROPERTY(int libraryRevision READ libraryRevision NOTIFY libraryChanged)
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
     //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
     //   items(from, n)   that many of its titles, as the screens show a title
@@ -92,12 +93,20 @@ public:
     Q_INVOKABLE void markWatched(const QVariantMap &item, bool watched) {
         ctx("MetaItemMarkAsWatched", QJsonObject { { "meta_item", preview(item) }, { "is_watched", watched } });
     }
+    // one episode of a series, by its id: the core's rules (Continue Watching moves on when it was the one
+    // you were on)
+    Q_INVOKABLE void markEpisode(const QString &videoId, bool watched) {
+        const QString meta = titleOf(videoId);
+        Core::instance()->markVideo("series", meta, sourceOf(meta), videoId, watched);
+    }
+    // off Continue Watching, as Stremio's own Dismiss does it: the title goes back to its start and its
+    // new-episode notices go. It stays in the library, and what was watched stays watched.
+    Q_INVOKABLE void stopWatching(const QString &id) { ctx("RewindLibraryItem", id); ctx("DismissNotificationItem", id); }
 
     // `videoId` as Stremio names it ("tt…:2:3", "kitsu:44081:9", a film's own id), `url` what plays
     Q_INVOKABLE void playing(const QString &videoId, const QString &type, const QString &url) {
         const bool film = type == "movie";
-        const QString meta = film ? videoId : videoId.section(':', 0, videoId.startsWith("kitsu:") ? 1 : 0);
-        const QString base = QString(meta.startsWith("kitsu:") ? "https://anime-kitsu.strem.fun" : "https://v3-cinemeta.strem.io") + "/manifest.json";
+        const QString meta = film ? videoId : titleOf(videoId), base = sourceOf(meta);
         auto request = [&](const char *resource, const QString &id) {
             return QJsonObject { { "base", base }, { "path", QJsonObject { { "resource", resource }, { "type", type }, { "id", id }, { "extra", QJsonArray() } } } };
         };
@@ -124,6 +133,10 @@ signals:
 
 private:
     static void ctx(const char *action, const QJsonValue &args = QJsonValue(QJsonValue::Undefined)) { Core::instance()->dispatch("", Core::action("Ctx", Core::action(action, args))); }
+    // the title an episode belongs to, from its id ("tt…:2:3", "kitsu:44081:9")
+    static QString titleOf(const QString &videoId) { return videoId.section(':', 0, videoId.startsWith("kitsu:") ? 1 : 0); }
+    // the addon the app shows a title's episodes from, as the core names an addon (its manifest's address)
+    static QString sourceOf(const QString &meta) { return QString(meta.startsWith("kitsu:") ? "https://anime-kitsu.strem.fun" : "https://v3-cinemeta.strem.io") + "/manifest.json"; }
     void authenticate(const QJsonObject &how) { ctx("Authenticate", how); }
     static QJsonObject preview(const QVariantMap &item) {
         QJsonObject o { { "id", item.value("id").toString() }, { "type", item.value("type").toString() }, { "name", item.value("name").toString() } };
@@ -142,7 +155,8 @@ private:
     }
     // The account and the library's ids as the core has them now, read on a worker (the library is 70 KB
     // of JSON for 125 titles, and the core says it changed at every sync and every push)
-    struct Read { bool signedIn = false; QString email, avatar; QSet<QString> library, watched; };
+    // (`episodes`: a number for which episodes are watched, of every title: an episode marked changes it)
+    struct Read { bool signedIn = false; QString email, avatar; QSet<QString> library, watched; uint episodes = 0; };
     void refresh() {
         const int ticket = ++m_refresh;
         auto out = std::make_shared<Read>();
@@ -150,9 +164,10 @@ private:
             const QJsonObject a = Core::view("account").object();
             out->signedIn = a.value("signedIn").toBool(); out->email = a.value("email").toString(); out->avatar = a.value("avatar").toString();
             for (const QJsonValue &v : Core::view("library").array()) {
-                const QJsonObject i = v.toObject();
+                const QJsonObject i = v.toObject(), state = i.value("state").toObject();
                 if (!i.value("removed").toBool()) out->library << i.value("_id").toString();
-                if (i.value("state").toObject().value("timesWatched").toInt() > 0) out->watched << i.value("_id").toString();
+                if (state.value("timesWatched").toInt() > 0) out->watched << i.value("_id").toString();
+                out->episodes += qHash(i.value("_id").toString() + state.value("watched").toString());      // (a sum: the core lists them in no order)
             }
         });
         connect(worker, &QThread::finished, this, [this, out, ticket] {
@@ -161,7 +176,9 @@ private:
             m_signedIn = out->signedIn; m_email = out->email; m_avatar = out->avatar; m_read = true;
             if (m_signedIn && m_poll.isActive()) cancelSignIn();
             emit changed();
-            if (out->library != m_library || out->watched != m_watched) { m_library = out->library; m_watched = out->watched; m_revision++; emit libraryChanged(); }
+            if (out->library != m_library || out->watched != m_watched || out->episodes != m_episodes) {
+                m_library = out->library; m_watched = out->watched; m_episodes = out->episodes; m_revision++; emit libraryChanged();
+            }
             if (m_signedIn && !was) sync();
         });
         connect(worker, &QThread::finished, worker, &QObject::deleteLater);
@@ -233,6 +250,7 @@ private:
     QString m_email, m_avatar;
     QVariantMap m_link;
     QSet<QString> m_library, m_watched;                    // ids in the library; ids watched (Stremio's `timesWatched`)
+    uint m_episodes = 0;                                   // which episodes are watched (Read::episodes)
     int m_revision = 0, m_refresh = 0;
     bool m_read = false;
     QTimer m_poll, m_renew;

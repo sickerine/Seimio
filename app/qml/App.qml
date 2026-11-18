@@ -184,25 +184,31 @@ WebOSWindow {
     function leavePlayer() { endReport(); streams.cancel(); player.stop(); back(); if (watchingStale) { watchingStale = false; catalog.reload() } }
 
     // ---- the library, and watch state -------------------------------------------------------------------
-    // What the page in hand is in Stremio's library: an anime franchise's entry on screen (each is a title
-    // of its own there), else the title.
+    // What the title in hand is in Stremio's library: on Home the selection (its menu is a Continue
+    // Watching card's, Stremio's own item); on a page an anime franchise's entry on screen (each is a title
+    // of its own there), else the page's title.
     readonly property var libraryItem: {
+        if (onHome) return displayItem && displayItem.type ? { id: displayItem.id, type: displayItem.type, name: displayItem.name, poster: displayItem.poster || "" } : null;
         var e = layer === "show" && held && held.show ? showPage.entry : null, i = held ? held.item : null;
         if (e) return { id: e.id, type: e.kind === "film" ? "movie" : "series", name: e.title, poster: e.poster || "" };
         if (!i) return null;
         return { id: i.id, type: held.show ? "series" : "movie", name: i.name,
                  poster: i.poster || (/^tt/.test(i.id) ? "https://images.metahub.space/poster/medium/" + i.id + "/img" : i.art || "") };
     }
-    readonly property bool inLibrary: account.libraryRevision >= 0 && !!libraryItem && account.inLibrary(libraryItem.id)
-    readonly property bool watchedTitle: account.libraryRevision >= 0 && !!libraryItem && account.watched(libraryItem.id)
-    // the pages' buttons after Play, and what they do
-    readonly property var libraryButtons: [{ label: inLibrary ? "Remove from library" : "Add to library", icon: inLibrary ? "minus" : "plus", round: true },
-                                           { label: watchedTitle ? "Mark unwatched" : "Mark watched", icon: "check", round: true }]
-    function libraryAction(index) {
-        if (!libraryItem) return;
-        if (index === 1) account.markWatched(libraryItem, !watchedTitle);
-        else if (inLibrary) account.removeFromLibrary(libraryItem.id); else account.addToLibrary(libraryItem);
+    // A title's two entries, wherever a title has a menu or buttons (a page's after Play, Home's menu, a
+    // held film or related show): in the library or not, watched or not, as the account has it now; and
+    // what they do.
+    function libraryEntries(item) {
+        var known = account.libraryRevision >= 0 && !!item, has = known && account.inLibrary(item.id), seen = known && account.watched(item.id);
+        return [{ label: has ? "Remove from library" : "Add to library", icon: has ? "minus" : "plus", round: true },
+                { label: seen ? "Mark unwatched" : "Mark watched", icon: "check", round: true }];
     }
+    function libraryAct(item, index) {
+        if (!item) return;
+        if (index === 1) account.markWatched(item, !account.watched(item.id));
+        else if (account.inLibrary(item.id)) account.removeFromLibrary(item.id); else account.addToLibrary(item);
+    }
+    readonly property var libraryButtons: libraryEntries(libraryItem)
     // The account's watch state changed (a title played, another device, a sign-in): Home takes it again,
     // but never under the video (it would rebuild rows behind the film); the page in hand follows.
     property bool watchingStale: false
@@ -218,9 +224,8 @@ WebOSWindow {
     }
     // the same title with new data: the page stays where it is
     function rehold(item, show) {
-        var at = showPage.focusedEp;
         hold(item, show, held.video);
-        if (layer === "show" && held.show) showPage.load(held.item, held.show, at ? at.id : "");
+        if (layer === "show" && held.show) showPage.refresh(held.item, held.show);
     }
     // ---- watch progress ----------------------------------------------------------------------------------
     // What plays is reported to Stremio's core (Account), whose rules say what is watched and where
@@ -313,11 +318,33 @@ WebOSWindow {
             streamPage.show(app.lookFor(app.playTarget.id), app.playTarget.label, streams.total ? reason + ". Choose a stream to play." : "");
         }
     }
-    // the Play options (a long OK on Play or an episode), over the page that has them
+    // The menu of what was held on a page (a long OK on Play, or on a card of a show's row), over the page.
+    // `menuEpisode` is that card (ShowScreen.target), or null for a title page's Play. What it is says what
+    // the menu has, the same wherever that kind of card is:
+    //   what plays (not a related show: OK opens its page)   Play AI Pick, Play from Stream
+    //   a title (a film, a related show)                      the library's two entries
+    //   an episode                                            watched or not
+    // and nothing is marked that airs later.
     property bool playMenu: false
     property var menuEpisode: null
     property rect menuAnchor: Qt.rect(0, 0, 0, 0)
     function openPlayMenu(episode, r) { commit(); menuEpisode = episode; menuAnchor = r; playMenu = true }
+    readonly property var menuTitle: menuEpisode && menuEpisode.type !== "series"
+        ? { id: menuEpisode.id, type: menuEpisode.type === "movie" ? "movie" : "series", name: menuEpisode.name, poster: menuEpisode.poster } : null
+    readonly property int menuPlays: menuEpisode && menuEpisode.type === "show" ? 0 : 2
+    readonly property var menuEntries: {
+        var e = menuEpisode, entries = menuPlays ? [{ label: "Play AI Pick", icon: "play" }, { label: "Play from Stream", icon: "list" }] : [];
+        if (!e) return entries;
+        if (menuTitle) return entries.concat(libraryEntries(menuTitle).slice(0, e.ahead ? 1 : 2));
+        return e.ahead ? entries : entries.concat([{ label: e.watched ? "Mark unwatched" : "Mark watched", icon: "check" }]);
+    }
+    function menuAct(index) {
+        var e = menuEpisode;
+        if (index < menuPlays) { if (index === 0) playAi(e); else openStreams(e); return }
+        playMenu = false;
+        if (menuTitle) libraryAct(menuTitle, index - menuPlays); else account.markEpisode(e.id, !e.watched);
+    }
+    onPlayMenuChanged: probe.captures()                    // lab: captures follow the Play options too
     // a handoff (a switch inside the player) is still watching: the scene behind stays away, or the
     // title's backdrop showed through as the still dissolved into the new video
     readonly property bool watching: layer === "player" && (player.playing || !!player.handoff)
@@ -466,11 +493,13 @@ WebOSWindow {
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
                              visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
                      playLog: app.playLog, subs: player.active ? player.subtitleInfo() : "",
-                     playMenu: app.playMenu, stage: streams.stage, picks: streams.picksStatus,
+                     playMenu: app.playMenu, menuCard: app.playMenu && app.menuEpisode ? app.menuEpisode.id : "",
+                     menuEntries: app.playMenu ? app.menuEntries.map(function (e) { return e.label }).join(" | ") : "",
+                     stage: streams.stage, picks: streams.picksStatus,
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
-                     library: { item: app.libraryItem ? app.libraryItem.id : "", "in": app.inLibrary, watched: app.watchedTitle, reported: app.reported, stale: app.watchingStale },
+                     library: { item: app.libraryItem ? app.libraryItem.id : "", "in": !!app.libraryItem && account.inLibrary(app.libraryItem.id), watched: !!app.libraryItem && account.watched(app.libraryItem.id), reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
                      player: { playing: player.playing, paused: player.paused, failure: player.failure, position: player.position, duration: player.duration, seen: player.seen } };
         }
@@ -566,7 +595,7 @@ WebOSWindow {
                 onPlayHeld: app.openPlayMenu(episode, rect)
                 onOpenShow: app.openFranchise(show)
                 extras: app.libraryButtons
-                onAction: app.libraryAction(index)
+                onAction: app.libraryAct(app.libraryItem, index)
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: { probe.act("show " + ["actions", "seasons", "episodes"][zone]); probe.captures() }
@@ -577,7 +606,7 @@ WebOSWindow {
                 onPlay: app.playAi(null)
                 onPlayHeld: app.openPlayMenu(null, rect)
                 extras: app.libraryButtons
-                onAction: app.libraryAction(index)
+                onAction: app.libraryAct(app.libraryItem, index)
                 active: app.layer === "title"
             }
             HomeScreen {
@@ -771,18 +800,25 @@ WebOSWindow {
             source: scene
             x: Theme.margin + home.focusCardWidth * 1.1 + 44
             y: home.focusRect.y + 10
-            // Play plays the AI pick; the library and watched actions aren't wired yet
-            onTriggered: if (actionIndex === 0) app.playAi(null); else app.layer = "home"
+            // Play plays the AI pick; then the library's two, as on a page; the last takes the title off
+            // Continue Watching (the panel is as wide as that label needs)
+            width: 544
+            actions: [{ label: "Play", icon: "play" }].concat(app.libraryButtons, [{ label: "Remove from Continue Watching", icon: "close" }])
+            onTriggered: {
+                if (actionIndex === 0) { app.playAi(null); return }
+                if (actionIndex < 3) app.libraryAct(app.libraryItem, actionIndex - 1); else if (app.libraryItem) account.stopWatching(app.libraryItem.id);
+                app.layer = "home";
+            }
         }
         QuickMenu {
             id: playOptions
             focus: app.playMenu
             open: app.playMenu
             source: scene
-            actions: [{ label: "Play AI Pick", icon: "play" }, { label: "Play from Stream", icon: "list" }]
+            actions: app.menuEntries
             x: app.menuAnchor.x + app.menuAnchor.width + 44
             y: Math.min(app.menuAnchor.y, Theme.screenHeight - height - 60)
-            onTriggered: if (actionIndex === 0) app.playAi(app.menuEpisode); else app.openStreams(app.menuEpisode)
+            onTriggered: app.menuAct(actionIndex)
         }
 
         Keys.onPressed: {

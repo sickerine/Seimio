@@ -3,7 +3,10 @@
 pub mod env;
 pub mod ffi;
 
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
@@ -16,14 +19,15 @@ use stremio_core::{
         ctx::Ctx,
         library_with_filters::{LibraryWithFilters, NotRemovedFilter, Selected as LibrarySelected, Sort},
         link::Link,
+        meta_details::{MetaDetails, Selected as DetailsSelected},
         player::Player,
     },
     runtime::{
-        msg::{Action, ActionLoad},
+        msg::{Action, ActionLoad, ActionMetaDetails},
         Env, Runtime, RuntimeAction, RuntimeEvent,
     },
     types::{
-        api::LinkAuthKey, events::DismissedEventsBucket, library::LibraryBucket, notifications::NotificationsBucket,
+        addon::ResourcePath, api::LinkAuthKey, events::DismissedEventsBucket, library::LibraryBucket, notifications::NotificationsBucket,
         profile::Profile, resource::MetaItemPreview, search_history::SearchHistoryBucket, server_urls::ServerUrlsBucket,
         streams::StreamsBucket,
     },
@@ -42,6 +46,7 @@ pub struct TvModel {
     pub library: LibraryWithFilters<NotRemovedFilter>,
     pub discover: CatalogWithFilters<MetaItemPreview>,
     pub player: Player,
+    pub details: MetaDetails,
 }
 
 static RUNTIME: OnceCell<Arc<Runtime<TvEnv, TvModel>>> = OnceCell::new();
@@ -55,6 +60,7 @@ fn field(name: &str) -> Option<TvModelField> {
         "library" => TvModelField::Library,
         "discover" => TvModelField::Discover,
         "player" => TvModelField::Player,
+        "details" => TvModelField::Details,
         _ => return None,
     })
 }
@@ -67,11 +73,13 @@ fn name(field: &TvModelField) -> &'static str {
         TvModelField::Library => "library",
         TvModelField::Discover => "discover",
         TvModelField::Player => "player",
+        TvModelField::Details => "details",
     }
 }
 
 /// Starts the core on its own thread. `on_event("ready", "")` once the stored account is loaded,
-/// `("state", "[\"library\", …]")` when models changed, `("event", json)` for the core's events.
+/// `("state", "[\"library\", …]")` when models changed, `("event", json)` for the core's events,
+/// `("unmarked", "<episode>: <why>")` for a mark that couldn't be made after all (`mark_video`).
 pub fn start(storage_dir: &str, fetch: impl Fn(env::Fetch) + Send + Sync + 'static, on_event: impl Fn(&str, &str) + Send + 'static) {
     std::fs::create_dir_all(storage_dir).ok();
     if env::STORAGE_DIR.set(storage_dir.into()).is_err() || env::FETCH.set(Box::new(fetch)).is_err() {
@@ -120,6 +128,7 @@ async fn run(on_event: impl Fn(&str, &str)) {
         library: library_view,
         discover,
         player: Default::default(),
+        details: Default::default(),
     };
     let effects = cw_effects.join(library_effects).join(discover_effects);
     let (runtime, mut events) = Runtime::<TvEnv, _>::new(model, effects.into_iter().collect(), 1000);
@@ -130,6 +139,11 @@ async fn run(on_event: impl Fn(&str, &str)) {
             RuntimeEvent::NewState(fields, ..) => {
                 let names: Vec<_> = fields.iter().map(name).collect();
                 on_event("state", &serde_json::to_string(&names).unwrap_or_default());
+                if fields.contains(&TvModelField::Details) {
+                    for why in mark_next() {
+                        on_event("unmarked", &why);
+                    }
+                }
             }
             RuntimeEvent::CoreEvent(event) => on_event("event", &serde_json::to_string(&event).unwrap_or_default()),
         }
@@ -155,8 +169,92 @@ pub fn state(field_name: &str) -> Option<String> {
         TvModelField::Library => serde_json::to_string(&model.library),
         TvModelField::Discover => serde_json::to_string(&model.discover),
         TvModelField::Player => serde_json::to_string(&model.player),
+        TvModelField::Details => serde_json::to_string(&model.details),
     }
     .ok()
+}
+
+/// An episode to mark watched or not: its title (`kind`, `meta`), the addon whose list of episodes the
+/// app shows for it (`base`, its manifest's address), and the episode.
+#[derive(Clone)]
+struct Mark {
+    kind: String,
+    meta: String,
+    base: String,
+    video: String,
+    watched: bool,
+}
+/// The marks asked for, in order, and the one thread working through them.
+static MARKS: Mutex<VecDeque<Mark>> = Mutex::new(VecDeque::new());
+static MARKING: Mutex<()> = Mutex::new(());
+
+enum Marking {
+    Wait,
+    Do(ActionMetaDetails),
+    Fail(&'static str),
+}
+
+/// Marks one episode of a title watched or not. The core does that on its details of the title (the
+/// `details` model: the meta from the account's addons, the library item and its watched field), by the
+/// rules every Stremio device has: the title's watched field takes the episode, and Continue Watching
+/// moves on when it was the one you were on. The details are loaded first and the mark waits for them,
+/// behind any mark asked before it. `Err`: what couldn't be marked now, and why; a mark that fails later
+/// is an `unmarked` event.
+pub fn mark_video(kind: &str, meta: &str, base: &str, video: &str, watched: bool) -> Result<(), String> {
+    RUNTIME.get().ok_or("the core hasn't started")?;
+    MARKS.lock().unwrap().push_back(Mark { kind: kind.into(), meta: meta.into(), base: base.into(), video: video.into(), watched });
+    let failed = mark_next();
+    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
+}
+
+/// Works through the marks asked for: the first one's title is loaded into `details` unless it is the one
+/// there, and it is marked once the core would mark against the right list of episodes. Returns the ones
+/// that can't be marked ("<episode>: <why>").
+fn mark_next() -> Vec<String> {
+    let mut failed = vec![];
+    let Some(runtime) = RUNTIME.get() else { return failed };
+    let _one = MARKING.lock().unwrap();
+    loop {
+        let Some(mark) = MARKS.lock().unwrap().front().cloned() else { break };
+        let loaded = runtime.model().is_ok_and(|m| m.details.selected.as_ref().is_some_and(|s| s.meta_path.id == mark.meta && s.meta_path.r#type == mark.kind));
+        if !loaded {
+            let selected = DetailsSelected { meta_path: ResourcePath::without_extra(META_RESOURCE_NAME, &mark.kind, &mark.meta), stream_path: None, guess_stream: false };
+            runtime.dispatch(RuntimeAction { field: Some(TvModelField::Details), action: Action::Load(ActionLoad::MetaDetails(selected)) });
+        }
+        let Ok(marking) = runtime.model().map(|m| marking(&m.details, &mark)) else { break };
+        match marking {
+            Marking::Wait => break,
+            Marking::Do(action) => runtime.dispatch(RuntimeAction { field: Some(TvModelField::Details), action: Action::MetaDetails(action) }),
+            Marking::Fail(why) => failed.push(format!("{}: {why}", mark.video)),
+        }
+        MARKS.lock().unwrap().pop_front();
+    }
+    failed
+}
+
+/// The core marks against the first meta that is ready, in the order of the account's addons. They answer
+/// in any order and their lists of episodes differ (this account has two that know the same ids), so a mark
+/// is made only when that first one is the addon the app shows the title from: once it has answered, and
+/// every addon before it has failed.
+fn marking(details: &MetaDetails, mark: &Mark) -> Marking {
+    let Some(at) = details.meta_items.iter().position(|m| m.request.base.as_str() == mark.base) else {
+        return Marking::Fail("the account doesn't have the addon its episodes are from");
+    };
+    for before in &details.meta_items[..at] {
+        match before.content {
+            Some(Loadable::Err(_)) => {}
+            Some(Loadable::Ready(_)) => return Marking::Fail("another addon's list of its episodes comes first"),
+            _ => return Marking::Wait,
+        }
+    }
+    match &details.meta_items[at].content {
+        Some(Loadable::Ready(meta)) => match meta.videos.iter().find(|v| v.id == mark.video) {
+            Some(video) => Marking::Do(ActionMetaDetails::MarkVideoAsWatched(video.to_owned(), mark.watched)),
+            None => Marking::Fail("its title doesn't list it"),
+        },
+        Some(Loadable::Err(_)) => Marking::Fail("its title couldn't be loaded"),
+        _ => Marking::Wait,
+    }
 }
 
 /// One choice of a browsable model, by its place in the view's list: the library's `library.type` and

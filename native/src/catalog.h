@@ -305,9 +305,12 @@ public:
         auto data = std::make_shared<Data>(Data::load(docs));
         back([this, docs, data, generation] {
             if (generation != m_generation) return;
-            m_docs = docs; take(data);
+            m_docs = docs;
+            // the library first: `loaded` has the page in hand ask for its franchise again, which is put
+            // together from what was fetched at once, with the library the franchise has then
             const QJsonObject library = docs.library;
             work([this, library] { m_franchise->setLibrary(library); });
+            take(data);
         });
     }
     bool seasonReady() const { return m_seasonReady; }
@@ -408,7 +411,9 @@ private:
                 if (year.endsWith('-') || year.endsWith(QChar(0x2013))) year.chop(1);
                 QStringList chips = QStringList{year} + strings(i["genres"]);
                 chips.removeAll(QString());
+                // (`type` and `poster`: the title as Stremio's library has it, for what Home's menu does with it)
                 QVariantMap item{ {"id", i["id"].toString()}, {"name", i["name"].toString()}, {"title", i["name"].toString()},
+                                  {"type", i["type"].toString()}, {"poster", i["poster"].toString()},
                                   {"art", art(i["backdrop"].toString())}, {"backdrop", art(i["backdrop"].toString())}, {"logo", art(i["logo"].toString())},
                                   {"description", i["description"].toString()}, {"chips", chips}, {"rating", QString()},
                                   {"episode", i["episode"].toString()}, {"progress", i["progress"].toDouble()} };

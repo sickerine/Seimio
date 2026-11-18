@@ -104,10 +104,27 @@ public:
             (*out)["anime"] = shows; finish();
         });
     }
-    // one Cinemeta title's meta (a film, a series), or nothing
+    // One title's meta (a film, a series), from the Kitsu addon or Cinemeta by its id, or nothing. Kept ten
+    // minutes: Home is taken again whenever the account's watch state changes (an episode marked, a title
+    // off Continue Watching), and asking for every title's meta again was 2 s before the screen followed.
     void title(const QString &type, const QString &id, std::function<void(QJsonObject)> done) {
-        get(QString(kCinemeta) + "/meta/" + type + "/" + id + ".json", [done](const QJsonDocument &d, bool) { done(d.object().value("meta").toObject()); });
+        const QString url = QString(id.startsWith("kitsu:") ? kKitsu : kCinemeta) + "/meta/" + type + "/" + id + ".json";
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const auto kept = m_titles.constFind(url);
+        if (kept != m_titles.constEnd() && now - kept->second < kKept) {
+            const QJsonObject meta = kept->first;
+            QTimer::singleShot(0, this, [done, meta] { done(meta); });      // later, as an answer from the network comes
+            return;
+        }
+        get(url, [this, url, done](const QJsonDocument &d, bool) {
+            const QJsonObject meta = d.object().value("meta").toObject();
+            const qint64 at = QDateTime::currentMSecsSinceEpoch();
+            for (auto it = m_titles.begin(); it != m_titles.end();) it = at - it->second < kKept ? std::next(it) : m_titles.erase(it);
+            if (!meta.isEmpty()) m_titles[url] = { meta, at };
+            done(meta);
+        });
     }
+    static constexpr qint64 kKept = 10 * 60 * 1000;         // how long what was fetched is kept (Franchise's too)
     // the season a day is in, as AniList names it: Winter is December to February, under the year it ends in
     static QPair<QString, int> seasonAt(const QDate &day) {
         const int m = day.month();
@@ -121,6 +138,7 @@ public:
 
 private:
     Http m_http { this };
+    QHash<QString, QPair<QJsonObject, qint64>> m_titles;     // metas by address, and when each came (`title`)
     static constexpr const char *kCinemeta = "https://v3-cinemeta.strem.io";
     static constexpr const char *kKitsu = "https://anime-kitsu.strem.fun";
 
@@ -191,15 +209,14 @@ public:
             const int n = (*at)++;
             const QJsonObject i = list[n].toObject();
             const QString id = i.value("id").toString(), type = i.value("type").toString();
-            get((id.startsWith("kitsu:") ? QString(kKitsu) : QString(kCinemeta)) + "/meta/" + type + "/" + id + ".json", [=](const QJsonDocument &d, bool) {
-                const QJsonObject m = d.object().value("meta").toObject();
+            title(type, id, [=](const QJsonObject &m) {
                 const QString vid = i.value("videoId").toString();
                 const QStringList parts = vid.split(':');
                 QString episode;
                 if (type == "series" && parts.size() == 3) episode = id.startsWith("kitsu:") ? "E" + parts[2] : "S" + parts[1] + " E" + parts[2];
                 const QString backdrop = m.value("background").toString(id.startsWith("tt") ? metahub("background", id) : QString());
                 const QString logo = m.value("logo").toString(id.startsWith("tt") ? metahub("logo", id) : QString());
-                (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "episode", episode },
+                (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "poster", i.value("poster") }, { "episode", episode },
                                           { "progress", qRound(i.value("progress").toDouble() * 10) / 10.0 }, { "backdrop", backdrop }, { "logo", logo },
                                           { "description", m.value("description").toString().left(220) }, { "genres", firstN(m.value("genres").toArray(), 2) },
                                           { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() } };

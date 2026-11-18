@@ -22,16 +22,21 @@ FocusScope {
     width: Theme.screenWidth; height: Theme.screenHeight
 
     readonly property var seasons: show ? show.seasons : []
-    // OK on Play or on an episode plays it (the AI pick); a long OK asks how, from a menu beside `rect`
+    // OK on Play or on an episode plays it (the AI pick); a long OK on Play or on any card of the row (an
+    // episode, a film, a related show) opens its menu beside `rect` (`playHeld`, with its `target`)
     signal play(var episode)
     // OK on a related show (an anime franchise's Related tab) opens its page: { id, title }
     signal openShow(var show)
     signal playHeld(var episode, rect rect)
     property var extras: []             // the buttons after Play (App's: the library's), and which was pressed
     signal action(int index)
-    // { id, label, progress, type } of an episode, for playing it; a film among the Specials plays as a film
+    // { id, label, progress, type } of an episode, for playing it; a film among the Specials plays as a film.
+    // For its menu as well: `watched`; `ahead`, it airs later (an undated special doesn't: it can have been
+    // watched, where Episodes.aired wants a date); and `name` and `poster`, which a film or a related show
+    // (`type` "movie", "show") is in the library by, being a title.
     function target(sh, season, ep) {
-        return { id: ep.id, label: episodeLabel(sh, season, ep), progress: ep.progress || 0, type: ep.type || "series" };
+        return { id: ep.id, label: episodeLabel(sh, season, ep), progress: ep.progress || 0, type: ep.type || "series",
+                 watched: !!ep.watched, ahead: ep.released > today, name: ep.title || "", poster: ep.poster || "" };
     }
     function episodeLabel(sh, season, ep) {
         var n = sh.seasons[season].season;
@@ -129,6 +134,21 @@ FocusScope {
         actions.currentIndex = 0;
         if (load(title, seasonsAndEpisodes, episodeId)) zone = 2;
         else { resumePos = Episodes.resting(show, today); rest(episodeId) }     // built ahead: where you are, unless it opens on an episode
+    }
+    // The same title with new data (its watch state changed: an episode marked from its menu, another
+    // device). The row is built again where it is, on the card that had the focus, and Play names what it
+    // named, or the episode after it once that one is done. (Loaded as a page opened on the focused card,
+    // Play was renamed to that card.)
+    function refresh(title, seasonsAndEpisodes) {
+        var focusedId = !strip.onTile && focusedEp ? focusedEp.id : "", named = resumeEp, was = { s: shownSeason, e: strip.currentIndex };
+        item = title; show = seasonsAndEpisodes; episodes = [];
+        var resume = named ? Episodes.find(show, named.id) : null;
+        if (resume) {
+            var next = Episodes.finished(seasons[resume.s].episodes[resume.e]) ? Episodes.after(show, named.id, today) : null;
+            if (next) resume = Episodes.find(show, next.id);
+        }
+        resumePos = resume || Episodes.resting(show, today);
+        place(focusedId && Episodes.find(show, focusedId) || (was.s < seasons.length ? was : resumePos));
     }
     // Play plays what the page rests on: an episode it was opened on (a calendar release, the entry of a
     // franchise that was picked, the one last played) is where you are from then on
@@ -231,7 +251,7 @@ FocusScope {
                     else if (ep) page.play(page.target(page.show, page.shownSeason, ep));
                 }
                 onHeld: {
-                    if (!page.episodes[cardIndex] || page.episodes[cardIndex].type === "show") return;
+                    if (!page.episodes[cardIndex]) return;
                     var p = strip.mapToItem(null, Theme.margin, 0);
                     page.playHeld(page.target(page.show, page.shownSeason, page.episodes[cardIndex]), Qt.rect(p.x, p.y, strip.cardWidth, strip.cardHeight));
                 }

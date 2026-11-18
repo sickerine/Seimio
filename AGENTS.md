@@ -112,6 +112,11 @@ Each rule comes from a measured stall on the C5.
   Expect handlers to re-enter: setting a property can emit a signal synchronously (a cached image turns
   Ready inside the assignment), so change your own state before the assignment that may call back. A
   state bug gets a QtQuick test in `tools/tests` that fails before the fix; `check.sh` runs them.
+- What was fetched for a title is kept ten minutes (`Live::title`'s metas, `Franchise`'s finished jobs).
+  Home is taken again whenever the account's watch state changes (an episode marked, a title off Continue
+  Watching, a film ended), and the page in hand asks for its franchise again: with every meta asked of
+  the network again, a card left its row 2.2 s after the press. Kept, the row follows in 0.7 s and an
+  anime's page in 1.1 s, put together again with the library as it is then.
 - A network answer is read off the GUI thread. `Live` and `Franchise` fetch, parse and assemble on
   `Catalog`'s data thread and hand over finished data; `Account` reads the core's views on a worker;
   `Streams` parses its list on one. A show's meta is hundreds of kilobytes of JSON, and reading it where
@@ -205,6 +210,20 @@ core's storage in `tools/preview/account/` (not in git), signed in once:
 `core/target/release/core-lab tools/preview/account '|{"action":"Ctx","args":{"action":"Authenticate","args":{"type":"Login","email":"…","password":"…","facebook":false}}}' wait:6000`.
 On the TV a tour can't approve a code, so the lab signs in: `{"signIn": ["email", "password"]}` in the
 variant.
+
+What a menu does to a title is done to the account, on every device: Add to library, Mark watched, an
+episode marked, Remove from Continue Watching. Trying one on the TV, read which title has the focus from
+the lab report before every press (`focusItem`, `library.item`), and stop when it isn't the one meant: a
+film marked watched leaves Continue Watching, the focus moves to the next card, and the next press lands
+on that title. Use a film nobody is watching, put on Continue Watching from the Mac
+(`core/target/release/core-lab`: load the Player model on it and send `TimeChanged`), and
+`'mark:<type>,<title>,<the addon's manifest address>,<episode>,<true|false>'` for an episode. A long OK
+over the network remote is `tools/tvremote.mjs press ENTER 16 40`, and the lab report says which card the
+open menu is for and what it lists (`menuCard`, `menuEntries`).
+
+A card's menu follows what the card is, the same wherever that kind of card is (`App.menuEntries`): Play
+AI Pick and Play from Stream for what plays, the library's two entries for a title, watched or not for an
+episode. A new row of cards takes its menu from there; a kind of card with no menu is a bug.
 
 ## Playback
 
