@@ -229,6 +229,11 @@ open calendar day, a Continue Watching card. A new row of cards takes its menu f
 with no menu is a bug. Only what has nothing to offer opens none: a release that airs later, an anime
 that Kitsu doesn't have (it is no title of Stremio's).
 
+A card never stays gray when its title has art: an episode shows its own still (the addon's, Kitsu's or
+Cinemeta's), and where that can't be had (one still to come has none; Cinemeta's address for it answers
+404) its entry's backdrop, else the title's (`CardArt.fallback`: `ShowScreen.backdropOf`, a release's
+`fallback`, a calendar cell's `back0..2`). A new kind of card gets a fallback with its art.
+
 What is watched wears the check wherever its card is: an episode, a film or a related show by its own
 data, a title's poster in a grid by the account's watched titles (`Account.watchedTitles` to
 `CardGrid.marks`; an anime by its `kitsu` id, which `Live::kitsuIds` gives the chart's and a search's

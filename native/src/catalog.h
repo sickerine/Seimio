@@ -29,18 +29,20 @@
 // how an episode is named on a card (Episodes.chip in QML)
 inline QString episodeChip(int n) { return "E" + QString::number(n); }
 
-// One release on one day: an episode of a library show or of the airing schedule.
+// One release on one day: an episode of a show in the library.
 struct Release {
     QVariantMap item;            // the title entry Home shows for it (backdrop, logo, description, ...)
     QString name, art, title, overview, released, time, video;     // video: the episode's id
     int season = 1, episode = 0;
     bool watched = false;
+    // what its card shows when its own still can't be had (an episode still to come has none): its title's backdrop
+    QString fallback() const { return item.value("backdrop").toString(); }
     QVariantMap toMap() const {
-        return { {"item", item}, {"name", name}, {"art", art}, {"title", title}, {"overview", overview},
+        return { {"item", item}, {"name", name}, {"art", art}, {"fallback", fallback()}, {"title", title}, {"overview", overview},
                  {"released", released}, {"time", time}, {"season", season}, {"episode", episode}, {"watched", watched}, {"video", video} };
     }
 };
-using Calendar = QHash<QString, QVector<Release>>;   // "YYYY-MM-DD" -> releases, library first
+using Calendar = QHash<QString, QVector<Release>>;   // "YYYY-MM-DD" -> releases
 
 // The 42 days (six weeks, Monday first) of a month. Rows change only through layOut(): the row given
 // first at once, the rest three a frame (about 16 ms apart), nearest first, and only rows whose values
@@ -49,15 +51,16 @@ class CalendarModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(QString today READ today WRITE setToday NOTIFY todayChanged)
 public:
-    enum Role { Key = Qt::UserRole + 1, Date, Count, Opacity, IsToday, Art0, Art1, Art2, Name, Episode, More, StackRoom };
+    enum Role { Key = Qt::UserRole + 1, Date, Count, Opacity, IsToday, Art0, Art1, Art2, Back0, Back1, Back2, Name, Episode, More, StackRoom };
     struct Day {
-        QString key, art0, art1, art2, name, episode, more;
+        QString key, art0, art1, art2, back0, back1, back2, name, episode, more;     // (`back`: each art's fallback)
         int date = 0, count = 0, stackRoom = 0;
         double opacity = 1;
         bool isToday = false;
         bool operator==(const Day &o) const {
             return key == o.key && count == o.count && opacity == o.opacity && isToday == o.isToday && art0 == o.art0
-                && art1 == o.art1 && art2 == o.art2 && name == o.name && episode == o.episode;
+                && art1 == o.art1 && art2 == o.art2 && back0 == o.back0 && back1 == o.back1 && back2 == o.back2
+                && name == o.name && episode == o.episode;
         }
     };
 
@@ -71,7 +74,8 @@ public:
     int rowCount(const QModelIndex &parent = {}) const override { return parent.isValid() ? 0 : 42; }
     QHash<int, QByteArray> roleNames() const override {
         return { {Key, "key"}, {Date, "date"}, {Count, "count"}, {Opacity, "dayOpacity"}, {IsToday, "isToday"},
-                 {Art0, "art0"}, {Art1, "art1"}, {Art2, "art2"}, {Name, "name"}, {Episode, "episode"},
+                 {Art0, "art0"}, {Art1, "art1"}, {Art2, "art2"}, {Back0, "back0"}, {Back1, "back1"}, {Back2, "back2"},
+                 {Name, "name"}, {Episode, "episode"},
                  {More, "more"}, {StackRoom, "stackRoom"} };
     }
     QVariant data(const QModelIndex &index, int role) const override {
@@ -86,6 +90,9 @@ public:
         case Art0: return d.art0;
         case Art1: return d.art1;
         case Art2: return d.art2;
+        case Back0: return d.back0;
+        case Back1: return d.back1;
+        case Back2: return d.back2;
         case Name: return d.name;
         case Episode: return d.episode;
         case More: return d.more;
@@ -119,9 +126,9 @@ private:
         d.count = list.size();
         d.opacity = (day.month() != m_month.month() || day.year() != m_month.year()) ? 0.28 : (d.key < m_today ? 0.72 : 1);
         d.isToday = d.key == m_today;
-        if (d.count > 0) { d.art0 = list[0].art; d.name = list[0].name; d.episode = episodeChip(list[0].episode); }
-        if (d.count > 1) { d.art1 = list[1].art; d.more = "+" + QString::number(d.count - 1); }
-        if (d.count > 2) d.art2 = list[2].art;
+        if (d.count > 0) { d.art0 = list[0].art; d.back0 = list[0].fallback(); d.name = list[0].name; d.episode = episodeChip(list[0].episode); }
+        if (d.count > 1) { d.art1 = list[1].art; d.back1 = list[1].fallback(); d.more = "+" + QString::number(d.count - 1); }
+        if (d.count > 2) { d.art2 = list[2].art; d.back2 = list[2].fallback(); }
         d.stackRoom = std::min(2, std::max(0, d.count - 1)) * 6;
         return d;
     }
@@ -308,8 +315,8 @@ public:
             m_docs = docs;
             // the library first: `loaded` has the page in hand ask for its franchise again, which is put
             // together from what was fetched at once, with the library the franchise has then
-            const QJsonObject library = docs.library;
-            work([this, library] { m_franchise->setLibrary(library); });
+            const QJsonObject library = docs.library, airing = docs.airing;
+            work([this, library, airing] { m_franchise->setLibrary(library, airing); });
             take(data);
         });
     }
@@ -366,7 +373,7 @@ public:
         if (m_data && m_data->held.contains(id)) return m_data->held.value(id);
         return id.startsWith("tt") ? Live::metahub("background", id) : QString();
     }
-    // a day's releases, library shows first
+    // a day's releases (the library's shows)
     Q_INVOKABLE QVariantList day(const QString &key) const {
         QVariantList out;
         if (m_data) for (const Release &r : m_data->calendar.value(key)) out.append(r.toMap());
@@ -435,6 +442,13 @@ private:
                 }
                 d.popular.append(QVariantMap{ {"title", row.toObject()["title"].toString()}, {"kind", "portrait"}, {"items", items} });
             }
+            // The calendar is the library's: the episodes its shows list, each on the day it comes out. (A
+            // title being watched without having been added is on Continue Watching, not here.) An anime's
+            // episode airs when AniList says (`airing`: the day and the time where you are), and its show's
+            // page has that day too (here and in Franchise), so the two never disagree on what is still to
+            // come; the rest have their date.
+            QSet<QString> mine;                              // the library's titles
+            for (const QJsonValue &v : docs.cw) if (v.toObject()["library"].toBool()) mine << v.toObject()["id"].toString();
             const QJsonObject series = docs.series;
             for (auto it = series.begin(); it != series.end(); ++it) {
                 QJsonObject show = it.value().toObject();
@@ -446,16 +460,19 @@ private:
                     QVariantList episodes;
                     for (const QJsonValue &ev : s["episodes"].toArray()) {
                         QJsonObject e = ev.toObject();
+                        const QJsonObject air = docs.airing.value(e["id"].toString()).toObject();
+                        const QString released = air.isEmpty() ? e["released"].toString() : air["date"].toString();
                         QVariantMap ep = e.toVariantMap();
                         ep["thumb"] = art(e["thumb"].toString());
+                        ep["released"] = released;
                         episodes.append(ep);
                         count++;
-                        QString released = e["released"].toString();
-                        if (item && !released.isEmpty()) {
+                        if (item && mine.contains(it.key()) && !released.isEmpty()) {
                             Release r;
                             r.item = *item; r.name = show["name"].toString(); r.art = e["thumb"].toString().isEmpty() ? (*item)["backdrop"].toString() : art(e["thumb"].toString());
                             r.season = s["season"].toInt(); r.episode = e["episode"].toInt(); r.title = e["title"].toString();
-                            r.overview = e["overview"].toString(); r.watched = e["watched"].toBool(); r.released = released; r.video = e["id"].toString();
+                            r.overview = e["overview"].toString(); r.watched = e["watched"].toBool(); r.released = released; r.time = air["time"].toString();
+                            r.video = e["id"].toString();
                             d.calendar[released].append(r);
                         }
                     }
@@ -465,17 +482,6 @@ private:
                 m["seasons"] = seasons;
                 d.shows[it.key()] = m;
                 d.episodeCounts[it.key()] = count;
-            }
-            for (const QJsonValue &v : docs.airing) {
-                QJsonObject a = v.toObject();
-                QString artUrl = art(a["art"].toString());
-                Release r;
-                r.item = QVariantMap{ {"id", a["id"].toString()}, {"name", a["name"].toString()}, {"title", a["name"].toString()},
-                                      {"art", artUrl}, {"backdrop", artUrl}, {"logo", QString()}, {"description", a["description"].toString()},
-                                      {"chips", QStringList()}, {"rating", QString()}, {"episode", episodeChip(a["episode"].toInt())}, {"progress", -1} };
-                r.name = a["name"].toString(); r.art = artUrl; r.episode = a["episode"].toInt(); r.overview = a["description"].toString();
-                r.released = a["date"].toString(); r.time = a["time"].toString();
-                d.calendar[r.released].append(r);
             }
             return d;
         }

@@ -172,6 +172,10 @@ FocusScope {
                 readonly property string art0: model.art0
                 readonly property string art1: model.art1
                 readonly property string art2: model.art2
+                // each art's fallback (the title's backdrop): an episode still to come has no still of its own
+                readonly property string back0: model.back0
+                readonly property string back1: model.back1
+                readonly property string back2: model.back2
                 readonly property string name: model.name
                 readonly property string episode: model.episode
                 readonly property string more: model.more
@@ -294,6 +298,7 @@ FocusScope {
                                         Behavior on y { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
                                         radius: 12
                                         art: index ? cell.art2 : cell.art1
+                                        fallback: index ? cell.back2 : cell.back1
                                         dim: 0.4 + index * 0.25
                                     }
                                 }
@@ -301,7 +306,7 @@ FocusScope {
                                 Item {
                                     visible: cell.count > 0
                                     y: cell.stackRoom; width: cell.width; height: cell.height - cell.stackRoom
-                                    CardArt { anchors.fill: parent; radius: 14; art: cell.art0; shade: 0.8 }
+                                    CardArt { anchors.fill: parent; radius: 14; art: cell.art0; fallback: cell.back0; shade: 0.8 }
                                     Text {
                                         x: 12; y: parent.height - height - 10; width: parent.width - 70
                                         elide: Text.ElideRight

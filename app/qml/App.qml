@@ -133,16 +133,12 @@ WebOSWindow {
     // The episode a franchise was picked for: the release's own, by id or (an anime's calendar release) by
     // its number in the entry picked, else where you are in that entry (Franchise's `video`)
     function picked(f, item) {
-        // by number first: the franchise's own item carries the release's number too, with its `video`
-        // already set to where you are in the entry
-        return numbered(f, item) || item.video || f.item.video || "";
-    }
-    // the episode a release names by its number in the entry picked (`item.number`), or ""
-    function numbered(f, item) {
         var entries = f.show.entries || [], at = -1, found = "";
         for (var i = 0; i < entries.length; i++) if (entries[i].id === f.item.id) at = i;
+        // by number first: the franchise's own item carries the release's number too, with its `video`
+        // already set to where you are in the entry
         if (item.number > 0) f.show.seasons.forEach(function (s) { s.episodes.forEach(function (e) { if (e.entry === at && e.number === item.number) found = e.id }) });
-        return found;
+        return found || item.video || f.item.video || "";
     }
     // the title a page renders: Home's selection, or the one in hand once a page has it
     readonly property var pageItem: onHome || !held ? displayItem : held.item
@@ -367,28 +363,16 @@ WebOSWindow {
         openPlayMenu({ id: t.id, type: "show", plays: false, kind: entry ? (entry.kind === "film" ? "movie" : "series") : t.type,
                        name: entry ? entry.title : t.name, poster: entry ? entry.poster : t.poster || "" }, r);
     }
-    // A release's card in an open calendar day. OK opens its show's page, so nothing plays from here: its
-    // episode, watched or not, once it has aired. An anime's release names its episode by number until
-    // its franchise is in.
-    function openReleaseMenu(entry, r) { commit(); if (displayItem) releaseMenu(entry, displayItem, r) }
-    // (`item`: the release as Home has it, with the episode's number)
-    function releaseMenu(entry, item, r) {
-        if (!(entry.released <= today)) return;                             // it airs later: nothing to offer
-        var f = franchiseId(item.id) ? franchises[item.id] : null;
-        if (franchiseId(item.id) && !f) { menuWaiting = { item: item, rect: r, release: entry }; loadFranchise(item); return }
-        // (watched as its franchise has it: a show that is only on the airing schedule has no library state
-        // in the calendar's data)
-        var video = f ? numbered(f, item) : entry.video, at = f && video ? Episodes.find(f.show, video) : null;
-        if (video) openPlayMenu({ id: video, type: "series", plays: false, watched: at ? !!f.show.seasons[at.s].episodes[at.e].watched : entry.watched, ahead: false }, r);
+    // A release's card in an open calendar day (an episode of a show in the library). OK opens its show's
+    // page, so nothing plays from here: watched or not, once it has aired.
+    function openReleaseMenu(entry, r) {
+        if (entry.video && entry.released <= today) openPlayMenu({ id: entry.video, type: "series", plays: false, watched: entry.watched, ahead: false }, r);
     }
     function titleMenuArrived(sourceId, item) {
         var w = menuWaiting;
         if (!w || w.item.id !== sourceId) return;
         menuWaiting = null;
-        if (layer !== "home") return;
-        // still on what was held: that very release (its title has others, a day apart), or that title's card
-        if (w.release) { if (focusItem === w.item) releaseMenu(w.release, w.item, w.rect) }
-        else if (selected(sourceId, item)) openTitleMenu(w.item, w.rect);
+        if (layer === "home" && selected(sourceId, item)) openTitleMenu(w.item, w.rect);
     }
     onPlayMenuChanged: probe.captures()                    // lab: captures follow the Play options too
     // a handoff (a switch inside the player) is still watching: the scene behind stays away, or the

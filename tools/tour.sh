@@ -2,7 +2,9 @@
 # Relaunches the app on the TV, drives a route with the network remote, and prints frame pacing per
 # phase (render-thread stamps from LabProbe). Routes: home (Continue Watching, tabs, a movie's title
 # page), calendar (entering it, moving, scrolling into the next month, a day opening, one of its
-# releases opening its show page and closing, the day turning, leaving), show (a show page: it opens
+# releases opening its show page and closing, the day turning, leaving; the calendar is the library's, so
+# the days its keys land on may be empty or have one release, which opens its page: the day view is
+# only walked when the library has two shows out on one of them), show (a show page: it opens
 # resting on an episode; the episodes, a season change, the actions), menu (quick actions opening and
 # closing on a timer), play (an SDR episode from a show page: the loading screen, then the video with
 # the controls over it; an HDR or Dolby Vision video would leave the panel at 48 Hz after it, which LG

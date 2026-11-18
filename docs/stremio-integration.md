@@ -147,7 +147,15 @@ Each is built first as a preview state (rendered on the Mac), then on the TV.
    made says "Couldn't mark it" at the bottom of the screen. A menu lists what it opened with until it has closed
    (`QuickMenu`'s `Latch`): its labels follow what they did. The page under it is built again where it is
    (`ShowScreen.refresh`): the focus stays on the card and Play names what it named.
-7. **Calendar**: library titles' releases, first in each day.
+7. **Calendar**: the library's titles and nothing else: each episode of a show in the library on the day
+   it comes out. (It listed AniList's whole season as well until 2026-11-18, six to seventeen releases a
+   day that weren't the user's.) A title watched without being added is on Continue Watching, not here. An
+   anime's episode takes its day and time from AniList, matched by its Kitsu id (`Live::kitsuIds`,
+   `airingOf`), and an episode AniList has a time for that the Kitsu addon doesn't list yet is added. OK
+   on a day with one release opens its show's page on that episode, as the card of an open day does
+   (`CalendarSection.itemOf`); the page lands on it and Play stays on where you are while it is still to
+   come (`ShowScreen.land`). A release with no still of its own shows its title's backdrop, in the month
+   and in an open day.
 
 ## Phases
 

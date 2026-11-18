@@ -65,6 +65,19 @@ FocusScope {
     // the release Home follows: the focused one in an open day (a day tile's first release), else the
     // focused day's first
     readonly property var focusEntry: dayOpen ? (dayCard ? dayCard.entry : null) : dayEntries[0] || null
+    // and what Home shows and opens for it: an open day's card, or the focused day's first release (OK on
+    // a day with one release opens its show's page on that episode, as its card in an open day does)
+    readonly property var focusItem: dayOpen ? dayItem : (focusEntry ? itemOf(focusEntry) : null)
+    // A release as Home has it: its title's art and facts, the episode's name and synopsis, and the
+    // episode its show's page opens on (`video`; `number` finds it in an anime's franchise, which numbers a
+    // later part's episodes on from the one before). One object a release, kept on the release itself
+    // (Home tells what has the focus apart by identity), so it lives as long as `dayCache` keeps the release.
+    function itemOf(e) {
+        if (!e.shown) e.shown = { id: e.item.id, video: e.video, number: e.episode, name: e.name, title: e.name, logo: e.item.logo || "", backdrop: e.item.backdrop,
+                                  art: e.art, description: e.overview || e.item.description || "", episode: Episodes.named(e.episode),
+                                  chips: [e.time, stateOf(e)].filter(function (s) { return s }), rating: "", progress: -1 };
+        return e.shown;
+    }
     property real grown: dayOpen ? 1 : 0     // 0 the month, 1 the day
     Behavior on grown { NumberAnimation { duration: 560; easing.type: Easing.InOutCubic } }
 
@@ -97,19 +110,14 @@ FocusScope {
         // its date and how many releases it has
         function tile(c) {
             var d = grid.parse(c.key), n = releasesOf(c.key).length;
-            return { key: c.key, art: c.entry.art, label: d.toLocaleDateString(Qt.locale(), "ddd d"),
+            return { key: c.key, art: c.entry.art, fallback: c.entry.fallback, label: d.toLocaleDateString(Qt.locale(), "ddd d"),
                      upcoming: d.toLocaleDateString(Qt.locale(), "dddd"), episode: n + (n === 1 ? " release" : " releases") };
         }
-        dayRow = { cards: list.map(function (e) { return { art: e.art, label: e.time || "Any time", episode: Episodes.chip(e.episode), watched: e.watched } }),
+        dayRow = { cards: list.map(function (e) { return { art: e.art, fallback: e.fallback, label: e.time || "Any time", episode: Episodes.chip(e.episode), watched: e.watched } }),
                    prev: prev ? tile(cards[0]) : null, next: next ? tile(cards[cards.length - 1]) : null };
         dayItems = cards.map(function (c) {
             var e = c.entry;
-            if (c.kind === "release")
-                // `video`: the release's episode, where the show page opens; an anime's has no id until its
-                // franchise is in, so it goes by its `number`
-                return { id: e.item.id, video: e.video, number: e.episode, name: e.name, title: e.name, logo: e.item.logo || "", backdrop: e.item.backdrop, art: e.art,
-                         description: e.overview || e.item.description || "", episode: Episodes.named(e.episode),
-                         chips: [e.time, stateOf(e)].filter(function (s) { return s }), rating: "", progress: -1 };
+            if (c.kind === "release") return itemOf(e);
             // a neighbouring day: its date as the title, and the first few of its shows
             var day = releasesOf(c.key), names = day.slice(0, 3).map(function (r) { return r.name });
             return { id: "day:" + c.key, name: grid.parse(c.key).toLocaleDateString(Qt.locale(), "dddd d MMMM"), title: "", logo: "",

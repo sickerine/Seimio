@@ -4,11 +4,13 @@
 // Stremio's core (core.h).
 //   rows     Cinemeta's top movies and series; posters, backdrops and logos from metahub
 //   cw       Stremio's continue-watching list and the library's other shows (`kept`), each title's art and
-//            facts from Cinemeta or the Kitsu addon
+//            facts from Cinemeta or the Kitsu addon; `library`: it is in the library (a title can be watched
+//            without being added)
 //   series   those shows' episodes, from the same metas, with watch state from Stremio's (the watched bitfield)
 //   season   AniList's current season and the shows still airing from earlier ones (AniChart's leftovers),
 //            each with its Kitsu fanart and logo (ARM maps AniList to Kitsu)
-//   airing   the calendar's anime: those shows' episode air times (AniList, in the same pages)
+//   airing   when those shows' episodes air (AniList, in the same pages), by the episode's id as Stremio has
+//            it: the calendar's library anime take their air time from it
 // The documents keep the shapes the catalog parses (Catalog::Data::load). Requests go through Http, which
 // replays recordings for the Mac's visual check.
 #include <QDateTime>
@@ -26,7 +28,7 @@ class Live : public QObject {
 public:
     // `library`: every Stremio library item's state by id (where you are, the watched bitfield, when last
     // watched), for anything that needs watch state beyond Continue Watching (a franchise's other seasons)
-    struct Docs { QJsonArray cw, rows, airing; QJsonObject series, season, library; };
+    struct Docs { QJsonArray cw, rows; QJsonObject series, season, library, airing; };
     explicit Live(QObject *parent = nullptr) : QObject(parent) {}
 
     // Home's documents (rows, cw, series, and the calendar's anime from the season pages), then `home`; the
@@ -186,13 +188,14 @@ private:
 public:
     void continueWatching(std::shared_ptr<Docs> docs, std::function<void()> done) {
         QJsonArray list = firstN(Core::view("watching").array(), 10);
-        QSet<QString> listed;
+        QSet<QString> listed, mine;                         // (`mine`: the titles in the library, which the calendar shows)
         for (const QJsonValue &v : list) listed << v.toObject().value("id").toString();
         QHash<QString, QJsonObject> library;
         for (const QJsonValue &v : Core::view("library").array()) {
             const QJsonObject i = v.toObject();
             const QString id = i.value("_id").toString();
             library[id] = i.value("state").toObject();
+            if (!i.value("removed").toBool()) mine << id;
             if (!i.value("removed").toBool() && i.value("type") == "series" && !listed.contains(id))
                 list << QJsonObject { { "id", id }, { "type", "series" }, { "name", i.value("name") }, { "kept", true } };
         }
@@ -219,7 +222,8 @@ public:
                 (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "poster", i.value("poster") }, { "episode", episode },
                                           { "progress", qRound(i.value("progress").toDouble() * 10) / 10.0 }, { "backdrop", backdrop }, { "logo", logo },
                                           { "description", m.value("description").toString().left(220) }, { "genres", firstN(m.value("genres").toArray(), 2) },
-                                          { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() } };
+                                          { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() },
+                                          { "library", mine.contains(id) } };
                 if (type == "series" && !m.isEmpty()) docs->series[id] = show(m, library.value(id));
                 if (--*left) { (*ask)(); return; }
                 for (const QJsonObject &o : *out) docs->cw << o;
@@ -316,24 +320,27 @@ private:
             });
         };
         (*pages)(seasonQ, QJsonObject { { "season", name }, { "year", year } }, 1, 3000, false, [=] {
+            // each show's Kitsu id first: the calendar matches the library's anime to their air times by it
             auto finish = [=] {
-                listed(shows);
-                art(shows, [=] { done(QJsonObject { { "season", name }, { "year", year }, { "shows", *shows } }); });
+                kitsuIds(shows, [=] {
+                    listed(shows);
+                    art(shows, [=] { done(QJsonObject { { "season", name }, { "year", year }, { "shows", *shows } }); });
+                });
             };
             if (leftovers) (*pages)(leftoverQ, QJsonObject(), 1, 9000, true, finish); else finish();
         });
     }
-    // the calendar's anime: every episode's air time (local date and time), with the show's banner or cover
-    static QJsonArray airingOf(const QJsonArray &shows) {
-        QJsonArray out;
+    // When the season's episodes air, by the episode's id as Stremio has it ("kitsu:N:E"): { date, time },
+    // local. The calendar shows the library's titles; an anime among them takes its air time from here.
+    static QJsonObject airingOf(const QJsonArray &shows) {
+        QJsonObject out;
         for (const QJsonValue &v : shows) {
             const QJsonObject s = v.toObject();
-            const QString art = s.value("banner").toString(s.value("cover").toString());
+            const QString kitsu = s.value("kitsu").toString();
+            if (kitsu.isEmpty()) continue;
             for (const QJsonValue &n : s.value("airing").toArray()) {
                 const QDateTime at = QDateTime::fromSecsSinceEpoch(n.toObject().value("airingAt").toVariant().toLongLong());
-                out << QJsonObject { { "id", s.value("id") }, { "name", s.value("name") }, { "episode", n.toObject().value("episode") },
-                                     { "date", at.toString("yyyy-MM-dd") }, { "time", at.toString("HH:mm") }, { "art", art },
-                                     { "description", s.value("description").toString().left(260) } };
+                out[kitsu + ":" + QString::number(n.toObject().value("episode").toInt())] = QJsonObject { { "date", at.toString("yyyy-MM-dd") }, { "time", at.toString("HH:mm") } };
             }
         }
         return out;
@@ -359,25 +366,23 @@ private:
             });
         }
     }
-    // each show's full-screen fanart and logo, which the Kitsu addon has
+    // each show's full-screen fanart and logo, which the Kitsu addon has (by its `kitsu`: kitsuIds first)
     void art(std::shared_ptr<QJsonArray> shows, std::function<void()> done) {
-        kitsuIds(shows, [this, shows, done] {
-            auto left = std::make_shared<int>(1);
-            auto finish = [left, done] { if (--*left == 0) done(); };
-            for (int at = 0; at < shows->size(); at++) {
-                const QString kitsu = (*shows)[at].toObject().value("kitsu").toString();
-                if (kitsu.isEmpty()) continue;
-                ++*left;
-                get(QString(kKitsu) + "/meta/series/" + kitsu + ".json", [shows, at, finish](const QJsonDocument &d, bool) {
-                    const QJsonObject m = d.object().value("meta").toObject();
-                    QJsonObject s = (*shows)[at].toObject();
-                    s["background"] = m.value("background").toString();
-                    s["logo"] = m.value("logo").toString();
-                    (*shows)[at] = s;
-                    finish();
-                });
-            }
-            finish();
-        });
+        auto left = std::make_shared<int>(1);
+        auto finish = [left, done] { if (--*left == 0) done(); };
+        for (int at = 0; at < shows->size(); at++) {
+            const QString kitsu = (*shows)[at].toObject().value("kitsu").toString();
+            if (kitsu.isEmpty()) continue;
+            ++*left;
+            get(QString(kKitsu) + "/meta/series/" + kitsu + ".json", [shows, at, finish](const QJsonDocument &d, bool) {
+                const QJsonObject m = d.object().value("meta").toObject();
+                QJsonObject s = (*shows)[at].toObject();
+                s["background"] = m.value("background").toString();
+                s["logo"] = m.value("logo").toString();
+                (*shows)[at] = s;
+                finish();
+            });
+        }
+        finish();
     }
 };

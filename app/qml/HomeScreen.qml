@@ -20,9 +20,7 @@ FocusScope {
     readonly property int dayColumn: cal.dayColumn
     // an open calendar day: the hero info and backdrop show its focused release
     readonly property bool dayOpen: cal.dayOpen
-    readonly property var focusItem: row === 0 ? continueWatching[strip.currentIndex] || null
-                                   : cal.dayOpen ? cal.dayItem
-                                   : (cal.focusEntry ? cal.focusEntry.item : null)
+    readonly property var focusItem: row === 0 ? continueWatching[strip.currentIndex] || null : cal.focusItem
     // the focused Continue Watching card once lifted, for keeping it clear of a frost
     readonly property rect focusRect: Qt.rect(Theme.margin - 20, column.y + 56 - 11.25, 440, 247.5)
     readonly property real focusCardWidth: 400

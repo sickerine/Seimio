@@ -40,7 +40,8 @@ class Franchise : public QObject {
     Q_OBJECT
 public:
     explicit Franchise(QObject *parent = nullptr) : QObject(parent) {}
-    void setLibrary(const QJsonObject &library) { m_library = library; }
+    // the library's watch state by title, and when the season's episodes air by episode (Live's `airing`)
+    void setLibrary(const QJsonObject &library, const QJsonObject &airing) { m_library = library; m_airing = airing; }
 
     // `source`: { id: "anilist:N" or "kitsu:N", and what the screen showed (kept as it is) }
     // Asked for again within ten minutes (the watch state changed under its page, the page opened again),
@@ -72,11 +73,11 @@ signals:
 private:
     struct Job {
         QVariantMap source; QString sourceId, imdb; int picked = 0, tail = 0, pending = 0, tvdb = 0; QVariantList related;
-        QJsonArray entries; QHash<int, QJsonObject> kitsu; QHash<int, QJsonObject> anilist; QJsonObject cinemeta; QJsonObject library;
+        QJsonArray entries; QHash<int, QJsonObject> kitsu; QHash<int, QJsonObject> anilist; QJsonObject cinemeta; QJsonObject library, airing;
         QVector<int> relatedKitsu;                       // the related shows' Kitsu ids, their metas in `kitsu` too
     };
     Http m_http { this };
-    QJsonObject m_library;
+    QJsonObject m_library, m_airing;
     QHash<QString, QPair<std::shared_ptr<Job>, qint64>> m_kept;      // what was fetched for a source, and when (`load`)
 
     void get(const QString &url, std::function<void(const QByteArray &, bool)> done) { send(url, QByteArray(), done); }
@@ -251,7 +252,7 @@ private:
         // by what asked for it and by its Kitsu id, which is what its page asks again with (put together
         // again, it keeps the age of its fetch)
         for (const QString &key : { job->sourceId, "kitsu:" + QString::number(job->picked) }) if (!m_kept.contains(key)) m_kept[key] = { job, now };
-        job->library = m_library;
+        job->library = m_library; job->airing = m_airing;
         auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
         QThread *worker = QThread::create([out, job] { *out = build(*job); });
         connect(worker, &QThread::finished, this, [this, out, job] { emit ready(job->sourceId, out->first, out->second); });
@@ -325,7 +326,10 @@ private:
             for (const QJsonValue &x : p.meta.value("videos").toArray()) {
                 const QJsonObject e = x.toObject();
                 const QString vid = p.film ? id : e.value("id").toString();
-                const QString released = e.value("released").toString().left(10);
+                // when it comes out: AniList's day for an episode of this season (the calendar's, so the page
+                // and the calendar agree on what is still to come), else the addon's date
+                const QString aired = job.airing.value(e.value("id").toString()).toObject().value("date").toString();
+                const QString released = aired.isEmpty() ? e.value("released").toString().left(10) : aired;
                 // `number`: its place in its own entry (a calendar release names its episode so); `episode` becomes
                 // its number in the season the entry is joined into
                 mine << QVariantMap { { "id", vid }, { "episode", e.value("episode").toInt() }, { "number", e.value("episode").toInt() }, { "title", p.film ? name : e.value("title").toString() },

@@ -68,6 +68,12 @@ FocusScope {
     Timer { id: entrySettle; interval: 280; onTriggered: page.entryIndex = page.wantedEntry }
     readonly property var entry: show && show.entries && entryIndex >= 0 ? show.entries[entryIndex] || null : null
     readonly property string backdrop: entry ? entry.backdrop : ""
+    // what a card shows when its own picture can't be had (an episode still to come has no still): its
+    // entry's backdrop (an anime's season, film or special has its own), else the title's
+    function backdropOf(ep) {
+        var e = ep && show && show.entries && ep.entry !== undefined ? show.entries[ep.entry] : null;
+        return e && e.backdrop || (item && item.backdrop) || "";
+    }
     function relationLabel(r) { return ({ PREQUEL: "Prequel", SEQUEL: "Sequel", SPIN_OFF: "Spin-off", ALTERNATIVE: "Alternative", SIDE_STORY: "Side story", PARENT: "Main story" })[r] || "Related" }
     readonly property var look: {
         if (entry) {
@@ -100,7 +106,8 @@ FocusScope {
         posterRow = seasons.length > 0 && (seasons[s].kind === "films" || seasons[s].kind === "related");
         var cards = episodes.map(function (ep) {
             return {
-                art: posterRow && ep.poster ? ep.poster : ep.thumb, fallback: item ? item.backdrop : "",
+                // (without a still of its own: its entry's backdrop, else the title's)
+                art: posterRow && ep.poster ? ep.poster : ep.thumb, fallback: page.backdropOf(ep),
                 episode: ep.type === "show" ? relationLabel(ep.relation) : ep.type === "movie" ? (ep.released ? ep.released.slice(0, 4) : "Film") : Episodes.chip(ep.episode),
                 progress: ep.progress > 0 ? ep.progress : -1,
                 watched: ep.watched && !(ep.progress > 0),
@@ -124,12 +131,18 @@ FocusScope {
     // opened from a calendar release was a 126 ms frame).
     function load(title, seasonsAndEpisodes, episodeId) {
         if (title === item && seasonsAndEpisodes === show) return false;
-        resumePos = episodeId && Episodes.find(seasonsAndEpisodes, episodeId) || Episodes.resting(seasonsAndEpisodes, today);
+        resumePos = Episodes.resting(seasonsAndEpisodes, today);
         item = title; show = seasonsAndEpisodes;
         entryIndex = -1;                                  // the new show's entry, at once (not after a settle)
         episodes = [];                                    // another title: place() builds its row, whatever season it lands on
-        place(resumePos);
+        land(episodeId ? Episodes.find(show, episodeId) : null);
         return true;
+    }
+    // Lands on the episode at `at` ({ s, e }), or where you are. Play names that episode from then on,
+    // unless it is still to come (a calendar release): then Play stays on where you are.
+    function land(at) {
+        if (at && !(seasons[at.s].episodes[at.e].released > today)) resumePos = at;
+        place(at || resumePos);
     }
     function open(title, seasonsAndEpisodes, episodeId) {
         actions.currentIndex = 0;
@@ -157,9 +170,7 @@ FocusScope {
     // franchise that was picked, the one last played) is where you are from then on
     function rest(episodeId) {
         zone = 2;
-        var at = episodeId ? Episodes.find(show, episodeId) : null;
-        if (at) resumePos = at;
-        place(resumePos);
+        land(episodeId ? Episodes.find(show, episodeId) : null);
     }
     // shows season p.s with episode p.e focused: the row first, so the season bar's change below finds
     // it already shown and doesn't start a slide
@@ -177,7 +188,7 @@ FocusScope {
         if (s < 0 || s >= seasons.length) return null;
         var se = seasons[s], first = se.episodes[0] || {}, n = se.episodes.length, name = seasonName(s);
         var noun = se.kind === "films" ? " film" : se.kind === "related" ? " show" : se.kind === "specials" ? " special" : " episode";
-        return { key: s, kind: se.kind || "", art: posterRow ? (first.poster || first.thumb || "") : (first.thumb || first.poster || ""), fallback: item ? item.backdrop : "",
+        return { key: s, kind: se.kind || "", art: posterRow ? (first.poster || first.thumb || "") : (first.thumb || first.poster || ""), fallback: backdropOf(first),
                  upcoming: name, episode: n + noun + (n === 1 ? "" : "s") };
     }
     function seasonName(s) { var se = seasons[s]; return se ? se.label || "Season " + se.season : "" }

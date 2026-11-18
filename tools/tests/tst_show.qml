@@ -35,6 +35,18 @@ Item {
         compare(page.resumeLabel, "Play E4", "Play moves on once the episode it named is done");
         compare(focused(), "t:1:5");
     }
+    // Opened on an episode still to come (a calendar release), the page lands on it and Play stays on
+    // where you are: it named the release, an episode nothing can play yet.
+    function test_openOnAReleaseStillToCome() {
+        var s = show([1, 2], 40);
+        s.seasons[0].episodes.push({ id: "t:1:6", episode: 6, title: "E6", released: "2026-12-01", thumb: "", watched: false, progress: 0 });
+        page.open({ id: "v", name: "V" }, s, "t:1:6");
+        tryVerify(function () { return focused() === "t:1:6" });
+        compare(page.resumeLabel, "Resume E3", "Play names where you are, not an episode that hasn't aired");
+        page.open({ id: "w", name: "W" }, show([1, 2], 40), "t:1:5");      // one that has: Play follows it
+        tryVerify(function () { return focused() === "t:1:5" });
+        compare(page.resumeLabel, "Play E5");
+    }
     // On the tile that leads to the season before, a refresh leaves the focus on the tile: put on a card,
     // OK played an episode where it had turned the season.
     function test_refreshKeepsTheTile() {
