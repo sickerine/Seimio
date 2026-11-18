@@ -342,17 +342,8 @@ private:
                 if (p.film) break;
             }
             if (mine.isEmpty()) continue;
-            // where the page opens in the picked entry: the episode you were on in it (the next one if you'd
-            // finished it), else its first
-            if (p.kitsu == job.picked) {
-                pickedFirst = mine.first().toMap().value("id").toString();
-                for (int i = 0; i < mine.size(); i++) {
-                    const QVariantMap e = mine[i].toMap();
-                    if (e["id"].toString() != stCurrent) continue;
-                    const bool finished = e["watched"].toBool() && e["progress"].toDouble() <= 0;
-                    pickedFirst = (finished && i + 1 < mine.size() ? mine[i + 1] : mine[i]).toMap().value("id").toString();
-                }
-            }
+            // where the page opens in the picked entry: the episode you are on in it (resting.h's rule)
+            if (p.kitsu == job.picked) pickedFirst = Episodes::rest({ QVariantMap { { "season", 1 }, { "episodes", mine } } }, stCurrent);
             if (kind == "film") { QVariantMap f = mine.first().toMap(); f["episode"] = films.size() + 1; films << f; continue; }
             if (kind == "special") { for (const QVariant &m : mine) { QVariantMap e = m.toMap(); e["episode"] = specials.size() + 1; specials << e; } continue; }
             const int key = rank(p) == 1 ? p.tvdb : -1000 - p.kitsu;
@@ -390,6 +381,7 @@ private:
                                  { "description", clean(cm.value("description").toString(item["description"].toString())) },
                                  { "genres", cm.value("genres").toArray().toVariantList() }, { "year", year },
                                  { "rating", cm.value("imdbRating").toVariant().toString() }, { "current", current },
+                                 { "rest", Episodes::rest(seasons, current) },
                                  { "entries", entries }, { "seasons", seasons }, { "related", job.related } };
         return qMakePair(item, show);
     }

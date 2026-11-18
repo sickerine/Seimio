@@ -33,11 +33,32 @@ static const int g_env = [] {
 // fetches go through a disk cache that outlives a launch: a cover seen yesterday shows without downloading
 // again, as HTTP's cache headers allow. A QNetworkDiskCache can't be shared between threads, and QML makes
 // a manager per thread (the GUI's, the image reader's), so each gets its own directory.
+// A picture whose server says nothing of how long it keeps is kept thirty days. fanart.tv's backdrops and
+// logos come with no Cache-Control, Expires, ETag or Last-Modified, so the copy on disk was never trusted
+// and each was fetched again at every launch: a megabyte of backdrop at the 25 KB/s a connection that
+// host serves, 40 s with the title before it still on screen. (Pictures only: the lab's switches come
+// through the same manager and must be read anew.)
+class KeptPictures : public QNetworkDiskCache {
+public:
+    using QNetworkDiskCache::QNetworkDiskCache;
+    QIODevice *prepare(const QNetworkCacheMetaData &meta) override {
+        QNetworkCacheMetaData kept = meta;
+        bool picture = false, dated = meta.expirationDate().isValid() || meta.lastModified().isValid();
+        for (const auto &h : meta.rawHeaders()) {
+            const QByteArray name = h.first.toLower();
+            if (name == "content-type") picture = h.second.toLower().startsWith("image/");
+            if (name == "cache-control" || name == "etag") dated = true;
+        }
+        if (picture && !dated) kept.setExpirationDate(QDateTime::currentDateTimeUtc().addDays(30));
+        return QNetworkDiskCache::prepare(kept);
+    }
+};
+
 class CachedNetwork : public QQmlNetworkAccessManagerFactory {
 public:
     QNetworkAccessManager *create(QObject *parent) override {
         auto *nam = new QNetworkAccessManager(parent);
-        auto *cache = new QNetworkDiskCache(nam);
+        auto *cache = new KeptPictures(nam);
         const bool gui = QThread::currentThread() == QCoreApplication::instance()->thread();
         cache->setCacheDirectory(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/net/" + (gui ? "gui" : "images"));
         cache->setMaximumCacheSize(qint64(400) << 20);

@@ -76,6 +76,7 @@ public:
     // on the TV this loads through the app's "native" folder import, so the URI is fixed here
     void registerTypes(const char *) override {
         qmlRegisterType<Catalog>("Seimio.Data", 1, 0, "Catalog");
+        qmlRegisterType<Rest>("Seimio.Data", 1, 0, "Rest");
         qmlRegisterType<Account>("Seimio.Data", 1, 0, "Account");
         qmlRegisterType<Streams>("Seimio.Data", 1, 0, "Streams");
         qmlRegisterType<Tracks>("Seimio.Data", 1, 0, "Tracks");

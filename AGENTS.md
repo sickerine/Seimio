@@ -259,6 +259,19 @@ only what the action is about may have moved. Measured on 2026-11-18 for adding 
 the library (search, Home, the Anime tab, the Library), marking watched (the Library, an episode on its
 page) and Remove from Continue Watching: none shows a grid again.
 
+The episode you are on in a show has one rule, `native/src/resting.h`, and every show made from live
+data carries its answer (`rest`, an episode's id). A Continue Watching card is that episode: its still
+(the title's backdrop when it has none), its name on the chip, its progress (`Catalog`, Data::load).
+Its page opens on it (`video`) and Play names it there (`Episodes.resting` reads `rest`), so the three
+agree; worked out apart, the card said one episode and the page another. The rule runs on the data
+thread: handing ten shows to QML to work it out there was 35 ms on the TV.
+
+Pictures from a host that says nothing of how long they keep are kept thirty days (`KeptPictures`,
+plugin.cpp). fanart.tv, where an anime's backdrops and logos are, sends no cache headers and serves
+about 25 KB/s a connection (2026-11-18): without that each backdrop was fetched again at every launch,
+40 to 67 s for a megabyte, with the title before it still on screen. The first view of one is still
+that slow.
+
 The cursor on Continue Watching stays on its title when the row comes back in another order
 (`HomeScreen.take`): what has the focus is set whole, with the row, never by a place in it.
 

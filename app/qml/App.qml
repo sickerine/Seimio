@@ -462,7 +462,7 @@ WebOSWindow {
     // the data, held natively (Seimio.Data); a show's seasons come over to QML once and are kept, so the
     // show page sees the same object again and needn't rebuild
     // everything comes live from the services, and the account from Stremio's core (Account)
-    Catalog { id: catalog; onLoaded: app.refreshHeld() }
+    Catalog { id: catalog; today: app.today; onLoaded: app.refreshHeld() }
     Account { id: account; onMarkFailed: app.say("Couldn't mark it") }
     // A moment's word at the bottom of the screen when something asked for couldn't be done: a show that
     // can't open (not on Kitsu yet, its episodes didn't load), a season that didn't load, an episode that
@@ -583,7 +583,7 @@ WebOSWindow {
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
-                     redraws: Remote.tallies, header: showPage.headerState(), hero: { target: hero.target.slice(-28), shown: hero.shown.slice(-28), incoming: hero.incoming.slice(-28), fadeIn: hero.fadeIn, opacity: hero.opacity, visible: hero.visible },
+                     redraws: Remote.tallies, watching: catalog.continueWatching.slice(0, 8).map(function (i) { return i.id + " " + i.episode + " " + (i.video || "-") + " " + i.progress }), resume: showPage.resumeLabel, header: showPage.headerState(), hero: { target: hero.target.slice(-28), shown: hero.shown.slice(-28), incoming: hero.incoming.slice(-28), fadeIn: hero.fadeIn, opacity: hero.opacity, visible: hero.visible },
                      search: { text: searchBar.text, kind: search.kind, zone: searchBar.zone, cursor: searchBar.kindBar.cursor, row: search.row, found: search.found, counts: app.searchKinds.map(function (k) { return search.count(k[1]) }).join(","), shownLag: app.shownLag },
                      library: { item: app.libraryItem ? app.libraryItem.id : "", "in": !!app.libraryItem && account.inLibrary(app.libraryItem.id), watched: !!app.libraryItem && account.watched(app.libraryItem.id), reported: app.reported, stale: app.watchingStale },
                      page: { season: showPage.shownSeason, episode: showPage.focusedEp ? showPage.focusedEp.id : "", zone: showPage.zone },
@@ -686,7 +686,7 @@ WebOSWindow {
                 active: app.layer === "show"
                 source: hero
                 onZoneChanged: { probe.act("show " + ["actions", "seasons", "episodes"][zone]); probe.captures() }
-                onEntryIndexChanged: { probe.act("show entry"); probe.captures() }
+                onEntryIndexChanged: if (active) { probe.act("show entry"); probe.captures() }      // (a page built ahead sets its entry too: that is no move of anyone's)
             }
             TitleScreen {
                 id: titlePage

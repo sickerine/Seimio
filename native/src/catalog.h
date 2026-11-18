@@ -159,6 +159,16 @@ private:
     QTimer m_stager;
 };
 
+// The resting rule (resting.h) for a show put together in QML: the app's own shows come with their
+// `rest`, and tools/tests/tst_episodes.qml checks the rule through this.
+class Rest : public QObject {
+    Q_OBJECT
+public:
+    using QObject::QObject;
+    // the id of the episode a show ({ current, seasons }) rests on, judged on `today`
+    Q_INVOKABLE QString of(const QVariantMap &show, const QString &today) const { return Episodes::rest(show.value("seasons").toList(), show.value("current").toString(), today); }
+};
+
 // The data: Continue Watching, popular rows (for the tabs), shows with their seasons and episodes, and
 // the calendar of release days. It loads once the account's stored state is in (Core); `reload()` takes
 // Continue Watching and the watch states again (the app asks when the account says they changed).
@@ -175,6 +185,9 @@ class Catalog : public QObject {
     Q_PROPERTY(QVariantList seasons READ seasons CONSTANT)                  // the ones on offer, newest first
     Q_PROPERTY(QStringList seasonGenres READ seasonGenres NOTIFY seasonLoaded)    // most common first
     Q_PROPERTY(QString searchKind READ searchKind WRITE setSearchKind NOTIFY searchKindChanged)
+    // The app's day ("YYYY-MM-DD"): what has aired goes by it, and with that the episode a show rests on
+    // (resting.h). Another day (midnight, or a preview's pinned one) takes Home's data again.
+    Q_PROPERTY(QString today READ today WRITE setToday NOTIFY todayChanged)
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
         // Live and Franchise fetch, read and assemble on a thread of their own: a show's meta is hundreds of
@@ -275,6 +288,14 @@ public:
                 back([this, q, anime, more] { if (q != m_searching) return; m_animeAsked = false; m_animeMore = more; emit this->foundMore(q, anime); });
             });
         });
+    }
+    QString today() const { return m_today; }
+    void setToday(const QString &day) {
+        if (day == m_today) return;
+        const bool other = day != Episodes::today();        // (the clock's day, the first time: nothing to take again)
+        m_today = day; Episodes::setToday(day);
+        emit todayChanged();
+        if (other) reloadNow();
     }
     // which kind of title a search shows ("anime", "series" or "movie"): the last one picked, kept between
     // runs (a preview starts on anime and keeps nothing)
@@ -423,6 +444,7 @@ signals:
     void franchiseFailed(const QString &sourceId, const QString &reason);
     void found(const QString &query, const QVariantMap &results);
     void foundMore(const QString &query, const QVariantList &anime);
+    void todayChanged();
     void searchKindChanged();
 
 private:
@@ -458,7 +480,22 @@ private:
                                   {"type", i["type"].toString()}, {"poster", i["poster"].toString()},
                                   {"art", art(i["backdrop"].toString())}, {"backdrop", art(i["backdrop"].toString())}, {"logo", art(i["logo"].toString())},
                                   {"description", i["description"].toString()}, {"chips", chips}, {"rating", QString()},
-                                  {"episode", i["episode"].toString()}, {"progress", i["progress"].toDouble()} };
+                                  {"episode", QString()}, {"progress", i["progress"].toDouble()} };
+                // A show's card is the episode it rests on (`rest`, resting.h: the one its page opens on and
+                // Play names there): that episode's still, with the title's backdrop when it has none, its
+                // name on the chip and how far through it you are. `video` is what the page opens on.
+                const QJsonObject resting = docs.series.value(i["id"].toString()).toObject();
+                for (const QJsonValue &sv : resting["seasons"].toArray()) {
+                    for (const QJsonValue &ev : sv.toObject()["episodes"].toArray()) {
+                        const QJsonObject e = ev.toObject();
+                        if (e["id"] != resting["rest"]) continue;
+                        const QString chip = episodeChip(e["episode"].toInt());
+                        item["video"] = e["id"].toString();
+                        item["episode"] = item["id"].toString().startsWith("kitsu:") ? chip : "S" + QString::number(sv.toObject()["season"].toInt()) + " " + chip;
+                        item["progress"] = e["progress"].toDouble();
+                        if (!e["thumb"].toString().isEmpty()) { item["art"] = art(e["thumb"].toString()); item["fallback"] = item["backdrop"]; }
+                    }
+                }
                 // a library show that isn't being watched: on the calendar, not on Continue Watching
                 if (!i["kept"].toBool()) d.continueWatching.append(item);
                 d.held[item["id"].toString()] = item["backdrop"].toString();
@@ -592,7 +629,7 @@ private:
     QString m_searching;                                   // the last search asked for
     int m_animePage = 1;                                   // its anime: the last page asked for, whether one follows, and whether it is on its way
     bool m_animeMore = false, m_animeAsked = false;
-    QString m_searchKind;
+    QString m_searchKind, m_today;
     JsonStore m_choices { "choices.json" };                // what was last picked where the app remembers it
     int m_generation = 0;                                  // the newest load of Home's documents
     Live::Docs m_docs;                                     // Home's documents as last fetched

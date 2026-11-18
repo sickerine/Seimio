@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include "core.h"
+#include "resting.h"
 
 class Live : public QObject {
     Q_OBJECT
@@ -224,13 +225,11 @@ public:
             const QJsonObject i = list[n].toObject();
             const QString id = i.value("id").toString(), type = i.value("type").toString();
             title(type, id, [=](const QJsonObject &m) {
-                const QString vid = i.value("videoId").toString();
-                const QStringList parts = vid.split(':');
-                QString episode;
-                if (type == "series" && parts.size() == 3) episode = id.startsWith("kitsu:") ? "E" + parts[2] : "S" + parts[1] + " E" + parts[2];
                 const QString backdrop = m.value("background").toString(id.startsWith("tt") ? metahub("background", id) : QString());
                 const QString logo = m.value("logo").toString(id.startsWith("tt") ? metahub("logo", id) : QString());
-                (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "poster", i.value("poster") }, { "episode", episode },
+                // (a show's card names the episode it rests on, with that one's progress: Catalog, from `series`;
+                // `progress` here is a film's)
+                (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "poster", i.value("poster") },
                                           { "progress", qRound(i.value("progress").toDouble() * 10) / 10.0 }, { "backdrop", backdrop }, { "logo", logo },
                                           { "description", m.value("description").toString().left(220) }, { "genres", firstN(m.value("genres").toArray(), 2) },
                                           { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() },
@@ -272,7 +271,9 @@ public:
         for (auto it = seasons.begin(); it != seasons.end(); ++it) list << QJsonObject { { "season", it.key() }, { "episodes", it.value() } };
         QString year = meta.value("releaseInfo").toVariant().toString(); if (year.isEmpty()) year = meta.value("year").toVariant().toString();
         while (year.endsWith('-') || year.endsWith(QChar(0x2013))) year.chop(1);
-        return QJsonObject { { "name", meta.value("name") }, { "current", current }, { "description", meta.value("description").toString().left(260) },
+        // (`rest`: the episode you are on, by the one rule for it: resting.h)
+        return QJsonObject { { "name", meta.value("name") }, { "current", current }, { "rest", Episodes::rest(list.toVariantList(), current) },
+                             { "description", meta.value("description").toString().left(260) },
                              { "genres", firstN(meta.value("genres").toArray(), 2) }, { "year", year },
                              { "rating", meta.value("imdbRating").toVariant().toString() }, { "seasons", list } };
     }

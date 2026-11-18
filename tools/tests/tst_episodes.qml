@@ -2,42 +2,46 @@
 // one you were in, the one after a finished one (once it has aired).
 import QtQuick 2.12
 import QtTest 1.2
+import Seimio.Data 1.0
 import "../../app/qml/Episodes.js" as Episodes
 
 TestCase {
     name: "Episodes"
+    // the rule is the data's (native/src/resting.h): a show comes with the episode it rests on (`rest`)
+    Rest { id: rule }
+    function resting(sh) { sh.rest = rule.of(sh, today); return Episodes.resting(sh) }
     function ep(id, watched, progress, released) { return { id: id, watched: watched, progress: progress || 0, released: released || "2026-01-01" } }
     function show(current, seasons) { return { current: current, seasons: seasons } }
     readonly property string today: "2026-11-17"
 
     function test_freshShowStartsAtTheFirstNumberedSeason() {
         var sh = show("", [{ season: 0, episodes: [ep("sp1", false)] }, { season: 1, episodes: [ep("a1", false), ep("a2", false)] }]);
-        compare(Episodes.resting(sh, today), { s: 1, e: 0 });
+        compare(resting(sh), { s: 1, e: 0 });
     }
     function test_unfinishedCurrentIsWhereYouAre() {
         // watched before and being rewatched: the progress wins
         var sh = show("a2", [{ season: 1, episodes: [ep("a1", true), ep("a2", true, 71.4), ep("a3", false)] }]);
-        compare(Episodes.resting(sh, today), { s: 0, e: 1 });
+        compare(resting(sh), { s: 0, e: 1 });
     }
     function test_finishedCurrentMovesToTheNextAcrossSeasons() {
         var sh = show("a2", [{ season: 1, episodes: [ep("a1", true), ep("a2", true)] }, { season: 2, episodes: [ep("b1", false)] }]);
-        compare(Episodes.resting(sh, today), { s: 1, e: 0 });
+        compare(resting(sh), { s: 1, e: 0 });
     }
     function test_finishedLastAiredStaysWhenTheNextHasNotAired() {
         var sh = show("a2", [{ season: 1, episodes: [ep("a1", true), ep("a2", true), ep("a3", false, 0, "2026-11-20")] }]);
-        compare(Episodes.resting(sh, today), { s: 0, e: 1 });
+        compare(resting(sh), { s: 0, e: 1 });
     }
     function test_currentNotYetAiredFallsBackToTheLastAired() {
         var sh = show("a3", [{ season: 1, episodes: [ep("a1", true), ep("a2", true), ep("a3", false, 0, "2026-11-22")] }]);
-        compare(Episodes.resting(sh, today), { s: 0, e: 1 });
+        compare(resting(sh), { s: 0, e: 1 });
     }
     function test_currentStremioMovedOnToIsWhereYouAre() {
         var sh = show("a3", [{ season: 1, episodes: [ep("a1", true), ep("a2", true), ep("a3", false), ep("a4", false)] }]);
-        compare(Episodes.resting(sh, today), { s: 0, e: 2 });
+        compare(resting(sh), { s: 0, e: 2 });
     }
     function test_withoutCurrentTheLastWatchedAnchors() {
         var sh = show("", [{ season: 1, episodes: [ep("a1", true), ep("a2", true), ep("a3", false)] }]);
-        compare(Episodes.resting(sh, today), { s: 0, e: 2 });
+        compare(resting(sh), { s: 0, e: 2 });
     }
     function test_nextEpisodeCrossesSeasonsAndWaitsForAiring() {
         var sh = show("", [{ season: 1, episodes: [ep("a1", true), ep("a2", false)] }, { season: 2, episodes: [ep("b1", false), ep("b2", false, 0, "2026-11-22")] }]);
@@ -49,7 +53,7 @@ TestCase {
     function test_kitsuUnknownDateIsNotAired() {
         var sh = show("a1", [{ season: 1, episodes: [ep("a1", true), ep("a2", false, 0, "1970-01-01")] }]);
         compare(Episodes.after(sh, "a1", today), null, "1970-01-01 is Kitsu's unknown date");
-        compare(Episodes.resting(sh, today), { s: 0, e: 0 });
+        compare(resting(sh), { s: 0, e: 0 });
     }
     function test_nextEpisodeStopsBeforeSpecials() {
         var sh = show("", [{ season: 1, episodes: [ep("a1", true), ep("a2", false)] }, { season: 0, episodes: [ep("film", false)] }]);

@@ -4,11 +4,13 @@
 // held a moment before). Once the episode Play named is done, Play moves on to the next.
 import QtQuick 2.12
 import QtTest 1.12
+import Seimio.Data 1.0
 import "../../app/qml"
 
 Item {
     width: 1920; height: 1080
     ShowScreen { id: page; active: true; focus: true; today: "2026-11-18" }
+    Rest { id: rule }                    // a show comes with the episode it rests on (native/src/resting.h)
 
     TestCase {
     name: "ShowScreen"
@@ -19,7 +21,9 @@ Item {
         var eps = [];
         for (var n = 1; n <= 5; n++) eps.push({ id: "t:1:" + n, episode: n, title: "E" + n, released: "2026-01-0" + n, thumb: "",
                                                 watched: done.indexOf(n) >= 0, progress: n === 3 ? progress : 0 });
-        return { name: "T", current: "t:1:3", seasons: [{ season: 1, episodes: eps }] };
+        return rested({ name: "T", current: "t:1:3", seasons: [{ season: 1, episodes: eps }] });
+    }
+    function rested(sh) { sh.rest = rule.of(sh, page.today); return sh
     }
     function focused() { return page.focusedEp ? page.focusedEp.id : "" }
 
@@ -42,7 +46,7 @@ Item {
     function test_openOnAReleaseStillToCome() {
         var s = show([1, 2], 40);
         s.seasons[0].episodes.push({ id: "t:1:6", episode: 6, title: "E6", released: "2026-12-01", thumb: "", watched: false, progress: 0 });
-        page.open({ id: "v", name: "V" }, s, "t:1:6");
+        page.open({ id: "v", name: "V" }, rested(s), "t:1:6");
         tryVerify(function () { return focused() === "t:1:6" });
         compare(page.resumeLabel, "Resume E3", "Play names where you are, not an episode that hasn't aired");
         page.open({ id: "w", name: "W" }, show([1, 2], 40), "t:1:5");      // one that has: Play follows it
@@ -56,7 +60,7 @@ Item {
         s.entries = [{ id: "kitsu:1", kind: "tv", title: "T" }, { id: "kitsu:2", kind: "film", title: "T: The Film" }];
         s.seasons[0].episodes.forEach(function (ep) { ep.entry = 0 });
         s.seasons[0].episodes.push({ id: "kitsu:2", episode: 6, title: "T: The Film", released: "2026-12-25", thumb: "", watched: false, progress: 0, type: "movie", entry: 1 });
-        page.open({ id: "x", name: "X" }, s);
+        page.open({ id: "x", name: "X" }, rested(s));
         compare(page.seasonCard(0).titles.map(function (t) { return t.id }).join(), "kitsu:1");
     }
     // On the tile that leads to the season before, a refresh leaves the focus on the tile: put on a card,
@@ -65,7 +69,7 @@ Item {
         function two() {
             var s = show([1], 0);
             s.seasons.push({ season: 2, episodes: [{ id: "t:2:1", episode: 1, title: "E1", released: "2026-02-01", thumb: "", watched: false, progress: 0 }] });
-            return s;
+            return rested(s);
         }
         page.open({ id: "u", name: "U" }, two(), "t:2:1");
         tryVerify(function () { return focused() === "t:2:1" });

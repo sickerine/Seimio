@@ -60,7 +60,7 @@ FocusScope {
         return (sh.seasons.length > 1 ? "S" + n + " " : "") + Episodes.chip(ep.episode);
     }
     function resumeTarget(sh) {
-        var p = Episodes.resting(sh, today);
+        var p = Episodes.resting(sh);
         return sh && sh.seasons && sh.seasons.length && sh.seasons[p.s].episodes.length ? target(sh, p.s, sh.seasons[p.s].episodes[p.e]) : null;
     }
     property int zone: 0                // 0 actions, 1 seasons, 2 episodes
@@ -73,9 +73,10 @@ FocusScope {
     // the focused episode's, or the one remembered in the season shown. Its logo, facts and description fill
     // the header (HeroInfo: logo loaded first, a fade through the change) and its backdrop the screen's
     // (App reads `backdrop`). It changes once the selection rests on another entry (Theme.settle, as
-    // Home's selection commits). Every entry's logo is loaded with the page: fetched when its season was
-    // first reached, the header stood empty for a second, and moving on emptied it again.
-    // A show without entries (not an anime) wears its own.
+    // Home's selection commits). A show without entries (not an anime) wears its own.
+    // (The entries' logos aren't loaded ahead: seven of them from fanart.tv, which serves 25 KB/s a
+    // connection, kept the page's backdrop waiting behind them. The header keeps the entry it shows
+    // until the next one's logo is in.)
     // on a tile, the season it leads to (its first card) is what the page previews
     readonly property var focusedEp: strip.onTile ? ((seasons[shownSeason + (strip.onTile === "next" ? 1 : -1)] || { episodes: [] }).episodes[0] || null)
                                      : episodes.length ? episodes[Math.max(0, Math.min(strip.currentIndex, episodes.length - 1))] : null
@@ -83,10 +84,6 @@ FocusScope {
     property int entryIndex: -1
     onWantedEntryChanged: if (!active || entryIndex < 0) entryIndex = wantedEntry; else entrySettle.restart()
     Timer { id: entrySettle; interval: Theme.settle; onTriggered: page.entryIndex = page.wantedEntry }
-    Repeater {
-        model: page.show && page.show.entries ? page.show.entries.length : 0
-        Image { visible: false; asynchronous: true; sourceSize.width: 780; fillMode: Image.PreserveAspectFit; source: page.show.entries[index].logo || "" }      // (the size and fit HeroInfo and TitleArt ask for: one picture between them)
-    }
     readonly property var entry: show && show.entries && entryIndex >= 0 ? show.entries[entryIndex] || null : null
     readonly property string backdrop: entry ? entry.backdrop || "" : ""
     // what a card shows when its own picture can't be had (an episode still to come has no still): its
@@ -117,7 +114,7 @@ FocusScope {
     property var episodes: []
     property var row: ({})               // the episode row's page (PagedStrip), set whole by showSeason()
     property string today: new Date().toISOString().slice(0, 10)   // App passes its own, so previews can fix the day
-    onTodayChanged: if (show) { resumePos = Episodes.resting(show, today); showSeason(shownSeason, strip.currentIndex) }   // what has aired changes at midnight
+    onTodayChanged: if (show) showSeason(shownSeason, strip.currentIndex)   // what has aired changes at midnight (where it rests comes with the show, taken again then: Catalog.today)
     // Movies and Related are rows of posters (a film or a show is a title, not an episode); the header
     // carries the focused one's facts, so the episode details under the row step aside. Set with the row's
     // data, so a season change swaps the shape while the row is faded out.
@@ -154,7 +151,7 @@ FocusScope {
     function load(title, seasonsAndEpisodes, episodeId) {
         if (title === item && seasonsAndEpisodes === show) return false;
         Remote.tally("page loaded");
-        resumePos = Episodes.resting(seasonsAndEpisodes, today);
+        resumePos = Episodes.resting(seasonsAndEpisodes);
         item = title; show = seasonsAndEpisodes;
         entryIndex = -1;                                  // the new show's entry, at once (not after a settle)
         episodes = [];                                    // another title: place() builds its row, whatever season it lands on
@@ -170,7 +167,7 @@ FocusScope {
     function open(title, seasonsAndEpisodes, episodeId) {
         actions.currentIndex = 0;
         if (load(title, seasonsAndEpisodes, episodeId)) zone = 2;
-        else { resumePos = Episodes.resting(show, today); rest(episodeId) }     // built ahead: where you are, unless it opens on an episode
+        else { resumePos = Episodes.resting(show); rest(episodeId) }     // built ahead: where you are, unless it opens on an episode
     }
     // The same title with new data (its watch state changed: an episode marked from its menu, another
     // device). The row is built again where it is, on the card that had the focus, and Play names what it
@@ -187,7 +184,7 @@ FocusScope {
             while (next && Episodes.finished(next)) next = Episodes.after(show, next.id, today);
             if (next) resume = Episodes.find(show, next.id);
         }
-        resumePos = resume || Episodes.resting(show, today);
+        resumePos = resume || Episodes.resting(show);
         place(focusedId && Episodes.find(show, focusedId) || (was.s < seasons.length ? was : resumePos));
         // on a season's tile it stays on that tile: OK there turns the season, on a card it plays
         if (tile && shownSeason === was.s) strip.jumpTo(tile === "prev" ? -1 : episodes.length);
