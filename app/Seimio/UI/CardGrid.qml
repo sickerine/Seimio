@@ -18,7 +18,7 @@ FocusScope {
     property int row: -1
     property int column: 0
     readonly property bool scrolled: row > 0
-    property string layout: "grid"           // the layout the rows on screen are for: "grid", "schedule" or "shelf"
+    property string layout: "grid"           // the owner's name for the rows on screen (`show`'s), for it to read back; a row says itself what it is
     property int perRow: 7
     property bool held: false
     // ids of the titles that are watched (each true): their posters wear the check (CardStrip.marks). A
@@ -59,7 +59,9 @@ FocusScope {
     // where each row rests along itself: a grid's rows line up and share `column`; each of a schedule's
     // days slides on its own and keeps its own place (by row), starting at its first card
     property var rowColumns: ({})
-    function restingColumn(rowIdx) { return layout !== "grid" ? (rowColumns[rowIdx] || 0) : column }
+    // (by what the row is, never by the name the owner gives its layout: the Anime tab's chart is "chart",
+    // and read as not a grid its focus stayed on the first card wherever the cursor went)
+    function restingColumn(rowIdx) { var r = rows[rowIdx]; return r && (r.schedule || r.shelf) ? (rowColumns[rowIdx] || 0) : column }
     function rememberColumn(rowIdx, i) { var c = Object.assign({}, rowColumns); c[rowIdx] = i; rowColumns = c }
 
     // the cards: a grid's posters fill the width between the margins exactly; a schedule's are stills
@@ -75,7 +77,7 @@ FocusScope {
         return out;
     }
     function holdCovers() {
-        var c = layout === "schedule" ? scheduleCard : gridCard, size = Theme.cardDecodeSize(c.width, c.height);
+        var c = rows.length && rows[0].schedule ? scheduleCard : gridCard, size = Theme.cardDecodeSize(c.width, c.height);
         if (held) ArtCache.keep(covers, size.width, size.height);
     }
     onCoversChanged: holdCovers()
