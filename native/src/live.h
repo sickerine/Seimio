@@ -3,7 +3,8 @@
 // baked into the app. The account's part (Continue Watching, every library item's watch state) comes from
 // Stremio's core (core.h).
 //   rows     Cinemeta's top movies and series; posters, backdrops and logos from metahub
-//   cw       Stremio's continue-watching list, each title's art and facts from Cinemeta or the Kitsu addon
+//   cw       Stremio's continue-watching list and the library's other shows (`kept`), each title's art and
+//            facts from Cinemeta or the Kitsu addon
 //   series   those shows' episodes, from the same metas, with watch state from Stremio's (the watched bitfield)
 //   season   AniList's current season and the shows still airing from earlier ones (AniChart's leftovers),
 //            each with its Kitsu fanart and logo (ARM maps AniList to Kitsu)
@@ -162,12 +163,21 @@ private:
             });
     }
     // Stremio's Continue Watching, each title's meta live; a show's meta also gives its episodes, with
-    // Stremio's watch state laid over them
+    // Stremio's watch state laid over them. The library's other shows come the same way (`kept`): they
+    // aren't being watched, but their episodes belong on the calendar.
 public:
     void continueWatching(std::shared_ptr<Docs> docs, std::function<void()> done) {
-        const QJsonArray list = firstN(Core::view("watching").array(), 10);
+        QJsonArray list = firstN(Core::view("watching").array(), 10);
+        QSet<QString> listed;
+        for (const QJsonValue &v : list) listed << v.toObject().value("id").toString();
         QHash<QString, QJsonObject> library;
-        for (const QJsonValue &v : Core::view("library").array()) library[v.toObject().value("_id").toString()] = v.toObject().value("state").toObject();
+        for (const QJsonValue &v : Core::view("library").array()) {
+            const QJsonObject i = v.toObject();
+            const QString id = i.value("_id").toString();
+            library[id] = i.value("state").toObject();
+            if (!i.value("removed").toBool() && i.value("type") == "series" && !listed.contains(id) && list.size() < 40)
+                list << QJsonObject { { "id", id }, { "type", "series" }, { "name", i.value("name") }, { "kept", true } };
+        }
         docs->cw = QJsonArray(); docs->series = QJsonObject(); docs->library = QJsonObject();
         for (auto it = library.begin(); it != library.end(); ++it) docs->library[it.key()] = it.value();
         if (list.isEmpty()) { done(); return; }
@@ -187,7 +197,7 @@ public:
                 (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "episode", episode },
                                           { "progress", qRound(i.value("progress").toDouble() * 10) / 10.0 }, { "backdrop", backdrop }, { "logo", logo },
                                           { "description", m.value("description").toString().left(220) }, { "genres", firstN(m.value("genres").toArray(), 2) },
-                                          { "year", m.value("releaseInfo").toVariant().toString() } };
+                                          { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() } };
                 if (type == "series" && !m.isEmpty()) docs->series[id] = show(m, library.value(id));
                 if (--*left) return;
                 for (const QJsonObject &o : *out) docs->cw << o;

@@ -389,7 +389,8 @@ private:
                                   {"art", art(i["backdrop"].toString())}, {"backdrop", art(i["backdrop"].toString())}, {"logo", art(i["logo"].toString())},
                                   {"description", i["description"].toString()}, {"chips", chips}, {"rating", QString()},
                                   {"episode", i["episode"].toString()}, {"progress", i["progress"].toDouble()} };
-                d.continueWatching.append(item);
+                // a library show that isn't being watched: on the calendar, not on Continue Watching
+                if (!i["kept"].toBool()) d.continueWatching.append(item);
                 d.held << item["id"].toString();
                 byId[item["id"].toString()] = item;
             }

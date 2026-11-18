@@ -30,7 +30,7 @@ js() {
     menu) echo 'win.openMenu()' ;;
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
     profile) echo 'win.layer = "profile"; win.profileOpen = true' ;;
-    anime) echo 'win.tab = 1' ;;
+    anime) echo "$FIND_JS var a = f(win.canvas, function (o) { return o.seasonLoading !== undefined }); a.live = false; a.now = 1794830400; win.tab = 1" ;;   # its countdowns from a fixed moment
     movies) echo 'win.tab = 2' ;;
     library) echo 'win.tab = 4' ;;
     search) echo "win.tab = 5; win.layer = 'tabs'; win.searchText = 'demon slayer'" ;;
