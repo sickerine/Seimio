@@ -179,21 +179,32 @@ public:
     Q_INVOKABLE void attach(QObject *window) {
         auto w = qobject_cast<QQuickWindow *>(window);
         if (!w) return;
-        connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);   // render thread
+        pthread_getcpuclockid(pthread_self(), &m_guiClock);
+        // render thread: a frame begins when the GUI thread hands it over, or, drawn by the render thread
+        // alone (an animation running there), when it starts to draw
+        connect(w, &QQuickWindow::beforeSynchronizing, this, [this] { m_began = monoMs(); }, Qt::DirectConnection);
+        connect(w, &QQuickWindow::beforeRendering, this, [this] { if (m_began < m_swapped) m_began = monoMs(); }, Qt::DirectConnection);
+        connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
             double now = monoMs();
+            timespec t; clock_gettime(m_guiClock, &t);
+            const double guiCpu = t.tv_sec * 1e3 + t.tv_nsec / 1e6;
             QMutexLocker l(&m_mutex);
             if (now - m_rendered > 30) m_slowSwap = now;
             // Qt draws only when something changes. A frame is late when it breaks a run of frames (the one
             // before it came on time); one that follows a pause (nothing animating, a subtitle waiting for its
-            // next line, a key press after a moment) only shows when something next changed
-            const double gap = now - m_last;
-            if (m_last > 0 && m_lastGap > 0 && m_lastGap <= 20 && gap < 150) {
+            // next line, a key press after a moment) only shows when something next changed. A pause can be
+            // short (the 100 ms between one move ending and the next key, with nothing drifting behind), so
+            // what counts is the part of the gap nothing accounts for: not the GUI thread's work in it, nor
+            // the frame's own time from its hand-over to the screen. Over 30 ms of that, nobody was asking
+            // for a frame (a frame waits up to one refresh for its turn anyway).
+            const double gap = now - m_last, idle = gap - (guiCpu - m_guiCpuAtSwap) - (now - m_began);
+            if (m_last > 0 && m_lastGap > 0 && m_lastGap <= 20 && gap < 150 && idle <= 30) {
                 m_gaps[m_phase].append(gap);
                 if (gap > 20) labLog(QString("late frame %1 ms").arg(gap, 0, 'f', 1));
             }
             m_lastGap = m_last > 0 ? gap : 0;
-            m_last = now;
+            m_last = now; m_swapped = now; m_guiCpuAtSwap = guiCpu;
         }, Qt::DirectConnection);
         // GUI thread: a long wait between two animation ticks means key handling, JS or item creation
         // held the GUI thread up
@@ -211,7 +222,6 @@ public:
         // is the time since its animation tick less what it worked in it (polishing). With something
         // animating on the render thread (Ambient, at rest) the render loop runs by itself and the GUI
         // thread waits for the frame in hand to finish, up to two frames; that wait isn't a stall.
-        pthread_getcpuclockid(pthread_self(), &m_guiClock);
         connect(w, &QQuickWindow::afterSynchronizing, this, [this] {
             timespec t; clock_gettime(m_guiClock, &t);
             const double from = m_handFrom.exchange(0), waited = monoMs() - from - (t.tv_sec * 1e3 + t.tv_nsec / 1e6 - m_handCpu);
@@ -243,7 +253,8 @@ private:
     QMap<QString, QVector<double>> m_gaps, m_stalls;
     QTimer m_beat;
     double m_lastBeat = 0; double m_lastCpu = 0;
-    std::atomic<double> m_rendered { 0 };
+    std::atomic<double> m_began { 0 }, m_rendered { 0 }, m_swapped { 0 };     // when the frame in hand began, was drawn, and when the last one was shown
+    double m_guiCpuAtSwap = 0;              // the GUI thread's CPU time at the last swap (under m_mutex)
     double m_slowSwap = 0;                  // when the last slow swap ended (under m_mutex)
     clockid_t m_guiClock = 0;               // the GUI thread's CPU time, readable from the render thread
     std::atomic<double> m_handFrom { 0 }, m_handCpu { 0 };      // the animation tick a hand-over starts from

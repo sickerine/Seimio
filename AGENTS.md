@@ -41,7 +41,9 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   JSON by the GUI thread it was a 30 ms stall at every report of a timed run. Raise a budget only with
   measurements showing why. A frame counts as late only when it breaks a run of on-time frames: under
   the video nothing animates, and Qt draws only when a subtitle line or the overlay changes, so the gap
-  before a frame after a pause isn't lateness. GUI stalls are counted apart, by a 16 ms heartbeat on
+  before a frame after a pause isn't lateness. A pause can be short (a frosted backdrop doesn't drift,
+  so nothing draws between one move ending and the next key): the gap counts only if the GUI thread's
+  work in it and the frame's own time from hand-over to screen account for all but 30 ms of it. GUI stalls are counted apart, by a 16 ms heartbeat on
   the GUI thread during tours, so a long one counts whether or not anything was drawing.
 
 ## Performance rules

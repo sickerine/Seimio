@@ -133,15 +133,18 @@ What the second pass found (the lab can now say what the GUI thread ran in a sta
   calendar, and what moves by itself runs on the render thread at rest, so nothing is held up by it.
 - Timed runs had been measuring themselves: the lab's report cost the GUI thread 30 ms every 3 s.
 
-Late frames a tour, one full check each (budget 8; 40 for play and player), before and after:
-home 22 → 11 (three more runs: 8, 10, 16), calendar 17 → 11, show 6 → 2, menu 4 → 3, play 22 → 14,
-streams 11 → 12, player 40 → 40, browse 17 → 12. Still open:
+Late frames a tour (budget 8; 40 for play and player), the full check before this pass and two after it:
+home 22 → 11, 10; calendar 17 → 11, 11; show 6 → 2, 2; menu 4 → 3, 3; play 22 → 14, 28; streams 11 →
+12, 10; player 40 → 40, 42; browse 17 → 12, 14. Single runs of home since: 8, 10, 11, 14, 16. Frames
+over 30 ms are now few outside the title opening below (home 1 to 6, calendar 2, streams 1 to 2). Still
+open:
 
 - A title or a show opened from a scrolled grid (the backdrop frosted) runs at 30 fps for about 300 ms:
-  seven late frames, the largest cluster left. The backdrop and its frost are both drawn across the
-  screen while the frost fades out (520 ms); with the backdrop hidden the same frames draw in 2.5 ms,
-  and from the first row (no frost) none is late. One pass that draws the picture and its frost
-  together (the frost as an input of `Backdrop`'s shader) would end it.
+  seven late frames, the largest cluster left. From the first row (no frost) none is late; with the
+  backdrop hidden the same frames draw in 2.5 ms instead of 10. Two things were tried and changed
+  nothing, so they are not it: the frost reading its blur once a pixel instead of four times, and the
+  backdrop mixing its frost in its own pass instead of a second layer over it. Not yet tried: what the
+  backdrop's pass costs while its frost is between 0 and 1 with the page's glass buttons capturing it.
 - A backdrop's first frame is late by up to 10 ms: its 1920 x 1080 texture reaches the GPU in that frame
   (15 to 18 ms of the frame). One a crossfade; nothing moves but the drift when it happens.
 - Passing along the tab bar at 400 ms a tab costs one or two frames a tab on some runs and none on
