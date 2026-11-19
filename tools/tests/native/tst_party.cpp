@@ -153,6 +153,38 @@ private slots:
         QTest::qWait(700);
         QCOMPARE(relay.said.size(), before + 1);                        // and is quiet after
     }
+    // A seek, as the player gives it: the place asked for at once, held there while LG seeks, then the
+    // place the picture landed. The followers are held at the first and sent to the second: told it was
+    // playing from the place asked for, they ran ahead and were pulled back, a stretch played twice at
+    // every seek ("it was looping for him as I kept seeking").
+    void aSeekHoldsTheFollowersUntilItLands() {
+        Relay relay; Party party;
+        party.setRelay(relay.address());
+        QTRY_VERIFY(party.connected());
+        auto at = [](double ms, bool buffering) { return QVariantMap { { "media", "https://cdn.example/a.mkv" }, { "position", ms }, { "paused", false }, { "buffering", buffering } }; };
+        party.playing(at(100000, false));
+        QTRY_COMPARE(relay.states().size(), 1);
+        party.playing(at(160000, true));                                // sought to 2:40
+        QTRY_COMPARE(relay.states().size(), 2);
+        QCOMPARE(relay.states()[1].value("event").toString(), QString("seeked"));
+        QCOMPARE(relay.states()[1].value("buffering").toBool(), true);
+        QCOMPARE(relay.states()[1].value("positionSeconds").toDouble(), 160.0);
+        QTest::qWait(300);
+        party.playing(at(158400, false));                               // landed 1.6 s before it
+        QTRY_COMPARE(relay.states().size(), 3);
+        QCOMPARE(relay.states()[2].value("event").toString(), QString("seeked"));
+        QCOMPARE(relay.states()[2].value("buffering").toBool(), false);
+        QCOMPARE(relay.states()[2].value("positionSeconds").toDouble(), 158.4);
+        // a stall that ends where it began is no seek
+        QTest::qWait(250);
+        party.playing(at(158650, true));
+        QTRY_COMPARE(relay.states().size(), 4);
+        QCOMPARE(relay.states()[3].value("event").toString(), QString("waiting"));
+        QTest::qWait(250);
+        party.playing(at(158650, false));
+        QTRY_COMPARE(relay.states().size(), 5);
+        QCOMPARE(relay.states()[4].value("event").toString(), QString("playing"));
+    }
     // A relay that goes is reached again, and told what is playing; the room is empty meanwhile.
     void comesBackAfterTheLineDrops() {
         Relay relay; Party party;

@@ -42,6 +42,10 @@ class NativePlayer : public QObject {
     Q_PROPERTY(bool playing MEMBER m_playing NOTIFY stateChanged)
     Q_PROPERTY(bool paused MEMBER m_paused NOTIFY stateChanged)
     Q_PROPERTY(bool buffering MEMBER m_buffering NOTIFY stateChanged)
+    // Sought, and LG has not yet said where the picture landed: until then `position` is the time asked
+    // for, and the picture is not moving. (The watch party holds its friends there: told "playing" at
+    // the target at once and the real place a second later, each seek played them a stretch twice.)
+    Q_PROPERTY(bool seeking MEMBER m_landing NOTIFY stateChanged)
     Q_PROPERTY(QString failure MEMBER m_failure NOTIFY stateChanged)
     Q_PROPERTY(double duration MEMBER m_duration NOTIFY stateChanged)
     Q_PROPERTY(double position MEMBER m_position NOTIFY positionChanged)
@@ -90,7 +94,7 @@ public:
     Q_INVOKABLE void load(const QString &uri, const QString &payload) {
         ensure();
         leave();
-        m_loaded = m_playing = m_paused = m_buffering = m_seeking = m_seekLanded = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
+        m_loaded = m_playing = m_paused = m_buffering = m_seeking = m_seekLanded = m_landing = false; m_failure.clear(); m_duration = m_position = 0; m_audioTrack = -1;
         m_tracks = QJsonArray(); m_seen.clear(); m_audioTracks.clear(); m_preferredAudio = -1;
         emit stateChanged(); emit positionChanged();
         command([u = uri.toStdString(), p = payload.toStdString()](Client *c) { c->loadAsync(u, "media", p); });
@@ -102,12 +106,13 @@ public:
     // the position moves to the target at once: LG goes on reporting the old time while it seeks, which
     // drew the bar back to where it was before it jumped forward
     Q_INVOKABLE void seek(double ms) {
-        m_position = ms; m_seekTo = ms; m_seeking = true; m_seekLanded = false; m_seekClock.restart(); emit positionChanged();
+        m_position = ms; m_seekTo = ms; m_seeking = true; m_seekLanded = false; m_landing = true; m_seekClock.restart();
+        emit positionChanged(); emit stateChanged();
         command([ms](Client *c) { c->seek((long long)ms); });
     }
     Q_INVOKABLE void selectAudio(int index) { command([index](Client *c) { std::string a("audio"); c->selectTrack(a, index); }); m_audioTrack = index; emit stateChanged(); }
     Q_INVOKABLE void mute(bool on) { command([on](Client *c) { c->setAudioMute(on); }); }
-    Q_INVOKABLE void unload() { leave(); m_playing = m_loaded = m_seeking = m_seekLanded = false; m_failure.clear(); emit stateChanged(); command([](Client *c) { c->unload(); }); }
+    Q_INVOKABLE void unload() { leave(); m_playing = m_loaded = m_seeking = m_seekLanded = m_landing = false; m_failure.clear(); emit stateChanged(); command([](Client *c) { c->unload(); }); }
     // "slot:count" for every slot that has fired, to find which one carries raw events.
     Q_INVOKABLE QString slotCounts() const {
         QStringList out;
@@ -128,8 +133,13 @@ public:
             const double t = v.value("currentTime").toDouble();
             // until LG says the seek is done (or 10 s pass), a time far from the target is the old one
             if (m_seeking && !m_seekLanded && qAbs(t - m_seekTo) > 3000 && m_seekClock.elapsed() < 10000) return;
+            // where a seek landed is the first time LG gives after saying the seek is done (or 10 s on):
+            // before that it gives the time asked for, while the picture goes to the keyframe before it
+            const bool landed = m_landing && (m_seekLanded || m_seekClock.elapsed() >= 10000);
             m_seeking = false; m_seekLanded = false;
-            m_position = t; emit positionChanged(); return;
+            m_position = t; emit positionChanged();
+            if (landed) { m_landing = false; emit stateChanged(); }
+            return;
         }
         if (kind == "seekDone") m_seekLanded = true;
         if (kind == "bufferRange") return;
@@ -222,7 +232,7 @@ private:
     QString m_failure;
     double m_duration = 0, m_position = 0, m_startFraction = 0, m_startAt = -1, m_seekTo = 0;
     bool m_waits = false;
-    bool m_seeking = false, m_seekLanded = false;
+    bool m_seeking = false, m_seekLanded = false, m_landing = false;
     QElapsedTimer m_seekClock;
     int m_audioTrack = -1;
     QStringList m_languages { "en" };

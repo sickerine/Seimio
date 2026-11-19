@@ -32,20 +32,36 @@ FocusScope {
     property string mediaLink: ""        // the stream's address, as the party is told of it
     property bool waiting: false
     property double toldAt: 0            // when the party first heard of this stream
-    // where it starts (ms): not known for a resume until the file has said how long it is
-    readonly property real opensAt: media.startAt >= 0 ? media.startAt : media.startFraction > 0 ? (media.duration > 0 ? media.startFraction * media.duration : -1) : 0
+    // where it starts (ms): not known for a resume until the file has said how long it is (one that
+    // has loaded without saying starts at its beginning, as the player has it)
+    readonly property real opensAt: media.startAt >= 0 ? media.startAt : media.startFraction > 0 ? (media.duration > 0 ? media.startFraction * media.duration : media.loaded ? 0 : -1) : 0
+    // this stream's own load has begun: until then the player still holds the one before (its length,
+    // its place), which is not this one's to tell
+    property bool begun: false
     // the player's time is the video's: LG says "playing" before the first frame and reports the start of
     // the file for a moment before a resume lands, and told of that the friends would load it twice
     property bool underway: false
+    // What the room is told, state by state (tools/tests/tst_wait.qml has a case for each):
+    //   nothing in hand, or a stream that failed            nothing plays (`stopped`)
+    //   loading, waiting for the room, or released and      held where it will start (`opensAt`)
+    //     not under way yet
+    //   playing                                             the player's time, moving
+    //   paused, or played to its end                        the player's time, held
+    //   buffering, or sought and not landed yet             the player's time (the place asked for), loading
+    // The place is the player's time from the moment it is the video's (`underway`: its first frames, or
+    // a place he sought to), and where it will start before that.
     function tell() {
         if (!party) return;
-        if (!mediaLink) { party.stopped(); return }
-        var moving = media.loaded && !waiting && underway;
-        if (!moving && opensAt < 0) return;
+        if (!mediaLink || media.failure) { party.stopped(); return }
+        if (!begun) return;
+        var at = underway ? media.position : opensAt;
+        if (at < 0) return;
+        var going = media.loaded && media.playing && !media.paused && !waiting && underway;
         if (!toldAt) toldAt = Date.now();
         party.playing({ media: mediaLink, title: item ? item.name || item.title || "" : "", episode: videoId, duration: media.duration,
-                        position: moving ? media.position : opensAt, paused: !moving || media.paused, buffering: moving && media.buffering });
+                        position: at, paused: !going, buffering: going && (media.buffering || media.seeking) });
     }
+    onSought: underway = true            // (a place he chose: the player's time is the video's from here, wherever it had got to)
     function release() {
         if (!waiting) return;
         waiting = false; media.waits = false;
@@ -59,7 +75,11 @@ FocusScope {
         if (toldAt && Date.now() - toldAt >= 1500) release(); else roomCheck.restart();
     }
     Timer { id: roomCheck; interval: 300; onTriggered: page.roomIn() }
-    Connections { target: page.party; onViewersChanged: page.roomIn() }
+    Connections {
+        target: page.party
+        onViewersChanged: page.roomIn()
+        onWaitsChanged: if (!page.party.waits) page.release()       // his switch turned off while it waits
+    }
     Connections {
         target: media
         onStateChanged: { page.tell(); page.roomIn() }
@@ -152,9 +172,8 @@ FocusScope {
     function start(url, s, at) {
         stream = s; pendingUrl = url;
         media.startAt = at && at.ms !== undefined ? at.ms : -1; media.startFraction = typeof at === "number" ? at : 0;
-        mediaLink = url; toldAt = 0; underway = false;
+        mediaLink = url; toldAt = 0; underway = false; begun = false;
         waiting = !!party && party.waits && party.viewers.length > 0; media.waits = waiting;
-        tell();
         if (media.windowId) load(); else { media.setEventSlot(48); media.exportWindow(window) }
     }
     function load() {
@@ -169,6 +188,7 @@ FocusScope {
         media.load(useTee ? tee.open(pendingUrl) : pendingUrl, JSON.stringify({ option: { appId: "com.seimio.tv", windowId: media.windowId } }));
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
+        begun = true; tell();
     }
     function stop() { unloadLater.stop(); startWatch.stop(); handoff = null; mediaLink = ""; waiting = false; media.waits = false; media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop(); tell() }
 

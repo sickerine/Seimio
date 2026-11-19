@@ -61,12 +61,14 @@ public:
         if (media != m_media) {                                         // another file: another session, named by when it began
             m_media = media; m_session = QString::number(at, 36); m_sequence = 0;
         } else {
-            const bool was = m_state.value("paused").toBool(), held = was || m_state.value("buffering").toBool();
-            // where the last word says it is by now: far from that, it was moved
+            const bool was = m_state.value("paused").toBool(), stuck = m_state.value("buffering").toBool(), held = was || stuck;
+            // where the last word says it is by now: far from that, it was moved. Coming out of a hold
+            // (a seek that has landed: on the keyframe before the place asked for, as a rule) any other
+            // place is one the followers have to go to, not drift to.
             const double expected = m_state.value("positionSeconds").toDouble() + (held ? 0 : (at - m_sampledAt) / 1000.0);
             if (was != paused) event = paused ? "pause" : "play";
-            else if (qAbs(position - expected) > 1.5) event = "seeked";
-            else if (buffering != m_state.value("buffering").toBool()) event = buffering ? "waiting" : "playing";
+            else if (qAbs(position - expected) > (stuck && !buffering ? 0.1 : 1.5)) event = "seeked";
+            else if (buffering != stuck) event = buffering ? "waiting" : "playing";
         }
         m_state = QJsonObject { { "sessionId", m_session }, { "positionSeconds", position }, { "paused", paused }, { "buffering", buffering },
                                 { "playbackRate", 1 }, { "mediaUrl", media }, { "title", state.value("title").toString() },

@@ -90,5 +90,73 @@ Item {
             screen.stop();
             compare(last(), null);
         }
+        // the screen's player (the Mac's stand-in), to make it do what the TV's does by itself
+        function player() { for (var i = 0; i < screen.resources.length; i++) if (screen.resources[i].windowId !== undefined && screen.resources[i].land) return screen.resources[i]; return null }
+        function seekTo(ms) { screen.seekTarget = ms; screen.seekNow() }
+        function told(what) { var s = last(); return s === null ? "nothing plays" : Math.round(s.position / 1000) + " s " + (s.paused ? "held" : s.buffering ? "loading" : "moving") }
+        // What the room is told in each state the player can be in. The friends' players go by it: told
+        // "moving" at a place the picture has not reached, they run ahead of it and are pulled back, which
+        // is the same stretch played twice ("it was looping for him as I kept seeking").
+        function test_whatTheRoomIsToldStateByState() {
+            var media = player();
+            begin([]);
+            compare(told(), "711 s moving", "playing, from where it resumed");
+            screen.togglePause();
+            compare(told(), "711 s held", "paused");
+            screen.togglePause();
+            compare(told(), "711 s moving", "and on");
+            seekTo(900000);
+            compare(told(), "900 s loading", "sought: at the place asked for, and not moving yet");
+            media.land(897500);
+            compare(told(), "898 s moving", "landed, on the keyframe before it: from there");
+            seekTo(1000000); seekTo(1100000);
+            compare(told(), "1100 s loading", "sought again before the first had landed: still loading, at the newest");
+            media.land(1098000);
+            compare(told(), "1098 s moving");
+            media.stall(true);
+            compare(told(), "1098 s loading", "the stream ran dry");
+            media.stall(false);
+            compare(told(), "1098 s moving");
+            screen.togglePause(); seekTo(300000);
+            compare(told(), "300 s held", "sought while paused: held at the place asked for");
+            media.land(298000);
+            compare(told(), "298 s held", "and at where it landed");
+            screen.togglePause();
+            compare(told(), "298 s moving");
+            media.end();
+            compare(told(), "298 s held", "played to its end: not moving any more");
+            media.fail("gone");
+            compare(told(), "nothing plays", "a stream that can't be played is not in the room");
+        }
+        // sought while it waits for the room: the room is told the place he chose, and it starts there
+        function test_soughtWhileWaiting() {
+            begin([{ id: 1, loading: true }]);
+            wait(50);
+            compare(told(), "711 s held", "waiting, at where it will start");
+            seekTo(60000); player().land(58000);
+            compare(told(), "58 s held", "and at the place he sought to instead");
+            keyClick(Qt.Key_Return);
+            verify(screen.playing && !screen.waiting);
+        }
+        function test_hisSwitchTurnedOffWhileItWaitsStartsIt() {
+            begin([{ id: 1, loading: true }]);
+            wait(50);
+            verify(screen.waiting && !screen.playing);
+            party.waits = false;
+            verify(screen.playing && !screen.waiting);
+        }
+        // another stream in the same player: the room hears that the first is over, then of the second
+        // from its own start, with nothing of the first's place in it
+        function test_anotherStreamStartsOver() {
+            begin([]);
+            seekTo(1200000); player().land(1200000);
+            compare(told(), "1200 s moving");
+            party.told = [];
+            screen.prepare({ name: "Another", id: "tt2" }, "");
+            compare(last(), null, "the first is over");
+            screen.start("https://cdn.example/b.mkv", { url: "https://cdn.example/b.mkv" }, 0);
+            compare(last().media, "https://cdn.example/b.mkv");
+            verify(party.told.every(function (s) { return s === null || s.media !== "https://cdn.example/b.mkv" || s.position < 1000000 }), "never at the first one's place");
+        }
     }
 }

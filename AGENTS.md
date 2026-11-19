@@ -460,10 +460,26 @@ it there is no party, and the Mac's previews reach nothing.
   says "playing" before the first frame and reports the start of the file before a resume lands.
   Nothing reads `media.position` as the video's place before that (Skip Intro stood over a video
   held at 46 minutes).
+- The friends' players go by what they are told, so it is never "moving" at a place the picture has
+  not reached: told so, they run ahead and are pulled back, the same stretch played twice. What is
+  told in each state is listed at `PlayerScreen.tell`, with a case each in `tst_wait.qml`: held
+  where it will start while it loads or waits; the player's time, moving, once the video is under
+  way; held when paused or played out; loading when the stream runs dry or a seek has not landed;
+  nothing when the stream failed or the player is left. A seek is the case that was missed first:
+  LG gives the time asked for at once and puts the picture on the keyframe before it, up to 4 s
+  back, a second or two later. `NativePlayer.seeking` is true until LG has said where it landed,
+  the room is held at the place asked for meanwhile and then sent to the landing (`seeked`). Sent
+  "playing" at the target at once, a friend saw every seek loop ("it was looping for him as I
+  kept seeking"). In the relay's folder `scripts/pw-seeks.mjs` shows what a real browser makes of
+  a TV's seeks (2.9 s of picture twice over eight seeks the old way, none now).
+- Before the relay or the watch page goes live, run `npm test` and, with a build, `scripts/pw-e2e.mjs`
+  there: a page that threw as it started was live for forty minutes on 2026-11-19 because only the
+  relay's own tests had been run.
 - With someone in the room and his switch on (`Party.waits`, "Wait for the room" in the account's
   menu, kept on the TV), a video that has loaded stays where it starts until everyone there can
   play it (`PlayerScreen.waiting`, `NativePlayer.waits`), and the loading screen says "Waiting for
-  the room". OK starts it whoever is still loading; so does the room emptying. A room is not
+  the room". OK starts it whoever is still loading; so does the room emptying, or his switch
+  turned off. A room is not
   believed ready for the first second and a half: a friend's player says "loading" a moment after
   it hears what plays. A follower that has never said either way (`ready: null`, the VLC one) is
   drawn and not waited for.
