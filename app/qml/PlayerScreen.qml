@@ -42,6 +42,8 @@ FocusScope {
     readonly property var seen: media.seen
     function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) + " now " + (segmentNow ? segmentNow.kind : "-") + " next " + (upNextMode || "-") + ":" + Math.round(upNextElapsed * 100)
         + " binge " + (stream ? stream.bingeGroup : "") + " favs " + JSON.stringify(tracks.favorites("sub")) + " fav-menu " + favoriteMenu + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
+        // where OK would land: the button under the cursor, and in a list its level, row and that row's track ("other", "off")
+        + " button " + buttons.currentIndex + " menu " + menuLevel + ":" + menu.currentIndex + ":" + (menuTracks[menu.currentIndex] ? menuTracks[menu.currentIndex].id || menuTracks[menu.currentIndex] : "off")
         + " audio " + trackList.filter(function (t) { return t.type === "audio" }).map(function (t) { return t.id + ":" + t.lang + (t.playable ? "" : "x") }).join(",")
         + " list " + trackList.filter(function (t) { return t.type === "sub" }).map(function (t) { return t.id + ":" + t.lang + (t.default ? "d" : "") + (t.forced ? "f" : "") }).join(",") + " choice " + JSON.stringify(choice) }
     width: Theme.screenWidth; height: Theme.screenHeight

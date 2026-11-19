@@ -135,6 +135,7 @@ private:
         r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         r.setPriority(priority > 0 ? QNetworkRequest::HighPriority : priority < 0 ? QNetworkRequest::LowPriority : QNetworkRequest::NormalPriority);
         if (!body.isEmpty()) { r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); r.setRawHeader("Accept", "application/json"); }
+        for (const auto &h : headers) r.setRawHeader(h.first, h.second);
         QNetworkReply *reply = body.isEmpty() ? m_net->get(r) : m_net->post(r, body);
         // given up on after 20 s with nothing arriving: a slow answer that keeps coming is let come (a
         // backdrop from a host that serves 25 KB/s takes longer than that whole)
@@ -165,4 +166,5 @@ private:
     bool m_recorded;
 public:
     int idleMs = 20000;                         // how long a transfer may bring nothing before it is given up on
+    QVector<QPair<QByteArray, QByteArray>> headers;         // sent with every request of this Net's (what its services ask for)
 };

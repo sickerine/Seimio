@@ -220,6 +220,8 @@ request" counter, cache map, or retry loop:
   a title's meta ten minutes, a show's fetched pieces ten, Home's rows and a season's list six hours.
 - A screen's side watches a query (`Watch`, watch.h) and hears only of the key it watches now: Home,
   the season and the search in `Catalog`. Asking again is `invalidate`, and the newest asking answers.
+  On the cache's own thread the holder watches with `query::Observer` itself: a video's skip times
+  (skip.h) and its addon subtitles (subtitle_layer.h, a cache of the subtitle thread's own).
 - The lab report's `queries` lists what the cache holds and each fetch that ended with how long it
   took; `{"queryFault": ["search", 3000, false]}` makes the queries with that in their key slow, or
   with `true` failing, to see what a screen does then.

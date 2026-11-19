@@ -13,25 +13,41 @@
 // other cuts of an episode often enough that their numbers alone put the button in the wrong place.
 // Without chapters, sources must agree on a boundary within 5 s, and when two disagree only the stretch
 // both cover is skipped; one source's own entries that disagree are no evidence, and give nothing.
-// resolve() ends in `resolved({ intro, outro })`, each { from, to } in ms or null; results are kept for
-// the session.
+// resolve() ends in `resolved({ intro, outro })`, each { from, to } in ms or null. A video's answer is a
+// query (query.h), kept a day: asked for again it answers at once, and only the video asked for last
+// answers.
 #include <QtQml>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QUrlQuery>
-#include <QTimer>
+#include "net.h"
 
 class SkipTimes : public QObject {
     Q_OBJECT
 public:
+    explicit SkipTimes(QObject *parent = nullptr) : QObject(parent) {
+        // Kitsu answers 406 to plain JSON: it serves JSON:API's own type
+        m_net.headers = { { "Accept", "application/vnd.api+json, application/json" } };
+        m_net.idleMs = 12000;
+    }
     // `videoId` is "tt…:season:episode" or "kitsu:N:episode"; `chapters` [{ start, end, title }] in ms;
     // `imdbEpisode` the same episode as "tt…:season:episode" when `videoId` is a Kitsu one, or ""
     Q_INVOKABLE void resolve(const QString &videoId, double durationMs, const QVariantList &chapters, const QString &imdbEpisode = QString()) {
-        const int ticket = ++m_ticket;
-        const QString key = videoId + "|" + imdbEpisode + "|" + QString::number(qRound(durationMs / 1000)) + "|" + QString::number(chapters.size());
-        if (m_cache.contains(key)) { emit resolved(m_cache.value(key)); return; }
+        query::Options kept; kept.freshMs = kept.keepMs = 24 * 60 * 60 * 1000; kept.retries = 0;
+        m_result.watch({ "skip", videoId, imdbEpisode, QString::number(qRound(durationMs / 1000)), QString::number(chapters.size()) },
+                       [=](query::Call<QVariantMap> call) { gather(videoId, durationMs, chapters, imdbEpisode, call); }, kept);
+        m_result.retell();                              // (each asking is answered, the same video asked for again too)
+    }
+    // a new video: an answer still on its way is for the last one
+    Q_INVOKABLE void cancel() { m_result.stop(); }
+signals:
+    void resolved(const QVariantMap &segments);
+private:
+    struct Item { QString kind; double from, to; QString source; double episodeLength; };
+    using Spans = QVector<QPair<double, double>>;              // chapters as { from, to }, in order
+    struct State { QVector<Item> items; Spans spans; double duration = 0; int pending = 0; query::Call<QVariantMap> call; };
+    // the fetch of a video's query: the chapters, and each source that knows the episode
+    void gather(const QString &videoId, double durationMs, const QVariantList &chapters, const QString &imdbEpisode, query::Call<QVariantMap> call) {
         auto state = std::make_shared<State>();
-        state->duration = durationMs; state->key = key; state->ticket = ticket;
+        state->duration = durationMs; state->call = call;
         state->items = fromChapters(chapters, durationMs);
         state->spans = spansOf(sorted(chapters), durationMs);
         static const QRegularExpression imdb("^(tt\\d+):(\\d+):(\\d+)$"), kitsu("^kitsu:(\\d+):(\\d+)$");
@@ -61,7 +77,7 @@ public:
         if (mk.hasMatch()) {
             const QString episode = mk.captured(2);
             state->pending++;
-            fetch(QUrl("https://kitsu.io/api/edge/anime/" + mk.captured(1) + "/mappings?filter[externalSite]=myanimelist/anime"), ticket,
+            fetch("https://kitsu.io/api/edge/anime/" + mk.captured(1) + "/mappings?filter[externalSite]=myanimelist/anime",
                   [this, state, episode](const QJsonObject &o) {
                 const QString mal = o.value("data").toArray().first().toObject().value("attributes").toObject().value("externalId").toString();
                 if (!mal.isEmpty()) {
@@ -83,14 +99,6 @@ public:
         }
         if (!state->pending) done(state);
     }
-    // a new video: an answer still on its way is for the last one
-    Q_INVOKABLE void cancel() { ++m_ticket; }
-signals:
-    void resolved(const QVariantMap &segments);
-private:
-    struct Item { QString kind; double from, to; QString source; double episodeLength; };
-    using Spans = QVector<QPair<double, double>>;              // chapters as { from, to }, in order
-    struct State { QVector<Item> items; Spans spans; double duration = 0; int pending = 0; int ticket = 0; QString key; };
 public:
     // tests: what reconcile() makes of candidates [{ kind, from, to, source, episodeLength }] (ms) for a file
     // of `durationMs` with `chapters` [{ start, end, title }]
@@ -146,27 +154,18 @@ private:
     }
     template <typename F> void get(const std::shared_ptr<State> &state, const QString &url, F parse) {
         state->pending++;
-        fetch(QUrl(url), state->ticket, [this, state, parse](const QJsonObject &o) { parse(o, state->items); done(state); });
+        fetch(url, [this, state, parse](const QJsonObject &o) { parse(o, state->items); done(state); });
     }
-    template <typename F> void fetch(const QUrl &url, int ticket, F onDone) {
-        QNetworkRequest r(url);
-        r.setHeader(QNetworkRequest::UserAgentHeader, "seimio/0.1");
-        // Kitsu answers 406 to plain JSON: it serves JSON:API's own type
-        r.setRawHeader("Accept", "application/vnd.api+json, application/json");
-        r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-        QNetworkReply *reply = m_net.get(r);
-        QTimer::singleShot(12000, reply, &QNetworkReply::abort);
-        connect(reply, &QNetworkReply::finished, this, [this, reply, ticket, onDone] {
-            reply->deleteLater();
-            if (ticket != m_ticket) return;
-            onDone(reply->error() == QNetworkReply::NoError ? QJsonDocument::fromJson(reply->readAll()).object() : QJsonObject());
+    // one source's answer (an empty object when it couldn't be had: a source the less, asked once)
+    template <typename F> void fetch(const QString &url, F onDone) {
+        query::Options once; once.keepMs = 0; once.retries = 0;
+        m_net.read(url, QByteArray(), once, [onDone](std::shared_ptr<const Answer> a, const query::Failure &) {
+            onDone(a && a->status >= 200 && a->status < 300 ? QJsonDocument::fromJson(a->body).object() : QJsonObject());
         });
     }
     void done(const std::shared_ptr<State> &state) {
-        if (--state->pending > 0 || state->ticket != m_ticket) return;
-        const QVariantMap result = reconcile(state->items, state->duration, state->spans);
-        m_cache.insert(state->key, result);
-        emit resolved(result);
+        if (--state->pending > 0) return;
+        state->call.ok(reconcile(state->items, state->duration, state->spans));
     }
 
     // skip-timestamps.js: plausible(), strongestCluster(), sharedSegment(), reconcile()
@@ -267,7 +266,7 @@ private:
         return out;
     }
 
-    QNetworkAccessManager m_net;
-    QHash<QString, QVariantMap> m_cache;
-    int m_ticket = 0;
+    query::Queries m_queries { this };
+    Net m_net { &m_queries, this };
+    query::Observer<QVariantMap> m_result { &m_queries, [this](const query::Result<QVariantMap> &r) { if (r.data && !r.fetching) emit resolved(*r.data); } };
 };
