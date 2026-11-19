@@ -33,7 +33,7 @@ def main():
             continue
         t0 = t0 or t
         if rest.startswith("key "): print(f"{t - t0:8.0f}  {KEYS.get(rest.split()[-1], rest)}")
-        elif rest.startswith(("gui stall", "gui waited", "gui tick", "late frame")) and rest.split()[2].replace(".", "").isdigit() and float(rest.split()[2]) >= least: print(f"{t - t0:8.0f}      {rest}   [{phase}]")
+        elif rest.startswith(("gui stall", "gui waited", "gui tick", "late frame", "swap held")) and rest.split()[2].replace(".", "").isdigit() and float(rest.split()[2]) >= least: print(f"{t - t0:8.0f}      {rest}   [{phase}]")
 
 
 if __name__ == "__main__":

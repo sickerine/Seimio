@@ -184,11 +184,29 @@ public:
         // alone (an animation running there), when it starts to draw
         connect(w, &QQuickWindow::beforeSynchronizing, this, [this] { m_began = monoMs(); }, Qt::DirectConnection);
         connect(w, &QQuickWindow::beforeRendering, this, [this] { if (m_began < m_swapped) m_began = monoMs(); }, Qt::DirectConnection);
+        connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);      // drawn: the swap is next
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
             double now = monoMs();
             timespec t; clock_gettime(m_guiClock, &t);
             const double guiCpu = t.tv_sec * 1e3 + t.tv_nsec / 1e6;
             QMutexLocker l(&m_mutex);
+            // The TV's compositor acknowledges each frame, and Qt's Wayland client waits for that before it
+            // swaps the next, 100 ms at most (libQt5WaylandClient 5.12.4 on the TV: waitForFrameSync, "Didn't
+            // receive frame callback in time"). Now and then no acknowledgement comes and the swap takes the
+            // whole wait. In three days of timing logs (949,392 frames Qt timed, 2026-11-16 to 19) 85 swaps
+            // took 60 ms or more: 84 of them 100 to 104 ms, one in the 90s, none between 60 and 89. One frame
+            // in about 11,000, at rest as often as on the move, in every build of those days; and all 27
+            // frames of 95 ms and more logged as late were such swaps, with 1 to 23 ms of sync and render
+            // before them. That wait is the compositor's, not a frame the app drew late: it is counted apart
+            // (`held`, and logged), and the frame is judged by the rest of its gap, which is the app's.
+            const double held = m_rendered > m_swapped && now - m_rendered >= 95 ? now - m_rendered : 0;
+            if (held > 0) { m_holds[m_phase].append(held); labLog(QString("swap held %1 ms by the compositor (the frame took %2 before it)").arg(held, 0, 'f', 1).arg(m_rendered - m_began, 0, 'f', 0)); }
+            const double own = now - m_began - held;        // the frame's own time from its hand-over to the screen
+            // What brings a held swap on is a heavy frame of ours: in the same logs, after a frame with
+            // under 12 ms of sync and render a held swap followed within four frames 0.02% of the time, after
+            // one of 12 to 17 ms 1.5%, of 17 to 25 ms 3 to 4%, above that 5%. So the frames with 12 ms and
+            // more of drawing in them are counted too (`heavy`): they are the ones to have fewer of.
+            if (m_rendered > m_swapped && m_rendered - m_began >= 12) m_heavy[m_phase]++;
             // Qt draws only when something changes. A frame is late when it breaks a run of frames (the one
             // before it came on time); one that follows a pause (nothing animating, a subtitle waiting for its
             // next line, a key press after a moment) only shows when something next changed. A pause can be
@@ -196,7 +214,7 @@ public:
             // what counts is the part of the gap nothing accounts for: not the GUI thread's work in it, nor
             // the frame's own time from its hand-over to the screen. Over 30 ms of that, nobody was asking
             // for a frame (a frame waits up to one refresh for its turn anyway).
-            const double gap = now - m_last, idle = gap - (guiCpu - m_guiCpuAtSwap) - (now - m_began);
+            const double gap = now - m_last - held, idle = gap - (guiCpu - m_guiCpuAtSwap) - own;
             // A stamp a few ms late is not a frame shown late. Of the gaps of 20 to 22 ms measured over two
             // tours, more than half were followed by one of 10 to 14: the two frames took two refreshes
             // between them, each shown in its own. So a gap up to 25 ms waits for the next frame: made up
@@ -209,7 +227,7 @@ public:
             }
             if (m_last > 0 && m_lastGap > 0 && m_lastGap <= 20 && gap < 150 && idle <= 30) {
                 // with why: the frame's own time from its hand-over to the screen, and the GUI thread's work in the gap
-                const QString line = gap > 20 ? QString("late frame %1 ms (frame %2, gui %3)").arg(gap, 0, 'f', 1).arg(now - m_began, 0, 'f', 0).arg(guiCpu - m_guiCpuAtSwap, 0, 'f', 0) : QString();
+                const QString line = gap > 20 ? QString("late frame %1 ms (frame %2, gui %3)").arg(gap, 0, 'f', 1).arg(own, 0, 'f', 0).arg(guiCpu - m_guiCpuAtSwap, 0, 'f', 0) : QString();
                 if (gap > 20 && gap <= 25) { m_held = gap; m_heldPhase = m_phase; m_heldLine = line; }
                 else { m_gaps[m_phase].append(gap); if (gap > 20) labLog(line); }
             }
@@ -235,16 +253,20 @@ public:
         // a gap still waiting for its next frame, with none coming: nothing made up for it
         if (m_held > 0 && monoMs() - m_last > 35) { m_gaps[m_heldPhase].append(m_held); labLog(m_heldLine); m_held = 0; }
         for (auto it = m_stalls.begin(); it != m_stalls.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
+        for (auto it = m_holds.begin(); it != m_holds.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
+        for (auto it = m_heavy.begin(); it != m_heavy.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
         for (auto it = m_gaps.begin(); it != m_gaps.end(); ++it) {
             QVector<double> g = it.value(); std::sort(g.begin(), g.end());
             int l20 = 0, l30 = 0, s12 = 0;
             for (double x : g) { l20 += x > 20; l30 += x > 30; s12 += x < 12; }
-            const QVector<double> st = m_stalls.value(it.key());
+            const QVector<double> st = m_stalls.value(it.key()), held = m_holds.value(it.key());
             out[it.key()] = QVariantMap{ {"frames", g.size()}, {"median", g.isEmpty() ? 0 : g[g.size() / 2]}, {"max", g.isEmpty() ? 0 : g.last()},
                                          {"late20", l20}, {"late30", l30}, {"short12", s12},
-                                         {"stalls", st.size()}, {"stallMax", st.isEmpty() ? 0 : *std::max_element(st.begin(), st.end())} };
+                                         {"stalls", st.size()}, {"stallMax", st.isEmpty() ? 0 : *std::max_element(st.begin(), st.end())},
+                                         {"held", held.size()}, {"heldMax", held.isEmpty() ? 0 : *std::max_element(held.begin(), held.end())},
+                                         {"heavy", m_heavy.value(it.key())} };
         }
-        m_gaps.clear(); m_stalls.clear();
+        m_gaps.clear(); m_stalls.clear(); m_holds.clear(); m_heavy.clear();
         return out;
     }
 private:
@@ -252,7 +274,9 @@ private:
     QString m_phase = "idle";
     double m_last = 0, m_lastGap = 0;
     double m_lastTick = 0, m_lastTickGap = 0; double m_lastTickCpu = 0;
-    QMap<QString, QVector<double>> m_gaps, m_stalls;
+    QMap<QString, QVector<double>> m_gaps, m_stalls, m_holds;       // (m_holds: swaps the compositor held, by phase)
+    QMap<QString, int> m_heavy;             // frames with 12 ms and more of sync and render in them, by phase
+    double m_rendered = 0;                  // when the frame in hand was drawn, before its swap (render thread)
     QTimer m_beat;
     double m_lastBeat = 0; double m_lastCpu = 0;
     std::atomic<double> m_began { 0 }, m_swapped { 0 };     // when the frame in hand began, and when the last one was shown

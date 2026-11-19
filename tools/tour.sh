@@ -71,10 +71,13 @@ python3 - .lab/reports $S $route <<'PY'
 # tee and the subtitles off too; our handlers took under 5 ms and no JS collection ran). Its budget
 # is that measurement: 40 over 20 ms, frames up to 150 ms; a regression shows above it. The play route
 # seeks with the transport over the video too, so it has the same budget.
+# A swap the TV's compositor held is not in any of these: Qt waits up to 100 ms for the compositor to
+# acknowledge the frame before, and for one frame in about 11,000 no acknowledgement comes
+# (FrameStats in native/src/probes.h has the measurements). It is printed on its own line, "the TV held".
 import json, os, sys, collections
 d, s, route = sys.argv[1], sys.argv[2], sys.argv[3]
 budget20, budgetMax = (40, 150) if route in ("player", "play") else (8, 60)
-agg = collections.defaultdict(lambda: [0, 0, 0, 0, 0, 0])
+agg = collections.defaultdict(lambda: [0, 0, 0, 0, 0, 0, 0, 0, 0])
 errors = []
 for f in sorted(os.listdir(d)):
     if 'design' not in f or os.path.getmtime(os.path.join(d, f)) < float(s): continue   # this run's reports only
@@ -84,11 +87,15 @@ for f in sorted(os.listdir(d)):
         if k.startswith('rt '):
             a = agg[k]; a[0] += v['frames']; a[1] += v['late20']; a[2] += v['late30']; a[3] = max(a[3], v['max'])
             a[4] += v.get('stalls', 0); a[5] = max(a[5], v.get('stallMax', 0))
-tot = [0, 0, 0]
+            a[6] += v.get('held', 0); a[7] = max(a[7], v.get('heldMax', 0)); a[8] += v.get('heavy', 0)
+tot = [0, 0, 0, 0]
 for k, a in sorted(agg.items()):
-    print(f"  {k[3:]:18s} frames {a[0]:4d}  late>20ms {a[1]:3d}  late>30ms {a[2]:3d}  worst {a[3]:4.0f} ms  gui stalls {a[4]:2d} (worst {a[5]:3.0f} ms)")
-    tot[0] += a[0]; tot[1] += a[1]; tot[2] += a[2]
-print(f"  {'total':18s} frames {tot[0]:4d}  late>20ms {tot[1]:3d}  late>30ms {tot[2]:3d}")
+    print(f"  {k[3:]:18s} frames {a[0]:4d}  late>20ms {a[1]:3d}  late>30ms {a[2]:3d}  worst {a[3]:4.0f} ms  gui stalls {a[4]:2d} (worst {a[5]:3.0f} ms)  heavy {a[8]:3d}")
+    tot[0] += a[0]; tot[1] += a[1]; tot[2] += a[2]; tot[3] += a[8]
+# (heavy: frames with 12 ms and more of sync and render in them. No budget yet: they are what a held swap follows)
+print(f"  {'total':18s} frames {tot[0]:4d}  late>20ms {tot[1]:3d}  late>30ms {tot[2]:3d}  heavy {tot[3]:3d}")
+held = [(k[3:], a[6], a[7]) for k, a in sorted(agg.items()) if a[6]]
+if held: print("  the TV held " + ", ".join(f"{n} swap{'s' if n > 1 else ''} in {k} ({w:.0f} ms)" for k, n, w in held) + ": its compositor's, not counted above")
 busy = [(k[3:], a) for k, a in agg.items() if k != 'rt idle']
 over = []
 if not tot[0]: over.append("no frame reports (is tools/lab-server.py running?)")
