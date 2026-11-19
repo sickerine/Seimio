@@ -81,7 +81,9 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   frames as it is): rows arriving two or three frames apart instead of one changed nothing (8 to 10);
   the frost kept up for the grid tabs' filter bars is about half of it (3 to 4 without it), and it is
   its following the backdrop twenty times a second that costs, not its being switched on (kept up on
-  every tab it was worse, 9 to 12). The next step there is how those bars follow a crossfade.
+  every tab it was worse, 9 to 12). Half of that following was the bars' own captures of the frost,
+  which are gone (a glass over a frost reads its blur, below); what is left is the frost's five
+  passes at each refresh and a screen's own arrival.
 
 ## Performance rules
 
@@ -136,6 +138,9 @@ Each rule comes from a measured stall on the C5.
   and the shade, App.qml), not the scene. On the scene, every frame drew the screens twice, and a tab
   switch, with one screen going and another coming, had 14 to 18 frames over 12 ms of drawing in
   Home's tour (3 to 8 on `sky`; the previews are pixel for pixel the same).
+  And a glass over a frost (`preblurred`) captures nothing: it reads the frost's blur (`Frost.blurred`)
+  where it lies. Capturing the frost for itself was a pass a panel at each of the frost's refreshes,
+  five on the Anime tab on top of the frost's five (16 passes a frame through a crossfade, 6 at rest).
 - A full-screen texture nobody sees is not free. `Backdrop` lets go of the picture that faded out: its
   shader samples both, and the second 1080p texture cost 2 to 3.5 ms of every frame.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.
