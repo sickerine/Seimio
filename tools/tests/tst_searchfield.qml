@@ -15,16 +15,32 @@ TestCase {
         focus: !typing
         Item { id: card; focus: true }
     }
-    QtObject { id: keys; property bool visible: false; function show() { visible = true } }       // the TV's keyboard
+    QtObject { id: keys; property bool visible: false; function show() { visible = true } function hide() { visible = false } function commit() {} }       // the TV's keyboard
     SearchField { id: field; focus: typing; keyboard: keys }
     SignalSpy { id: dismissed; target: field; signalName: "dismissed" }
+    // what the field's owner sees as it is told of an Enter
+    property var told: []
+    Connections { target: field; onAccepted: told = told.concat([(keys.visible ? "keyboard up" : "keyboard away") + ", '" + field.text + "'"]) }
+    // Enter on the keyboard makes the search of what is typed and puts the keyboard away. The field does
+    // both itself, the keyboard first: left to the text, Qt put the keyboard away and only then said
+    // `accepted`, so on the TV the keyboard going was taken for Back and the bar was cleared the moment
+    // before its search was made ("all it does is clear the query").
+    function test_enterSearchesWhatIsTyped() {
+        typing = true; wait(0);
+        keys.visible = true; field.text = "dark"; told = []; dismissed.clear();
+        keyClick(Qt.Key_Return);
+        compare(told.join(" | "), "keyboard away, 'dark'", "the keyboard away first, then the search, of what was typed");
+        compare(dismissed.count, 0, "and no Back");
+        compare(field.text, "dark");
+    }
     // Back with the keyboard up closes the keyboard, and the field takes a keyboard that went without an
     // Enter as that Back. After an Enter, OK brought the keyboard back and the Back that closed it then
     // was still taken for the Enter: the query stayed.
     function test_backAfterTheKeyboardCameBack() {
         typing = true; wait(0);
-        keys.visible = true; field.text = "demon";
-        keyClick(Qt.Key_Return); keys.visible = false;          // Enter, and the keyboard goes
+        keys.visible = true; field.text = "demon"; dismissed.clear();
+        keyClick(Qt.Key_Return);                                // Enter, and the keyboard goes
+        verify(!keys.visible);
         compare(dismissed.count, 0, "Enter closing the keyboard is no Back");
         keyClick(Qt.Key_Return);                                // OK with the keyboard away
         verify(keys.visible, "brings it back");

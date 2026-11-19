@@ -57,6 +57,9 @@ Item {
             if (Date.now() - probe.captureStart >= times[probe.captureIndex]) { probe.capture("/media/developer/temp/cap" + times[probe.captureIndex] + ".png"); probe.captureIndex++ }
         }
     }
+    // { "captureEvery": ms }: the screen as it is now, again and again, in /media/developer/temp/live.png: to see
+    // what the app does not draw (the TV's keyboard, a system dialog) before sending it a key
+    Timer { running: !!probe.variant.captureEvery; interval: probe.variant.captureEvery || 1000; repeat: true; onTriggered: probe.capture("/media/developer/temp/live.png") }
     Timer { running: !!probe.variant.autopop; interval: 2500; repeat: true; onTriggered: probe.autopop() }
     Timer { running: !!probe.variant.openMenu; interval: 2000; onTriggered: probe.openMenu() }
     Timer { running: !!probe.variant.openStreams; interval: probe.variant.openStreams || 1; onTriggered: probe.openStreams() }

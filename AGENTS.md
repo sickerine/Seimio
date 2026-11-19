@@ -528,6 +528,15 @@ The Mac runs Qt 5.15, so code that works there can fail on the TV. Use `onFoo:` 
 `Connections` (the function syntax is 5.15), and check property names against FINAL ones (`left`,
 `right`, `bottom` on Item) and reserved GLSL words (`half`).
 
+The TV's keyboard is LG's own, drawn by the system over the app. A `TextInput` given its Enter puts
+the keyboard away first and says `accepted` after, in the one key press, so nothing may read "the
+keyboard went" as Back before the Enter has been counted: `SearchField` takes the key itself and
+does the three in its own order. (It cleared the bar on every Enter: "all it does is clear the
+query".) To see that keyboard and press its keys from the Mac, launch with `{"captureEvery": 1200}`
+and read `/media/developer/temp/live.png` over SSH between presses: the remote's arrows and OK go
+to the keyboard while it is up. `tools/tvremote.mjs type` and `enter` need a pairing with the text
+permission, which the saved one does not have (401).
+
 The app runs under webOS's `qml-runner`, which acts on the root window of `main.qml`:
 - That root is the app's own window. Launched again while the app runs (picked in the launcher with
   the app among the recent ones), qml-runner brings its root back. With a hidden window for a root it
