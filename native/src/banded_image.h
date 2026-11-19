@@ -202,8 +202,8 @@ private:
         // A frame more, for the next band, asked for through the GUI thread: asked for from here, the
         // render thread drew that frame by itself before the GUI thread had handed its own over, and what
         // the GUI thread animates (the row sliding as the backdrop changes) stood still for it. On the TV,
-        // three tours each: 11 to 18 such frames a Home tour and 10 to 12 a browse tour, against 2 to 6
-        // (FrameStats' `missed`, probes.h).
+        // 15 such frames in a Home tour and 18 in a browse tour, against none (FrameStats' `missed`,
+        // probes.h).
         if (m_row < image.height()) { QMetaObject::invokeMethod(window, "update", Qt::QueuedConnection); return; }
         QSGTexture *whole = window->createTextureFromId(m_id, image.size(), QQuickWindow::TextureOwnsGLTexture);
         whole->setFiltering(QSGTexture::Linear);

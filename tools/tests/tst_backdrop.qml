@@ -5,6 +5,7 @@
 // the backdrop as drawn would be, after a picture has changed too (a blur left at the picture before,
 // or the two pictures' blurs the wrong way round, is the frost showing another title's colours).
 import QtQuick 2.12
+import QtQuick.Window 2.12
 import QtTest 1.2
 import Seimio.UI 1.0
 
@@ -38,12 +39,23 @@ Item {
             tryVerify(function () { return hero.shown === second && !hero.fading }, 5000);
             verify(!hero.settling, "and it is over with it");
         }
+        // An item's pixels. macOS doesn't draw a window that is covered, and a grab then comes back empty:
+        // the window is brought forward and asked again, and with none in two seconds there is nothing to
+        // compare, which is a failure (two empty pictures are alike everywhere).
+        function shot(item) {
+            for (var i = 0; i < 20; i++) {
+                var g = grabImage(item);
+                if (g.width > 0 && g.height > 0) return g;
+                hero.Window.window.raise(); wait(100);
+            }
+            fail("the window isn't being drawn (covered, or the display off): no picture of it to compare");
+        }
         // the two frosts at fifteen places: the furthest apart they are, in levels of 255
         function apart() {
             drawn.refresh(); wait(120);
-            var a = grabImage(kept), b = grabImage(drawn), worst = 0;
+            var a = shot(kept), b = shot(drawn), worst = 0;
             for (var x = 1; x <= 5; x++) for (var y = 1; y <= 3; y++) {
-                var px = Math.round(x * hero.width / 6), py = Math.round(y * hero.height / 4);
+                var px = Math.round(x * a.width / 6), py = Math.round(y * a.height / 4);
                 worst = Math.max(worst, Math.abs(a.red(px, py) - b.red(px, py)), Math.abs(a.green(px, py) - b.green(px, py)), Math.abs(a.blue(px, py) - b.blue(px, py)));
             }
             return worst;
@@ -52,12 +64,13 @@ Item {
             Theme.still = true;                                 // the drift held, so both blur the same moment
             hero.target = first;
             tryVerify(function () { return hero.shown === first && !hero.fading }, 5000);
-            var one = grabImage(kept).pixel(320, 180);
+            var g = shot(kept), one = g.pixel(g.width / 2, g.height / 2);
             verify(apart() <= 6, "of the first picture");
             hero.target = second;
             tryVerify(function () { return hero.shown === second && !hero.fading }, 5000);
             verify(apart() <= 6, "and of the one after it, once it has come");
-            verify(!Qt.colorEqual(grabImage(kept).pixel(320, 180), one), "(the two pictures blur to different colours there)");
+            g = shot(kept);
+            verify(!Qt.colorEqual(g.pixel(g.width / 2, g.height / 2), one), "(the two pictures blur to different colours there)");
             Theme.still = false;
         }
         function test_aMoveAlongARowIsFollowedToo() {

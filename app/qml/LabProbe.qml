@@ -36,7 +36,7 @@ Item {
     Timer { id: phaseReset; interval: 900; onTriggered: probe.phase = "idle" }
 
     KeyLatency { id: lat }
-    FrameStats { id: frames; phase: probe.phase; heartbeat: Object.keys(probe.variant).length > 0 }
+    FrameStats { id: frames; phase: probe.phase; resting: Remote.resting; heartbeat: Object.keys(probe.variant).length > 0 }
     LunaClient { id: luna; property var log: []; onResponse: log.push(payload.slice(0, 400)) }
     LogTap { id: tap }
     onVariantChanged: if (variant.timing) { tap.start(probe.variant.timing === true ? "qt.scenegraph.time.renderloop.debug=true" : probe.variant.timing); if (variant.sample) tap.sample(variant.sample === "render" ? probe.window : null) }

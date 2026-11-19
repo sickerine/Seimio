@@ -129,8 +129,22 @@ Each rule comes from a measured stall on the C5.
   picture's bands asked for their next frame that way, and what the GUI thread animated stood still for
   a frame as each backdrop went up; they ask through the GUI thread now (banded_image.h). A tour counts
   such frames as `missed` (FrameStats, probes.h: drawn alone between two frames the GUI thread handed
-  over, each a refresh apart) against a budget of 8 outside idle. On 2026-11-19: Home 11 to 18 and
-  browse 10 to 12 before, 1 to 6 on every route after.
+  over, each a refresh apart, while the app is not at rest and not in the hand-over as a rest ends)
+  against a budget of 3, and each is a `missed turn` line in the lab log. On 2026-11-19: Home 15 and
+  browse 18 with the bands asking from the render thread, none on Home, browse and anime after.
+  At rest such frames are the rule (about one in twenty), so what starts to move on screen without a
+  key says so first (`Remote.stir()`): a backdrop crossfading, rows that came in (`CardGrid`). Only
+  what is on screen: `Swap`, `Fade` and `Reveal` were made to stir as they start, and a page built
+  ahead at rest plays its entrances out of sight, so each piece of that work ended the rest it ran in
+  and the next waited a second for another (the tours' `missed` in idle showed it). Taken out. What
+  is left at rest without a stir is a card's art fading in, and a title's panel when its data comes
+  more than a second after the last movement.
+- The first three seconds of a launch have three frames of 25 to 40 ms that are not ours to move
+  (sampled on the TV, 2026-11-19): the platform loading the keyboard's keymap (14 ms, 0.3 s in, nothing
+  on screen yet), the frame Home's rows are created in when its data arrives (24 ms; nothing was
+  moving before it), and one collection the JavaScript engine starts by itself as the first backdrop
+  begins to fade in from black (33 ms). The collections and the Anime tab's building after that are
+  the app's own, at rest.
 - A component that shows a page of data takes it as one value (`PagedStrip.show(page, index)`, an
   explicit `load()`): as separate inputs set one after another, every card was rebound for each. A page
   that opens on an episode is built once, for the place it lands on.

@@ -97,10 +97,10 @@ for f in sorted(os.listdir(d)):
 tot = [0, 0, 0, 0, 0]
 for k, a in sorted(agg.items()):
     print(f"  {k[3:]:18s} frames {a[0]:4d}  late>20ms {a[1]:3d}  late>30ms {a[2]:3d}  worst {a[3]:4.0f} ms  gui stalls {a[4]:2d} (worst {a[5]:3.0f} ms)  heavy {a[8]:3d}  missed {a[9]:3d}")
-    tot[0] += a[0]; tot[1] += a[1]; tot[2] += a[2]; tot[3] += a[8]; tot[4] += a[9] if k != 'rt idle' else 0
+    tot[0] += a[0]; tot[1] += a[1]; tot[2] += a[2]; tot[3] += a[8]; tot[4] += a[9]
 # (heavy: frames with 12 ms and more of sync and render in them, what a held swap follows: budgeted below.
-# missed: frames drawn on time without the GUI thread's turn, so what it animates stood still for one
-# (FrameStats in probes.h); the total leaves idle out, where nothing of the GUI thread's is moving)
+# missed: frames drawn on time without the GUI thread's turn inside a movement, so what the GUI thread
+# animates stood still for one; not those at rest, nor the one as a rest ends (FrameStats in probes.h))
 print(f"  {'total':18s} frames {tot[0]:4d}  late>20ms {tot[1]:3d}  late>30ms {tot[2]:3d}  heavy {tot[3]:3d}  missed {tot[4]:3d}")
 held = [(k[3:], a[6], a[7]) for k, a in sorted(agg.items()) if a[6]]
 if held: print("  the TV held " + ", ".join(f"{n} swap{'s' if n > 1 else ''} in {k} ({w:.0f} ms)" for k, n, w in held) + ": its compositor's, not counted above")
@@ -112,9 +112,9 @@ for e in errors: print("  ERROR " + e[:240])
 if errors: over.append(f"{len(errors)} script error(s)")
 if tot[1] > budget20: over.append(f"{tot[1]} frames over 20 ms (budget {budget20})")
 if tot[3] > budgetHeavy: over.append(f"{tot[3]} frames with 12 ms or more of drawing (budget {budgetHeavy})")
-# Measured on 2026-11-19: 1 to 6 a tour on the check's routes, and 10 to 18 on Home and browse while a
+# Measured on 2026-11-19: none on Home, browse and anime, and 15 on Home and 18 on browse while a
 # picture's bands asked for their frames from the render thread (banded_image.h), which this fails.
-if tot[4] > 8: over.append(f"{tot[4]} frames drawn without the GUI thread's turn while something moved (budget 8)")
+if tot[4] > 3: over.append(f"{tot[4]} frames drawn without the GUI thread's turn inside a movement (budget 3)")
 late30 = sum(a[2] for _, a in busy)
 if late30 > 2: over.append(f"{late30} frames over 30 ms outside idle (budget 2)")
 over += [f"{k}: a {a[3]:.0f} ms frame (budget {budgetMax})" for k, a in busy if a[3] > budgetMax]

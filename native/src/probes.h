@@ -152,6 +152,7 @@ class FrameStats : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString phase READ phase WRITE setPhase)
     Q_PROPERTY(bool heartbeat READ heartbeat WRITE setHeartbeat)
+    Q_PROPERTY(bool resting READ resting WRITE setResting)      // the app is at rest (Remote.resting): nothing of the GUI thread's is moving
 public:
     FrameStats() {
         m_beat.setTimerType(Qt::PreciseTimer); m_beat.setInterval(16);
@@ -166,6 +167,8 @@ public:
         });
     }
     bool heartbeat() const { return m_beat.isActive(); }
+    bool resting() const { return m_resting; }
+    void setResting(bool on) { if (!on && m_resting) m_restEnded = monoMs(); m_resting = on; }
     // the app's resident memory in MB (Linux /proc; 0 elsewhere)
     Q_INVOKABLE int rssMb() const {
         QFile f("/proc/self/statm");
@@ -223,11 +226,21 @@ public:
             // compositor, and with a frame already asked for the render thread starts before the GUI
             // thread has handed over (an animation running on the render thread, Ambient.qml; a picture's
             // bands asking for their next frame from there, banded_image.h), or when the GUI thread has
-            // more than a refresh of work in one turn. Counted by phase (`missed`).
+            // more than a refresh of work in one turn. Counted by phase (`missed`), and not while the app is at
+            // rest: what moves by itself is on the render thread then (Ambient), such frames are the rule
+            // there (about one in twenty), and what starts to move ends the rest first (Remote.stir).
             const bool handed = m_handed, next = m_last > 0 && gap <= 25;
             m_handed = false;
-            if (m_alone && handed && next) m_missed[m_alonePhase]++;
-            m_alone = !handed && m_wasHanded && next;
+            if (m_alone && handed && next) {
+                m_missed[m_alonePhase]++;
+                labLog(QString("missed turn (%1 ms after a rest ended)").arg(now - m_restEnded, 0, 'f', 0));
+            }
+            // (The frame drawn alone is what is judged: one drawn at rest is the rule there, whenever the
+            // next hand-over comes. Nor is the one the render thread draws alone as a rest ends: what
+            // moved by itself there is handed back to the GUI thread at its next turn. That is the one
+            // frame more before the first key after a rest shows, Ambient's price, at the start of a
+            // movement and not inside it.)
+            m_alone = !handed && m_wasHanded && next && !m_resting && now - m_restEnded > 60;
             if (m_alone) m_alonePhase = m_phase;
             m_wasHanded = handed;
             // A stamp a few ms late is not a frame shown late. Of the gaps of 20 to 22 ms measured over two
@@ -295,6 +308,8 @@ private:
     QMap<QString, int> m_missed;            // frames drawn without the GUI thread in a run of frames it handed over, by phase
     bool m_handed = false, m_wasHanded = false, m_alone = false;    // this frame, the one before; the one before drawn alone after a handed one (render thread)
     QString m_alonePhase;
+    std::atomic<bool> m_resting { false };
+    std::atomic<double> m_restEnded { 0 };  // when the app last stopped being at rest
     double m_rendered = 0;                  // when the frame in hand was drawn, before its swap (render thread)
     QTimer m_beat;
     double m_lastBeat = 0; double m_lastCpu = 0;
