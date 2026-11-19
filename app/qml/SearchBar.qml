@@ -12,7 +12,7 @@
 // `zone` is which of the two has the remote, and the owner sets it as the remote arrives: 0 from the tab
 // bar, to type; 1 from the results. The field with the remote has the TV's keyboard up, and the keyboard
 // takes the arrows while it is up: the kinds are reached from the results, or from the field once Enter
-// has put the keyboard away.
+// or Back has put the keyboard away.
 import QtQuick 2.12
 import Seimio.UI 1.0
 
@@ -27,8 +27,8 @@ FocusScope {
     property real iconX: 0                   // where the tab bar's search icon sits, in this bar
     readonly property int gap: 22
     readonly property alias kindBar: kindBar
+    readonly property bool typing: field.typing             // the TV's keyboard is up for the field
     signal accepted()                        // Enter on the keyboard
-    signal dismissed()                       // Back on the keyboard
     signal chosen(int index)
     signal exitRight()
     height: field.barHeight
@@ -57,7 +57,6 @@ FocusScope {
         // the two as one row in the middle of the bar, the kinds first
         openX: (bar.width - kindBar.width - bar.gap - openWidth) / 2 + kindBar.width + bar.gap
         onAccepted: bar.accepted()
-        onDismissed: bar.dismissed()
     }
     Keys.onLeftPressed: if (zone === 0) { kindBar.enter(true); zone = 1 }        // (left of the first kind there is nothing)
     Keys.onRightPressed: if (zone === 1) { kindBar.leave(1); zone = 0 } else exitRight()

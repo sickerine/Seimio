@@ -4,9 +4,9 @@
 // again over results that have the remote). Enter on that keyboard is `accepted`: the field takes the key,
 // puts the keyboard away and says so, in that order. Left at the start of the text, Right at its end, Up
 // and Down pass on.
-// Back with the keyboard up goes to the keyboard, which closes: the field never sees that key. A keyboard
-// that goes away while the field still has the remote was that Back (after Enter it isn't): `dismissed`.
-// With the keyboard away, OK brings it back.
+// Back with the keyboard up goes to the keyboard, which closes: the field never sees that key, and what is
+// typed stays (his rule, 2026-11-19: the Back after that, which the field's owner does see, is what
+// clears it). With the keyboard away, OK brings it back.
 import QtQuick 2.12
 
 FocusScope {
@@ -14,16 +14,8 @@ FocusScope {
     property bool open: false
     property alias text: input.text
     signal accepted()
-    signal dismissed()
-    property bool entered: false             // Enter closed the keyboard, not Back
     property var keyboard: Qt.inputMethod    // (`visible`, `show()`, `hide()`, `commit()`: a test gives its own)
-    Connections {
-        target: field.keyboard
-        onVisibleChanged: {
-            if (field.keyboard.visible) field.entered = false;       // up again: the next time it goes, it's Back unless Enter says so
-            else if (input.activeFocus && !field.entered) field.dismissed();
-        }
-    }
+    readonly property bool typing: input.activeFocus && keyboard.visible      // the keyboard is up for this field
     property Item source
     property bool preblurred: false
     property real sy: y
@@ -57,20 +49,17 @@ FocusScope {
             color: Theme.ink; selectionColor: Theme.fillStrong; selectedTextColor: Theme.ink
             font.family: Theme.face; font.pixelSize: 30; font.weight: Font.Medium
             inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
-            onTextChanged: field.entered = false
-            onActiveFocusChanged: if (activeFocus) field.entered = false
             // OK. With the keyboard up it is the keyboard's Enter (the remote's own OK goes to the keyboard
-            // then), and the field does what the text would have, in the order that works: what is being
-            // typed is taken, the keyboard goes, then `accepted`. Left to the text, Qt put the keyboard
-            // away first and said `accepted` after, so the keyboard going read as Back: the bar was
-            // cleared the moment before its search was made. (The TV, 2026-11-19, as logged in one press:
-            // the key, the keyboard away, the text cleared, `accepted` with nothing.) With the keyboard
-            // away, OK brings it back.
+            // then), and the field does what the text would have, in its own order: what is being typed
+            // is taken, the keyboard goes, then `accepted`. Left to the text, Qt puts the keyboard away
+            // first and says `accepted` after, in the one press: the field once took a keyboard that
+            // went without an Enter for Back and cleared the bar, so every Enter cleared the query the
+            // moment before its search was made. With the keyboard away, OK brings it back.
             Keys.onPressed: {
                 if (!Remote.isOk(event.key)) return;
                 event.accepted = true;
                 if (!field.keyboard.visible) { field.keyboard.show(); return }
-                field.keyboard.commit(); field.entered = true; field.keyboard.hide(); field.accepted();
+                field.keyboard.commit(); field.keyboard.hide(); field.accepted();
             }
         }
     }

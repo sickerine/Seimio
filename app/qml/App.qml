@@ -59,19 +59,27 @@ WebOSWindow {
     // the tab going and the tab coming move as one sheet while one fades into the other: the grid
     // glides up to the Library's place, or down from it, as Home's rows glide when it scrolls. (Each
     // fading where it rests, the Library's posters came up over the title of the tab before.)
-    readonly property int level: browseTab && browse ? browse.level : 0
+    readonly property int level: browseTab && browse ? browse.level : typing ? search.lift : 0
     readonly property bool searchTab: tab === 5              // the tab bar turns into the search bar; its results below
     onSearchTabChanged: { if (searchTab) searchBar.zone = 0; probe.captures() }    // reached from the tab bar: to type
     // the kinds of title a search finds, as its bar names them and as Catalog does
     readonly property var searchKinds: [["Anime", "anime"], ["Series", "series"], ["Movies", "movie"]]
-    readonly property bool plain: browsing === "library" || (searchTab && !search.any)      // a tab with no title above its grid
+    // The TV's keyboard is up for the search (his rule, 2026-11-19): it covers the bottom of the screen,
+    // which is where the results were, under a title's info nobody is reading while they type. So the
+    // search is a tab with no title for as long as it is up, and its results stand under the bar
+    // (SearchScreen.lift, by `level`), a whole row of them above the keyboard. With the keyboard gone
+    // the rows glide back down and the title comes in, as on leaving the Library.
+    readonly property bool typing: searchTab && searchBar.typing
+    readonly property bool plain: browsing === "library" || (searchTab && (typing || !search.any))      // a tab with no title above its grid
     readonly property bool bare: onHome && plain            // and on it: no info, the backdrop frosted
-    // The title in hand was taken on such a tab (`commit`, from the tab or from a page opened over it),
-    // so the tabs have never shown it. On the next tab the info stays away and the backdrop frosted
-    // until that tab's own title is taken: for the 280 ms the cursor takes to rest, the Library's
-    // focused title stood large over the Series tab's rows, on its own picture, and then gave way to
-    // the right one.
+    // The title in hand is not one the tabs are showing: it was in hand as such a tab came up, or taken
+    // on one (`commit`, from the tab or from a page opened over it). Once the tab has a title above its
+    // rows again (another tab, or the search with its keyboard gone) the info stays away and the
+    // backdrop frosted until the title is taken there, the 280 ms the cursor takes to rest: the rows
+    // have moved by then, and the title is that tab's own. (Without it the Library's focused title
+    // stood large over the Series tab's rows, on its own picture, and then gave way to the right one.)
     property bool unseen: false
+    onPlainChanged: if (plain) unseen = true; else settle.restart()
     readonly property bool veiled: bare || unseen
     readonly property bool scrolled: animeTab ? anime.scrolled : browseTab ? !!browse && browse.scrolled : searchTab ? search.scrolled : home.scrolled
     readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? (browse ? browse.focusItem : null) : searchTab ? search.focusItem : home.focusItem
@@ -605,7 +613,7 @@ WebOSWindow {
                      streamQueries: streams.queries(),      // the same for a play: the list, the decision and the link (Streams.queries)
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
-                     tab: app.tab, browse: browse ? { what: browse.what, up: browse.shown, mine: browse.mine, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading,
+                     tab: app.tab, level: app.level, veiled: app.veiled, typing: app.typing, browse: browse ? { what: browse.what, up: browse.shown, mine: browse.mine, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading,
                                                         chosen: browse.filters.map(function (f) { return f.options[f.current] }), list: browse.menuBar ? browse.menuBar.filter.key : "" } : null,
                      redraws: Remote.tallies, watching: catalog.continueWatching.slice(0, 8).map(function (i) { return i.id + " " + i.episode + " " + (i.video || "-") + " " + i.progress }), resume: showPage.resumeLabel, header: showPage.headerState(), hero: hero.labState(),
                      search: { text: searchBar.text, kind: search.kind, zone: searchBar.zone, cursor: searchBar.kindBar.cursor, row: search.row, found: search.found, counts: app.searchKinds.map(function (k) { return search.count(k[1]) }).join(","), shownLag: app.shownLag },
@@ -891,7 +899,6 @@ WebOSWindow {
             Keys.onDownPressed: search.enter()
             Keys.onUpPressed: {}
             onAccepted: search.enter()                      // Enter on the keyboard: on to what was found
-            onDismissed: text = ""                          // Back on the keyboard: it closes, and the bar is cleared
         }
         // The account, at the top right on the tab bar's line: Right from the Library's tab reaches it, OK
         // opens its menu, which hangs from its right edge. It comes and goes with the tab bar.
@@ -1028,7 +1035,10 @@ WebOSWindow {
             else if (Remote.isBack(event.key) && app.layer === "player") { event.accepted = true; app.leavePlayer() }
             else if (Remote.isBack(event.key) && app.layer === "streams") { event.accepted = true; streams.cancel(); app.back() }
             else if (Remote.isBack(event.key) && app.layer === "signin") event.accepted = true                       // nowhere to go back to: signed out, the app is this screen
-            // Back in the search bar: what is typed goes first, and from an empty bar it leaves the search
+            // Back in the search bar. With the keyboard up it is the keyboard's, which only goes away: what
+            // is typed stays. (It cleared the bar. His rule, 2026-11-19: "back should submit/close the
+            // keyboard too instead of clearing, then the back after would clear".) The Back after that
+            // comes here: what is typed goes, and from an empty bar it leaves the search.
             else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; if (searchBar.text) searchBar.text = ""; else { app.tab = 0; app.layer = "home" } }
             // Back goes between two places on a tab: from the top of its page (Continue Watching, a grid
             // tab's filters: whatever the page itself did not go back from) to the tab bar, and from the

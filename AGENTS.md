@@ -528,11 +528,18 @@ The Mac runs Qt 5.15, so code that works there can fail on the TV. Use `onFoo:` 
 `Connections` (the function syntax is 5.15), and check property names against FINAL ones (`left`,
 `right`, `bottom` on Item) and reserved GLSL words (`half`).
 
-The TV's keyboard is LG's own, drawn by the system over the app. A `TextInput` given its Enter puts
-the keyboard away first and says `accepted` after, in the one key press, so nothing may read "the
-keyboard went" as Back before the Enter has been counted: `SearchField` takes the key itself and
-does the three in its own order. (It cleared the bar on every Enter: "all it does is clear the
-query".) To see that keyboard and press its keys from the Mac, launch with `{"captureEvery": 1200}`
+The TV's keyboard is LG's own, drawn by the system over the bottom 440 px of the app, and its Back
+never reaches the app: it only goes away. Never read "the keyboard went" as a key. `SearchField`
+did, to clear the bar on Back, and a `TextInput` given Enter puts the keyboard away first and says
+`accepted` after, in the one key press: every Enter cleared the query the moment before its search
+was made ("all it does is clear the query"). The field takes Enter itself now and does the three
+in its own order, and the keyboard's Back keeps what is typed; the Back after it, which the app
+does see, clears the bar, and the next leaves the search (his rule, 2026-11-19).
+While that keyboard is up for the search (`App.typing`, from `Qt.inputMethod.visible`), the search
+is a tab with no title: the info is away and its results stand under the bar, a whole row of them
+above the keyboard (`SearchScreen.lift`, by `App.level`, the Library's mechanism). With the
+keyboard gone they glide back down and the title comes in.
+To see that keyboard and press its keys from the Mac, launch with `{"captureEvery": 1200}`
 and read `/media/developer/temp/live.png` over SSH between presses: the remote's arrows and OK go
 to the keyboard while it is up. `tools/tvremote.mjs type` and `enter` need a pairing with the text
 permission, which the saved one does not have (401).

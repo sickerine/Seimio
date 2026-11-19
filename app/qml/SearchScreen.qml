@@ -59,7 +59,14 @@ FocusScope {
         return rows;
     }
     // the chosen kind's titles, from the top
-    function list() { grid.row = -1; grid.column = 0; grid.show(rowsOf(results[kind] || []), "grid", 560) }
+    function list() { grid.row = -1; grid.column = 0; grid.show(rowsOf(results[kind] || []), "grid", rest) }
+    // Its rows rest under the focused title's info. While the TV's keyboard is up that info is away and
+    // the keyboard covers the bottom of the screen, where the rows are: App stands the screen `lift`
+    // higher then (its `y`, as it stands a grid tab at the Library's level), so the first row is whole
+    // above the keyboard: its cards 61 px under the bar, as the Library's are under its filters (the bar
+    // ends at 120, and a row's cards are 54 px under its top).
+    readonly property int rest: 560
+    readonly property int lift: rest - (120 + 61 - 54)
     onKindChanged: list()
     // from the bar to what was found: now, or as soon as this text's answer is in
     function enter() {
@@ -87,7 +94,7 @@ FocusScope {
     }
     // a search that found nothing of the kind says so
     Fade {
-        x: Theme.margin; y: 300
+        x: Theme.margin; y: 300 - search.y       // (where it is on the screen, whatever level the rows stand at)
         readonly property var names: ({ anime: "anime", series: "series", movie: "movies" })
         value: search.found.length > 1 && !search.any ? "No " + names[search.kind] + " found for “" + search.found + "”" : ""
         Text { text: parent.current || ""; color: Theme.inkDim; font.family: Theme.face; font.pixelSize: 30; font.weight: Font.Medium }
