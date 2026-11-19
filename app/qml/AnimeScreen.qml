@@ -153,10 +153,16 @@ FocusScope {
         opacity: anime.row <= 0 && itemAiring ? 1 : 0      // holds: `counted` latches the show
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
-        // each new show rises in, as the info does
+        // Each new show rises in, as the info does, and so does the countdown coming back on show. By the
+        // show it counts for, never by `m` being written: the chart's show is handed over again as
+        // another object once it is made playable, about a second after it is landed on, and the
+        // countdown rose a second time (10 rises for 5 shows, counted on the TV; "countdown rise").
         property real rise: 0
         transform: Translate { y: countdown.rise }
-        onMChanged: { riseIn.restart() }
+        readonly property string countsFor: m ? (m.name || "") + "|" + at : ""
+        onCountsForChanged: if (countsFor) Qt.callLater(countdown.risen)
+        Connections { target: counted; onLiveChanged: if (counted.live) Qt.callLater(countdown.risen) }
+        function risen() { Remote.tally("countdown rise"); riseIn.restart() }
         SequentialAnimation {
             id: riseIn
             NumberAnimation { target: countdown; property: "rise"; to: 14; duration: 1 }
