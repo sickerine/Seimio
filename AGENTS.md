@@ -115,7 +115,19 @@ Each rule comes from a measured stall on the C5.
   Expect handlers to re-enter: setting a property can emit a signal synchronously (a cached image turns
   Ready inside the assignment), so change your own state before the assignment that may call back. A
   state bug gets a QtQuick test in `tools/tests` that fails before the fix; `check.sh` runs them.
-- What was fetched for a title is kept ten minutes (`Live::title`'s metas, `Franchise`'s finished jobs).
+- What a component has on show becomes another through `Swap` (`app/Seimio/UI/Swap.qml`), whenever the
+  new one has something to load first or is told by a value that can change again on the way: the
+  title panel, the logo, the backdrop. Its owner says what it wants and whether that one's content is
+  in; Swap keeps the old one fully in until then, takes it out, switches when nothing is seen, brings
+  the new one in, and has one answer for every change half way (`tools/tests/tst_swap.qml`, a test a
+  rule). Never keep a "pending" value, a "gone" flag and two fades in a component again: the logo that
+  flickered along a show's seasons, the header that stood empty and the stale flag read in a handler
+  were each in such a copy. It decides once the owner's bindings have run, so bind `ready` to the
+  picture's own state and never call into it from a status handler.
+  A swap with nothing to wait for and told by a call (a grid's `show`, a strip's page turn) stays a
+  `SequentialAnimation` of out, a `ScriptAction` that switches, and in: Qt restarts that from where
+  the values are, which is all those need.
+- What was fetched for a title is kept ten minutes (`Live::title`'s metas, `Franchise`'s fetched shows: queries, see Data).
   Home is taken again whenever the account's watch state changes (an episode marked, a title off Continue
   Watching, a film ended), and the page in hand asks for its franchise again: with every meta asked of
   the network again, a card left its row 2.2 s after the press. Kept, the row follows in 0.7 s and an
