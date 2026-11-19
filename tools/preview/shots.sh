@@ -30,7 +30,7 @@ js() {
     title) echo "$FIND_JS f(home, function (o) { return o.jumpTo !== undefined }).jumpTo(2); win.open()" ;;
     # (its menu's row drawn focused, as it is with the remote: whether the Mac makes the preview's window active varies)
     profile) echo "$FIND_JS win.layer = 'profile'; win.profileOpen = true;"\
-                  " f(win.canvas, function (o) { return o.showFocus !== undefined && o.model && o.model.length === 1 && o.model[0].label === 'Log out' }).showFocus = true" ;;
+                  " f(win.canvas, function (o) { return o.showFocus !== undefined && o.model && o.model.length && o.model[o.model.length - 1].label === 'Log out' }).showFocus = true" ;;
     anime) echo "$FIND_JS var a = f(win.canvas, function (o) { return o.seasonLoading !== undefined }); a.live = false; a.now = 1794830400; win.tab = 1" ;;   # its countdowns from a fixed moment
     movies) echo 'win.tab = 2' ;;
     library) echo 'win.tab = 4' ;;

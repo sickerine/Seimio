@@ -26,6 +26,7 @@ Ambient 1.0 Ambient.qml
 CardArt 1.0 CardArt.qml
 MediaCard 1.0 MediaCard.qml
 Avatar 1.0 Avatar.qml
+Viewers 1.0 Viewers.qml
 MonthGrid 1.0 MonthGrid.qml
 CardStrip 1.0 CardStrip.qml
 CardGrid 1.0 CardGrid.qml

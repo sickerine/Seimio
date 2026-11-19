@@ -13,6 +13,7 @@ QtObject {
     property int audioTrack: -1
     property double startFraction: 0
     property double startAt: -1
+    property bool waits: false
     signal stateChanged()
     property var languages: ["en"]
     property var seen: ({})
@@ -23,9 +24,11 @@ QtObject {
     signal event(string json)
     function exportWindow(w) { windowId = "mac"; return "" }
     function setEventSlot(n) {}
-    function load(uri, payload) { loaded = true; playing = true; duration = 1422046; position = 600000; return true }
-    function play() { paused = false; return true }
-    function pause() { paused = true; return true }
+    // (as the TV's does: loaded, it plays from where it was told to start, unless it `waits` for play())
+    function begin() { playing = true; position = startAt >= 0 ? startAt : startFraction > 0 ? startFraction * duration : 600000 }
+    function load(uri, payload) { loaded = true; paused = false; duration = 1422046; position = 0; if (!waits) begin(); stateChanged(); return true }
+    function play() { paused = false; if (loaded && !playing) begin(); stateChanged(); return true }
+    function pause() { paused = true; stateChanged(); return true }
     function seek(ms) { position = ms; return true }
-    function unload() { playing = false; return true }
+    function unload() { playing = false; loaded = false; position = 0; stateChanged(); return true }
 }

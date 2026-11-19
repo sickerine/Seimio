@@ -22,6 +22,52 @@ FocusScope {
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
     property var addonSubs: []           // subtitles from the OpenSubtitles addon, after the file's own
     property bool pickedSub: false       // a subtitle was picked in the menu for this file
+    // ---- the watch party ---------------------------------------------------------------------------------
+    // What plays here is told to the party's relay (`party`: Seimio.Data's Party), for the friends who
+    // follow it: from the moment the stream's link is in hand, held at where it will start so they load it
+    // while this TV does, then each time the player says where it is or what it is doing.
+    // `waiting`: someone is in the room and his setting is on (Party.waits), so once loaded the video
+    // stays where it starts until everyone there can play it. OK starts it whoever is still loading.
+    property var party: null
+    property string mediaLink: ""        // the stream's address, as the party is told of it
+    property bool waiting: false
+    property double toldAt: 0            // when the party first heard of this stream
+    // where it starts (ms): not known for a resume until the file has said how long it is
+    readonly property real opensAt: media.startAt >= 0 ? media.startAt : media.startFraction > 0 ? (media.duration > 0 ? media.startFraction * media.duration : -1) : 0
+    // the player's time is the video's: LG says "playing" before the first frame and reports the start of
+    // the file for a moment before a resume lands, and told of that the friends would load it twice
+    property bool underway: false
+    function tell() {
+        if (!party) return;
+        if (!mediaLink) { party.stopped(); return }
+        var moving = media.loaded && !waiting && underway;
+        if (!moving && opensAt < 0) return;
+        if (!toldAt) toldAt = Date.now();
+        party.playing({ media: mediaLink, title: item ? item.name || item.title || "" : "", episode: videoId, duration: media.duration,
+                        position: moving ? media.position : opensAt, paused: !moving || media.paused, buffering: moving && media.buffering });
+    }
+    function release() {
+        if (!waiting) return;
+        waiting = false; media.waits = false;
+        if (media.loaded) media.play();
+        tell();
+    }
+    // (a friend's player says it is loading a moment after the relay has told it what plays: until then
+    // the room looks ready, so it is not believed for the first second and a half)
+    function roomIn() {
+        if (!waiting || !media.loaded || !party || party.loading) return;
+        if (toldAt && Date.now() - toldAt >= 1500) release(); else roomCheck.restart();
+    }
+    Timer { id: roomCheck; interval: 300; onTriggered: page.roomIn() }
+    Connections { target: page.party; onViewersChanged: page.roomIn() }
+    Connections {
+        target: media
+        onStateChanged: { page.tell(); page.roomIn() }
+        onPositionChanged: {
+            if (!page.underway && media.playing && media.position > 0 && media.position >= page.opensAt - 1000) page.underway = true;
+            page.tell();
+        }
+    }
     // lab: ms from load to the first frame
     property double loadedAt: 0
     property int startMs: -1
@@ -64,6 +110,7 @@ FocusScope {
     }
     function prepare(title, episodeLabel) {
         item = title; label = episodeLabel; stream = null; pendingUrl = "";
+        mediaLink = ""; waiting = false; media.waits = false; tell();
         // in a handoff the old picture stays under the still while it fades in, then goes
         if (handoff) unloadLater.restart(); else media.unload();
         subs.reset(); trackList = []; choice = ({}); chapters = []; skipLookup.cancel(); askSkip.stop(); skipTimes = ({})
@@ -105,6 +152,9 @@ FocusScope {
     function start(url, s, at) {
         stream = s; pendingUrl = url;
         media.startAt = at && at.ms !== undefined ? at.ms : -1; media.startFraction = typeof at === "number" ? at : 0;
+        mediaLink = url; toldAt = 0; underway = false;
+        waiting = !!party && party.waits && party.viewers.length > 0; media.waits = waiting;
+        tell();
         if (media.windowId) load(); else { media.setEventSlot(48); media.exportWindow(window) }
     }
     function load() {
@@ -120,7 +170,7 @@ FocusScope {
         subs.delay = fileKey ? tracks.delay(fileKey) : 0;
         pendingUrl = "";
     }
-    function stop() { unloadLater.stop(); startWatch.stop(); handoff = null; media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop() }
+    function stop() { unloadLater.stop(); startWatch.stop(); handoff = null; mediaLink = ""; waiting = false; media.waits = false; media.unload(); stream = null; pendingUrl = ""; skipLookup.cancel(); askSkip.stop(); tell() }
 
     NativePlayer {
         id: media
@@ -327,6 +377,9 @@ FocusScope {
         return out;
     }
     readonly property var segmentNow: {
+        // (not before the video is under way: until then the player's time is the start of the file, an
+        // intro's as a rule, and Skip Intro stood over a video that was waiting for the room at 46 minutes)
+        if (!underway) return null;
         for (var i = 0; i < segments.length; i++)
             if (skipped.indexOf(segments[i].kind) < 0 && media.position >= segments[i].start && media.position < segments[i].end - 1500) return segments[i];
         return null;
@@ -344,6 +397,7 @@ FocusScope {
     }
 
     Keys.onPressed: {
+        if (waiting && Remote.isOk(event.key)) { event.accepted = true; release(); return }       // not waiting for the room any longer
         if (!media.loaded) return;
         var k = event.key, back = Remote.isBack(k), ok = Remote.isOk(k);
         if (back) {
@@ -544,6 +598,9 @@ FocusScope {
         : streams.stage === "choosing" ? "Asking the AI to pick"
         : streams.stage === "resolving" ? "Getting the link"
         : media.buffering ? "Buffering"
+        // (loaded here, and held for the friends who are still loading it: "Starting playback" read as this
+        // TV's own stream taking its time)
+        : waiting && media.loaded ? "Waiting for the room"
         : "Starting playback"
 
     // loading: the title over its art, until the first frame
@@ -592,6 +649,16 @@ FocusScope {
         }
     }
 
+    // who is watching along, top right: while this loads or waits for them, and whenever the transport is up
+    // (not over a playing picture: what is drawn over the video costs it frames)
+    Viewers {
+        z: 5
+        viewers: page.party ? page.party.viewers : []
+        x: page.width - Theme.margin - width; y: 58
+        opacity: !media.playing || page.waiting || page.zone !== "none" ? 1 : 0      // holds: pictures with nothing of this video in them
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: Theme.base } }
+    }
     // ---- what's on screen -------------------------------------------------------------------------------
     // shade under the title, the transport and the row below: it starts above the logo and is most of the
     // way there by the buttons, so they read over a bright scene (a sky, a white room)

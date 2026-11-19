@@ -583,6 +583,10 @@ WebOSWindow {
     WindowTools { id: tools; onKeyPressed: Remote.stir() }
     // keys out of git: app/qml/Secrets.qml (gitignored)
     Loader { id: secrets; source: "Secrets.qml" }
+    // The watch party: friends follow what plays here through a relay, which the player tells (PlayerScreen)
+    // and which says who is in the room. `party` in Secrets.qml is the relay's address for this TV, with
+    // its key; without it there is no party.
+    Party { id: party; relay: secrets.item && secrets.item.party ? secrets.item.party : "" }
     Tracks { id: trackChoice }
     Streams {
         id: streams
@@ -614,6 +618,7 @@ WebOSWindow {
                      streamQueries: streams.queries(),      // the same for a play: the list, the decision and the link (Streams.queries)
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
+                     party: { connected: party.connected, viewers: party.viewers, waits: party.waits, waiting: player.waiting, link: player.mediaLink.slice(0, 60) },
                      tab: app.tab, level: app.level, veiled: app.veiled, typing: app.typing, browse: browse ? { what: browse.what, up: browse.shown, mine: browse.mine, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading,
                                                         chosen: browse.filters.map(function (f) { return f.options[f.current] }), list: browse.menuBar ? browse.menuBar.filter.key : "" } : null,
                      redraws: Remote.tallies, watching: catalog.continueWatching.slice(0, 8).map(function (i) { return i.id + " " + i.episode + " " + (i.video || "-") + " " + i.progress }), resume: showPage.resumeLabel, header: showPage.headerState(), hero: hero.labState(),
@@ -926,8 +931,22 @@ WebOSWindow {
             x: profile.x + profile.width - width; y: profile.y + profile.height + 18
             fromRight: true
             open: app.profileOpen
-            model: [{ label: "Log out", detail: account.email }]
-            onTriggered: { app.profileOpen = false; account.signOut() }
+            // With a watch party set up, his switch for it comes first (2026-11-19: "a toggle that i can
+            // turn on and off on my profile picture settings, so that if i dont want to wait i can just do
+            // that"): something starting waits for the room to have loaded it, or doesn't. OK flips it and
+            // the menu stays; Log out is the row after, not the one a second OK lands on.
+            readonly property bool partied: party.relay !== ""
+            model: (partied ? [{ label: "Wait for the room", checked: party.waits }] : []).concat([{ label: "Log out", detail: account.email }])
+            onTriggered: if (partied && rowIndex === 0) party.waits = !party.waits; else { app.profileOpen = false; account.signOut() }
+        }
+        // who is in the watch party's room, under the account's picture; away while its menu hangs there
+        Viewers {
+            viewers: party.viewers
+            size: 44
+            x: profile.x + profile.width - width; y: profile.y + profile.height + 16
+            opacity: tabs.shown && !app.profileOpen ? profile.opacity : 0      // holds: pictures with nothing of the tab in them
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 300 } }
         }
         SignInScreen { anchors.fill: parent; active: app.layer === "signin"; account: account }
         Letters { }
@@ -941,6 +960,7 @@ WebOSWindow {
         PlayerScreen {
             id: player
             window: app
+            party: party
             streams: streams
             tracks: trackChoice
             useTee: !probe.variant.noTee

@@ -445,6 +445,40 @@ format comes from that table or from a new run of `tools/playback-matrix.py`, co
 by ear. LG's pipeline reports "playing" for sound it can't decode and for pictures it breaks, and LG's own
 format list differs from the TV, so neither settles anything.
 
+## Watch party
+
+Friends follow what this TV plays through his relay (`stremio-webos/watch-web`, live at
+`watch.khaslana.me`; its README has the messages). The TV's side is `Party` (`native/src/party.h`,
+of Seimio.Data), over a WebSocket client of the app's own (`websocket.h`: the TV's Qt has no
+QtWebSockets). `party` in `Secrets.qml` is the relay's address for this TV, with its key; without
+it there is no party, and the Mac's previews reach nothing.
+
+- The player says what plays from the moment the stream's link is in hand (`PlayerScreen.tell`),
+  held at where it will start, so the friends load it while the TV does; then each time LG's
+  player says where it is. The moment it is said is the sample's time, which the followers keep
+  time by. Until the video is under way (`underway`) the player's own time is not the video's: LG
+  says "playing" before the first frame and reports the start of the file before a resume lands.
+  Nothing reads `media.position` as the video's place before that (Skip Intro stood over a video
+  held at 46 minutes).
+- With someone in the room and his switch on (`Party.waits`, "Wait for the room" in the account's
+  menu, kept on the TV), a video that has loaded stays where it starts until everyone there can
+  play it (`PlayerScreen.waiting`, `NativePlayer.waits`), and the loading screen says "Waiting for
+  the room". OK starts it whoever is still loading; so does the room emptying. A room is not
+  believed ready for the first second and a half: a friend's player says "loading" a moment after
+  it hears what plays. A follower that has never said either way (`ready: null`, the VLC one) is
+  drawn and not waited for.
+- The room is drawn as pictures with no names (`Viewers`), a ring turning on each that is still
+  loading: under the account's picture on the tabs, and at the top right of the player while it
+  loads or waits and whenever the transport is up. Never over a playing picture.
+- To try it: `tools/tests/native/tst_party.cpp` is the protocol against a relay of the test's own,
+  `tools/tests/tst_wait.qml` the waiting. On the TV, `scripts/viewer-sim.mjs` in the relay's
+  folder puts viewers in the room (`N=3 READY=7000,never`); the lab report's `party` says who is
+  there and whether the player waits. `READY=never` holds a video on its loading screen, so a
+  waiting screen can be looked at with nothing of the video shown. A change to the relay goes
+  live with `docker compose up --build -d` there, when `/status` shows nobody in a room.
+- Not done yet: the VLC follower says nothing of its state; how closely LG's reported time tracks
+  the picture has not been measured (it decides how tight the friends' sync can be).
+
 ## Visual rules
 
 - Balance by what is drawn. Centre a control's content from the tops of the capitals, pad icons by

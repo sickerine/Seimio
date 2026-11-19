@@ -48,6 +48,8 @@ class NativePlayer : public QObject {
     Q_PROPERTY(int audioTrack MEMBER m_audioTrack NOTIFY stateChanged)
     Q_PROPERTY(double startFraction MEMBER m_startFraction NOTIFY settingsChanged)
     Q_PROPERTY(double startAt MEMBER m_startAt NOTIFY settingsChanged)          // ms; wins over startFraction (-1: none)
+    // loaded, it stays where it starts until `play()`: the watch party's room is still loading it
+    Q_PROPERTY(bool waits MEMBER m_waits NOTIFY settingsChanged)
     Q_PROPERTY(QStringList languages MEMBER m_languages NOTIFY settingsChanged)
     Q_PROPERTY(QVariantMap seen MEMBER m_seen NOTIFY seenChanged)
     Q_PROPERTY(QVariantList audioTracks MEMBER m_audioTracks NOTIFY audioTracksChanged)     // { lang, codec } per audio track
@@ -147,11 +149,12 @@ public:
             const bool select = best > 0 || (best == 0 && m_tracks.size() > 1);
             const long long at = m_startAt >= 0 ? (long long)m_startAt : m_startFraction > 0 && m_duration > 0 ? (long long)(m_duration * m_startFraction) : -1;
             m_audioTrack = best;
-            command([select, best, at](Client *c) {
+            const bool waits = m_waits;
+            command([select, best, at, waits](Client *c) {
                 c->setSubtitleEnable(false);                                    // ours draws them (SubtitleLayer)
                 if (select) { std::string a("audio"); c->selectTrack(a, best); }
                 if (at >= 0) c->seek(at);
-                c->play();
+                if (!waits) c->play();
             });
         } else if (kind == "playing") { m_playing = true; m_paused = false; m_buffering = false; }
         else if (kind == "paused") m_paused = true;
@@ -218,6 +221,7 @@ private:
     bool m_loaded = false, m_playing = false, m_paused = false, m_buffering = false;
     QString m_failure;
     double m_duration = 0, m_position = 0, m_startFraction = 0, m_startAt = -1, m_seekTo = 0;
+    bool m_waits = false;
     bool m_seeking = false, m_seekLanded = false;
     QElapsedTimer m_seekClock;
     int m_audioTrack = -1;
