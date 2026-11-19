@@ -46,6 +46,11 @@ Item {
         // (the title has become another, out of sight: it rises in, and its chips arrive one after another)
         onSwitched: { Remote.tally("info"); info.rise = 18; rising.restart(); chips.arrive() }
         onCut: Remote.tally("info cut")          // lab: a title replaced by another while it was still fading in, which is a flicker
+        // A title going or coming on screen is movement and says so (Remote.stir): one whose data came
+        // after the app had gone to rest moved while the render thread drew frames by itself, and its
+        // chips could stand still for one. Not out of sight: a page built ahead at rest has its header
+        // come in unseen, and must not end the rest it is built in.
+        onPhaseChanged: if (info.visible && (phase === "leaving" || phase === "entering")) Remote.stir()
     }
     // (the address, the size and the fit TitleArt's picture asks for: Qt keeps a picture by the three, and
     // one asked for with another fit is fetched again)

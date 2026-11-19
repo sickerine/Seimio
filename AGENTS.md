@@ -136,9 +136,11 @@ Each rule comes from a measured stall on the C5.
   key says so first (`Remote.stir()`): a backdrop crossfading, rows that came in (`CardGrid`). Only
   what is on screen: `Swap`, `Fade` and `Reveal` were made to stir as they start, and a page built
   ahead at rest plays its entrances out of sight, so each piece of that work ended the rest it ran in
-  and the next waited a second for another (the tours' `missed` in idle showed it). Taken out. What
-  is left at rest without a stir is a card's art fading in, and a title's panel when its data comes
-  more than a second after the last movement.
+  and the next waited a second for another (the tours' `missed` in idle showed it). Taken out. The
+  title's panel says it itself, where it knows it is on screen (`HeroInfo`: a title whose data came
+  more than a second after the last movement came in at rest, its chips with it). A card's art
+  fading in does not, by choice: it would hold the rest, and the page built ahead in it, off for as
+  long as art comes in.
 - The first three seconds of a launch have three frames of 25 to 40 ms that are not ours to move
   (sampled on the TV, 2026-11-19): the platform loading the keyboard's keymap (14 ms, 0.3 s in, nothing
   on screen yet), the frame Home's rows are created in when its data arrives (24 ms; nothing was

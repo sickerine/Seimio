@@ -91,5 +91,21 @@ Item {
             compare(info.m, b);
             compare(info.fadeIn, 1, "fully in a rest after it was taken");
         }
+        // A title that changes on screen says the app is moving. At rest what moves by itself is on the
+        // render thread, which then draws frames without the GUI thread's turn: a title whose data came
+        // late, into a resting app, came in with its chips standing still for a frame now and then.
+        // Out of sight it says nothing: a page built ahead at rest must not end the rest it is built in.
+        function test_aTitleChangingOnScreenEndsTheRest() {
+            info.item = { name: "A", logo: logo, chips: ["TV"], description: "" }; wait(1200);
+            Remote.resting = true;
+            info.item = { name: "Late", logo: logo, chips: ["Film"], description: "" };
+            tryVerify(function () { return info.m && info.m.name === "Late" }, 3000);
+            verify(!Remote.resting, "it moved on screen");
+            wait(1200); info.visible = false; Remote.resting = true;
+            info.item = { name: "Unseen", logo: logo, chips: [], description: "" };
+            tryVerify(function () { return info.m && info.m.name === "Unseen" }, 3000);
+            verify(Remote.resting, "and out of sight it did not");
+            info.visible = true; Remote.resting = false;
+        }
     }
 }
