@@ -199,7 +199,12 @@ private:
         gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, m_row, image.width(), rows, GL_RGBA, GL_UNSIGNED_BYTE, image.constScanLine(m_row));
         gl->glBindTexture(GL_TEXTURE_2D, 0);
         m_row += rows;
-        if (m_row < image.height()) { window->update(); return; }       // a frame more, for the next band
+        // A frame more, for the next band, asked for through the GUI thread: asked for from here, the
+        // render thread drew that frame by itself before the GUI thread had handed its own over, and what
+        // the GUI thread animates (the row sliding as the backdrop changes) stood still for it. On the TV,
+        // three tours each: 11 to 18 such frames a Home tour and 10 to 12 a browse tour, against 2 to 6
+        // (FrameStats' `missed`, probes.h).
+        if (m_row < image.height()) { QMetaObject::invokeMethod(window, "update", Qt::QueuedConnection); return; }
         QSGTexture *whole = window->createTextureFromId(m_id, image.size(), QQuickWindow::TextureOwnsGLTexture);
         whole->setFiltering(QSGTexture::Linear);
         m_id = 0;

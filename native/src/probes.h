@@ -182,7 +182,7 @@ public:
         pthread_getcpuclockid(pthread_self(), &m_guiClock);
         // render thread: a frame begins when the GUI thread hands it over, or, drawn by the render thread
         // alone (an animation running there), when it starts to draw
-        connect(w, &QQuickWindow::beforeSynchronizing, this, [this] { m_began = monoMs(); }, Qt::DirectConnection);
+        connect(w, &QQuickWindow::beforeSynchronizing, this, [this] { m_began = monoMs(); m_handed = true; }, Qt::DirectConnection);
         connect(w, &QQuickWindow::beforeRendering, this, [this] { if (m_began < m_swapped) m_began = monoMs(); }, Qt::DirectConnection);
         connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);      // drawn: the swap is next
         connect(w, &QQuickWindow::frameSwapped, this, [this] {
@@ -215,6 +215,21 @@ public:
             // the frame's own time from its hand-over to the screen. Over 30 ms of that, nobody was asking
             // for a frame (a frame waits up to one refresh for its turn anyway).
             const double gap = now - m_last - held, idle = gap - (guiCpu - m_guiCpuAtSwap) - own;
+            // A frame the render thread drew by itself, a refresh after one the GUI thread handed over and
+            // a refresh before the next it handed over: the GUI thread was handing over every frame and
+            // missed its turn for this one. Every frame is on time, and what the GUI thread animates (a
+            // row sliding, a fade) stood still for one of them. It happens when the render thread has a
+            // reason of its own to draw: it and the GUI thread wake on the same acknowledgement from the
+            // compositor, and with a frame already asked for the render thread starts before the GUI
+            // thread has handed over (an animation running on the render thread, Ambient.qml; a picture's
+            // bands asking for their next frame from there, banded_image.h), or when the GUI thread has
+            // more than a refresh of work in one turn. Counted by phase (`missed`).
+            const bool handed = m_handed, next = m_last > 0 && gap <= 25;
+            m_handed = false;
+            if (m_alone && handed && next) m_missed[m_alonePhase]++;
+            m_alone = !handed && m_wasHanded && next;
+            if (m_alone) m_alonePhase = m_phase;
+            m_wasHanded = handed;
             // A stamp a few ms late is not a frame shown late. Of the gaps of 20 to 22 ms measured over two
             // tours, more than half were followed by one of 10 to 14: the two frames took two refreshes
             // between them, each shown in its own. So a gap up to 25 ms waits for the next frame: made up
@@ -255,6 +270,7 @@ public:
         for (auto it = m_stalls.begin(); it != m_stalls.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
         for (auto it = m_holds.begin(); it != m_holds.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
         for (auto it = m_heavy.begin(); it != m_heavy.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
+        for (auto it = m_missed.begin(); it != m_missed.end(); ++it) if (!m_gaps.contains(it.key())) m_gaps[it.key()];
         for (auto it = m_gaps.begin(); it != m_gaps.end(); ++it) {
             QVector<double> g = it.value(); std::sort(g.begin(), g.end());
             int l20 = 0, l30 = 0, s12 = 0;
@@ -264,9 +280,9 @@ public:
                                          {"late20", l20}, {"late30", l30}, {"short12", s12},
                                          {"stalls", st.size()}, {"stallMax", st.isEmpty() ? 0 : *std::max_element(st.begin(), st.end())},
                                          {"held", held.size()}, {"heldMax", held.isEmpty() ? 0 : *std::max_element(held.begin(), held.end())},
-                                         {"heavy", m_heavy.value(it.key())} };
+                                         {"heavy", m_heavy.value(it.key())}, {"missed", m_missed.value(it.key())} };
         }
-        m_gaps.clear(); m_stalls.clear(); m_holds.clear(); m_heavy.clear();
+        m_gaps.clear(); m_stalls.clear(); m_holds.clear(); m_heavy.clear(); m_missed.clear();
         return out;
     }
 private:
@@ -276,6 +292,9 @@ private:
     double m_lastTick = 0, m_lastTickGap = 0; double m_lastTickCpu = 0;
     QMap<QString, QVector<double>> m_gaps, m_stalls, m_holds;       // (m_holds: swaps the compositor held, by phase)
     QMap<QString, int> m_heavy;             // frames with 12 ms and more of sync and render in them, by phase
+    QMap<QString, int> m_missed;            // frames drawn without the GUI thread in a run of frames it handed over, by phase
+    bool m_handed = false, m_wasHanded = false, m_alone = false;    // this frame, the one before; the one before drawn alone after a handed one (render thread)
+    QString m_alonePhase;
     double m_rendered = 0;                  // when the frame in hand was drawn, before its swap (render thread)
     QTimer m_beat;
     double m_lastBeat = 0; double m_lastCpu = 0;

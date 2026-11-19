@@ -121,8 +121,16 @@ Each rule comes from a measured stall on the C5.
   `Ambient`: on the render thread at rest (`Remote.resting`), where a busy GUI thread can't hold it up,
   and on the GUI thread while anything else moves. Never leave an animation on the render thread while
   the GUI thread animates: the render loop then runs by itself and the GUI thread's animations tick every
-  other frame (33 ms ticks) on frames that all arrive on time, which the tours can't see. The price is
-  one frame more before the first key after a rest shows.
+  other frame (33 ms ticks) on frames that all arrive on time. The price is one frame more before the
+  first key after a rest shows.
+  The same goes for a frame asked for from the render thread (`QQuickWindow::update()` called there):
+  the render thread and the GUI thread wake on the same acknowledgement from the compositor, and with a
+  frame already asked for the render thread draws it before the GUI thread has handed its own over. A
+  picture's bands asked for their next frame that way, and what the GUI thread animated stood still for
+  a frame as each backdrop went up; they ask through the GUI thread now (banded_image.h). A tour counts
+  such frames as `missed` (FrameStats, probes.h: drawn alone between two frames the GUI thread handed
+  over, each a refresh apart) against a budget of 8 outside idle. On 2026-11-19: Home 11 to 18 and
+  browse 10 to 12 before, 1 to 6 on every route after.
 - A component that shows a page of data takes it as one value (`PagedStrip.show(page, index)`, an
   explicit `load()`): as separate inputs set one after another, every card was rebound for each. A page
   that opens on an episode is built once, for the place it lands on.
