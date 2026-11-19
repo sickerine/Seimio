@@ -215,6 +215,13 @@ WebOSWindow {
     onOnHomeChanged: if (onHome) trail = []
     // onto another screen; `from` is the title that was in hand when a page opens over a page (Related)
     function go(to, from) { if (!onHome) trail = trail.concat([{ layer: layer, held: from || held }]); layer = to }
+    // from the tab bar's line onto the tab's titles: a grid tab's first row, past its filters (Down
+    // from the bar goes to the filters; with no rows yet they are all there is)
+    function toTitles() {
+        var screen = animeTab ? anime : browseTab ? browse : null;
+        if (screen && screen.row < 0 && screen.rows.length) screen.row = 0;
+        layer = "home";
+    }
     function back() {
         var t = trail.slice(), to = t.pop() || { layer: "home", held: held };
         trail = t;
@@ -1022,8 +1029,14 @@ WebOSWindow {
             else if (Remote.isBack(event.key) && app.layer === "signin") event.accepted = true                       // nowhere to go back to: signed out, the app is this screen
             // Back in the search bar: what is typed goes first, and from an empty bar it leaves the search
             else if (Remote.isBack(event.key) && app.searchTab && app.layer === "tabs") { event.accepted = true; if (searchBar.text) searchBar.text = ""; else { app.tab = 0; app.layer = "home" } }
-            else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
+            // Back goes between two places on a tab: from the top of its page (Continue Watching, a grid
+            // tab's filters: whatever the page itself did not go back from) to the tab bar, and from the
+            // tab bar's line to the page's titles. (His rule, 2026-11-19. Back on the tab bar went to
+            // the filters, and at the top of a page it did nothing.) Under a menu it closes the menu.
+            else if (Remote.isBack(event.key) && app.layer === "menu") { event.accepted = true; app.layer = "home" }
+            else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.toTitles() }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }
+            else if (Remote.isBack(event.key)) { event.accepted = true; app.layer = "tabs" }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
             else if (event.key === Qt.Key_Right && app.layer === "tabs") { event.accepted = true; app.layer = "profile" }     // past the last tab: the account
             else if (event.key === Qt.Key_Left && app.layer === "tabs") event.accepted = true                               // (nothing left of the search)

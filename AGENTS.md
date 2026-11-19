@@ -489,6 +489,11 @@ format list differs from the TV, so neither settles anything.
   on its own picture unblurred, for the 280 ms the cursor takes to rest.
 - What stands on the tab bar's line is on the tab bar's glass (`Avatar`: the same source, blur and
   shadow). On a flat fill it read as a hole beside the bar.
+- Back goes between two places on a tab (his rule, 2026-11-19): from the top of its page (Continue
+  Watching, a grid tab's filters) to the tab bar, and from the tab bar's line to the page's titles,
+  a grid tab's first row and not its filters (`App.toTitles`; Down from the bar is what goes to the
+  filters). Inside a page Back goes to its top first, as each screen has it. A new screen that
+  takes Back takes it only while it has somewhere of its own to go back from.
 - A control that has no say where you are is not in the row: it is not dimmed (the order in the
   Anime tab's schedule, the view for a season with nothing airing). Put the one that comes and goes
   last, so nothing moves for it; where it can't be last, its place closes after it has faded
