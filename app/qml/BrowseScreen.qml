@@ -144,8 +144,10 @@ FocusScope {
             }
         }
         Keys.onUpPressed: browse.exitTop()
-        Keys.onDownPressed: if (grid.rows.length) browse.row = 0
+        Keys.onDownPressed: browse.toTitles()
     }
+    // from the filters onto the titles (Down, and App's Back from the tab bar)
+    function toTitles() { if (grid.rows.length) row = 0 }
     CardGrid {
         id: grid
         width: browse.width; height: browse.height

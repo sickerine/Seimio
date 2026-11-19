@@ -294,8 +294,11 @@ FocusScope {
             }
         }
         Keys.onUpPressed: anime.exitTop()
-        Keys.onDownPressed: if (anime.rows.length && !anime.seasonLoading) anime.row = 0
+        Keys.onDownPressed: anime.toTitles()
     }
+    // from the controls onto the titles (Down, and App's Back from the tab bar): not while another season
+    // is on its way, when the rows are still the season before's
+    function toTitles() { if (rows.length && !seasonLoading) row = 0 }
 
     // ---- the rows --------------------------------------------------------------------------------------------
     CardGrid {

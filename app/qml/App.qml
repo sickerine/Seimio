@@ -215,11 +215,12 @@ WebOSWindow {
     onOnHomeChanged: if (onHome) trail = []
     // onto another screen; `from` is the title that was in hand when a page opens over a page (Related)
     function go(to, from) { if (!onHome) trail = trail.concat([{ layer: layer, held: from || held }]); layer = to }
-    // from the tab bar's line onto the tab's titles: a grid tab's first row, past its filters (Down
-    // from the bar goes to the filters; with no rows yet they are all there is)
+    // from the tab bar's line onto the tab's titles: a grid tab's first row, past its filters, by the
+    // screen's own rule for stepping down from them (Down from the bar goes to the filters; with no
+    // rows to step onto they are where it lands)
     function toTitles() {
         var screen = animeTab ? anime : browseTab ? browse : null;
-        if (screen && screen.row < 0 && screen.rows.length) screen.row = 0;
+        if (screen && screen.row < 0) screen.toTitles();
         layer = "home";
     }
     function back() {
