@@ -70,6 +70,7 @@ WebOSWindow {
     // (SearchScreen.lift, by `level`), a whole row of them above the keyboard. With the keyboard gone
     // the rows glide back down and the title comes in, as on leaving the Library.
     readonly property bool typing: searchTab && searchBar.typing
+    onTypingChanged: Remote.stir()       // (the keyboard's own Back is a key the app never sees, and the rows move for it)
     readonly property bool plain: browsing === "library" || (searchTab && (typing || !search.any))      // a tab with no title above its grid
     readonly property bool bare: onHome && plain            // and on it: no info, the backdrop frosted
     // The title in hand is not one the tabs are showing: it was in hand as such a tab came up, or taken
