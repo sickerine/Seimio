@@ -29,17 +29,20 @@ Item {
         sourceRect: glass.captured
         active: glass.onScreen && !glass.preblurred
     }
-    ShaderEffectSource {
-        id: direct
-        sourceItem: glass.preblurred ? glass.source : null
-        sourceRect: glass.captured
-        textureSize: blur.quarterSize
-        live: glass.onScreen && glass.preblurred
-        hideSource: false; visible: false; smooth: true
-    }
     ShaderEffect {
         anchors.fill: parent
-        property var tex: glass.preblurred ? direct : blur.output
+        // Over a frost (`preblurred`) the frost's own blur is read where the panel lies: `texRect` is that
+        // place in the texture, `gain` the frost's darkening and `soft` the half texel its four reads
+        // smooth the upscale by, so the panel shows what the frost would. Each panel used to capture the
+        // frost for itself instead, a pass a panel whenever the frost changed: five on the Anime tab on
+        // top of the frost's five, twenty times a second through a backdrop's crossfade, and with those
+        // captures off Home's tour had 3 to 6 frames over 12 ms of drawing where it had 3 to 10.
+        readonly property bool over: glass.preblurred && !!glass.source
+        property var tex: glass.preblurred ? (glass.source ? glass.source.blurred : null) : blur.output
+        property rect texRect: over ? Qt.rect(glass.captured.x / glass.source.width, glass.captured.y / glass.source.height,
+                                              glass.captured.width / glass.source.width, glass.captured.height / glass.source.height) : Qt.rect(0, 0, 1, 1)
+        property real gain: over ? glass.source.darken : 1
+        property size soft: over ? Qt.size(glass.source.blurredTexel.width * 0.5, glass.source.blurredTexel.height * 0.5) : Qt.size(0, 0)
         property size box: Qt.size(width, height)
         property size inset: Qt.size(glass.pad / (glass.width + 2 * glass.pad), glass.pad / (glass.height + 2 * glass.pad))
         property real radius: glass.radius
@@ -51,6 +54,9 @@ Item {
         fragmentShader: "
             varying highp vec2 qt_TexCoord0;
             uniform sampler2D tex;
+            uniform highp vec4 texRect;
+            uniform lowp float gain;
+            uniform highp vec2 soft;
             uniform highp vec2 box;
             uniform highp vec2 inset;
             uniform highp float radius;
@@ -68,8 +74,12 @@ Item {
                 // lens: within ~24px of the edge, sample further out, so the background bends inwards
                 highp float edge = clamp(1.0 + d / 24.0, 0.0, 1.0);
                 highp vec2 dir = normalize(p - hb + 0.0001) * edge * edge * 10.0 * refraction;
-                highp vec2 uv = inset + (p + dir) / box * (1.0 - 2.0 * inset);
-                lowp vec4 c = texture2D(tex, uv);
+                highp vec2 uv = texRect.xy + (inset + (p + dir) / box * (1.0 - 2.0 * inset)) * texRect.zw;
+                // (four reads half a texel apart: over a frost they smooth its small texture; otherwise
+                // `soft` is nothing and they are one read)
+                lowp vec4 c = (texture2D(tex, uv + soft) + texture2D(tex, uv + vec2(-soft.x, soft.y))
+                             + texture2D(tex, uv + vec2(soft.x, -soft.y)) + texture2D(tex, uv - soft)) * 0.25;
+                c.rgb *= gain;
                 lowp float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
                 c.rgb = mix(vec3(l), c.rgb, saturation);
                 c.rgb = mix(c.rgb, tint.rgb, tint.a);

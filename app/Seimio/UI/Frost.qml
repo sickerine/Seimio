@@ -21,6 +21,10 @@ Item {
     // something reads its blur (a Glass over it) though it doesn't show itself: the blur is kept up
     property bool needed: false
     function refresh() { blur.refresh() }
+    // the blur itself, for a Glass over this frost to read where it lies (it darkens it by `darken` and
+    // smooths its upscale as the frost does below): one texture for every panel over the frost
+    readonly property alias blurred: blur.output
+    readonly property size blurredTexel: Qt.size(1 / blur.outputSize.width, 1 / blur.outputSize.height)
 
     BlurChain {
         id: blur
