@@ -622,7 +622,9 @@ private:
     void linked(const query::Result<QString> &r) {
         if (r.fetching || (!r.data && r.status != query::Error)) return;
         setStage("");
-        emit playable(m_chosen, r.data ? *r.data : m_chosen.value("url").toString());
+        // (a link the cache still holds from an earlier asking is not this one's: after a failure the
+        // stream's own address plays, never a link that may have run out)
+        emit playable(m_chosen, r.data && r.status != query::Error ? *r.data : m_chosen.value("url").toString());
     }
     // TorBox's direct link for a Torrentio stream, as a query: add the torrent, find the file, request its
     // link. Without one it fails, and nothing is kept of that.

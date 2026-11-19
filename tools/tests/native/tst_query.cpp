@@ -335,7 +335,8 @@ private slots:
         const auto work = onWorker<int>([&runs] { const int n = ++runs; QThread::msleep(n == 2 ? 60 : 5); return n; });
         o.watch({ "k" }, work, quick());
         QTRY_COMPARE(t.value(), 1);
-        cache.invalidate({ "k" }); turn();              // a read under way (the slow one),
+        cache.invalidate({ "k" });                      // a read under way (the slow one),
+        QTRY_COMPARE(runs.load(), 2);                   // (begun: the next is the third whichever the pool starts first)
         cache.invalidate({ "k" });                      // and what it reads changes again
         QTRY_COMPARE(t.value(), 3);
         QTRY_COMPARE(cache.counts().dropped, 1);        // the slow one ended later, and changed nothing
