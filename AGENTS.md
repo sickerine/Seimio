@@ -147,6 +147,10 @@ Each rule comes from a measured stall on the C5.
   moving before it), and one collection the JavaScript engine starts by itself as the first backdrop
   begins to fade in from black (33 ms). The collections and the Anime tab's building after that are
   the app's own, at rest.
+  The first two were late frames only because frames were being drawn: the backdrop drifted before it
+  had a picture, a black frame sixty times a second. It drifts from its first picture's way in now
+  (`Backdrop.drifts`): 139 to 144 frames were drawn before the first backdrop, 64 to 68 after, and
+  the frame the rows are created in is not one of a run any more.
 - A component that shows a page of data takes it as one value (`PagedStrip.show(page, index)`, an
   explicit `load()`): as separate inputs set one after another, every card was rebound for each. A page
   that opens on an episode is built once, for the place it lands on.

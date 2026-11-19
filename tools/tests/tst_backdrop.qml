@@ -19,6 +19,7 @@ Item {
         Frost { id: drawn; anchors.fill: parent; source: hero; frozen: true }
     }
     Frost { id: kept; x: 640; width: 640; height: 360; made: hero.blurred; madeSize: hero.blurredSize }
+    Backdrop { id: bare; width: 64; height: 36 }        // one that has not been given a picture yet
     readonly property string first: Qt.resolvedUrl("../../app/icon.png")
     readonly property string second: Qt.resolvedUrl("../preview/baseline/home.png")
 
@@ -78,6 +79,16 @@ Item {
             verify(hero.settling, "the picture is shifting");
             tryVerify(function () { return !hero.settling }, 2000);
             hero.pan = 0; tryVerify(function () { return !hero.settling }, 2000);
+        }
+        // With no picture it has nothing to drift: an empty backdrop zooming was a black frame drawn
+        // sixty times a second through the first seconds of a launch. It drifts from its first picture's
+        // way in.
+        function test_itDoesNotDriftWithNothingToShow() {
+            compare(bare.shown, ""); wait(100);
+            compare(bare.drifting.driven, 0, "still");
+            bare.target = first;
+            tryVerify(function () { return bare.shown === first }, 5000);
+            verify(bare.drifting.driven !== 0, "and drifting once a picture is in");
         }
     }
 }

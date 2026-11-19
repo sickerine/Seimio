@@ -76,9 +76,12 @@ Item {
     // stops where it is and the picture isn't drawn, so nothing redraws for it, and goes on from there
     // once it shows again. (The blur drifts by an Ambient of its own, run and stopped with the
     // picture's, so the two are at the same place in the round.)
+    // Nor does it drift with no picture to show: an empty backdrop zooming was a black frame drawn sixty
+    // times a second through the first seconds of a launch, until its first picture came.
     property bool covered: false
-    property Ambient drifting: Ambient { effect: picture; uniform: "drift"; period: 36000; running: root.visible && !root.covered }
-    property Ambient blurDrifting: Ambient { effect: blend; uniform: "drift"; period: 36000; running: root.visible && !root.covered }
+    readonly property bool drifts: visible && !covered && (shown !== "" || fading)
+    property Ambient drifting: Ambient { effect: picture; uniform: "drift"; period: 36000; running: root.drifts }
+    property Ambient blurDrifting: Ambient { effect: blend; uniform: "drift"; period: 36000; running: root.drifts }
 
     ShaderEffect {
         id: picture
