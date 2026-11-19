@@ -2,44 +2,42 @@
 // rounded `hole` (in this item's pixels) stays clear, for something that should stay sharp above the
 // frost. `frozen`/`sourceBusy` work as in BlurChain. A frost that is about to be needed can be drawn
 // once at a tiny opacity ("warmed") so its shaders compile before first real use; at opacity 0 Qt
-// doesn't draw it at all. Fully faded in and without a hole it's opaque (`covering`); with
-// `hideCovered` its source then isn't drawn under it, only captured.
+// doesn't draw it at all. Fully faded in and without a hole it's opaque (`covering`).
+//
+// A source that keeps a blur of itself (the backdrop: Backdrop.blurred) is given as `made`, with the
+// blur's size as `madeSize`, and not as `source`: the frost shows that blur and blurs nothing itself.
 import QtQuick 2.12
 
 Item {
     id: frost
     property Item source
+    property var made: null
+    property size madeSize
     property real darken: 0.78
     property rect hole: Qt.rect(0, 0, 0, 0)
     property real holeRadius: 18
     property bool frozen: false
     property bool sourceBusy: false
-    property bool sourceMoving: false
-    property bool hideCovered: false
     readonly property bool covering: opacity >= 1 && hole.width <= 0
     visible: opacity > 0
-    // something reads its blur (a Glass over it) though it doesn't show itself: the blur is kept up
-    property bool needed: false
     function refresh() { blur.refresh() }
     // the blur itself, for a Glass over this frost to read where it lies (it darkens it by `darken` and
     // smooths its upscale as the frost does below): one texture for every panel over the frost
-    readonly property alias blurred: blur.output
-    readonly property size blurredTexel: Qt.size(1 / blur.outputSize.width, 1 / blur.outputSize.height)
+    readonly property var blurred: made || blur.output
+    readonly property size blurredTexel: made ? Qt.size(1 / madeSize.width, 1 / madeSize.height) : Qt.size(1 / blur.outputSize.width, 1 / blur.outputSize.height)
 
     BlurChain {
         id: blur
         source: frost.source
         sourceRect: Qt.rect(0, 0, frost.width, frost.height)
-        active: frost.visible || frost.needed
+        active: frost.visible && !frost.made
         frozen: frost.frozen
         sourceBusy: frost.sourceBusy
-        sourceMoving: frost.sourceMoving
-        hideSource: frost.hideCovered && frost.covering
     }
     ShaderEffect {
         anchors.fill: parent
-        property var tex: blur.output
-        property size texel: Qt.size(1 / blur.outputSize.width, 1 / blur.outputSize.height)
+        property var tex: frost.blurred
+        property size texel: frost.blurredTexel
         property size box: Qt.size(width, height)
         property rect holeRect: frost.hole
         property real holeR: frost.holeRadius

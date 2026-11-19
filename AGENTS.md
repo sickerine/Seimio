@@ -85,8 +85,9 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   the frost kept up for the grid tabs' filter bars is about half of it (3 to 4 without it), and it is
   its following the backdrop twenty times a second that costs, not its being switched on (kept up on
   every tab it was worse, 9 to 12). Half of that following was the bars' own captures of the frost,
-  which are gone (a glass over a frost reads its blur, below); what is left is the frost's five
-  passes at each refresh and a screen's own arrival.
+  which are gone (a glass over a frost reads its blur, below), and the frost's own five passes at
+  each refresh went when the backdrop came to keep its blur (the glass rule below); what is left is a
+  screen's own arrival.
 
 ## Performance rules
 
@@ -133,17 +134,21 @@ Each rule comes from a measured stall on the C5.
   row or a grid.
   `ArtCache.loads` in the lab state counts cards that had to wait for art: a walk back adds none.
 - One shader per full-screen layer, and glass and frost only through `Glass`, `Frost` and `BlurChain`,
-  which capture only while visible (`frozen` captures once, and again while `sourceBusy`). A small glass
-  over the drifting backdrop (the tab bar) stays live: refreshed twice a second instead, each capture was
-  a 14-16 ms frame on its own and often late, where the steady chain costs ~2 ms a frame.
-- A glass draws its source again to blur it, the whole of it, whatever part lies under the panel. Give
-  it the least that can be under it: the tab bar and the search bar blur `sky` (the backdrop, its frost
-  and the shade, App.qml), not the scene. On the scene, every frame drew the screens twice, and a tab
-  switch, with one screen going and another coming, had 14 to 18 frames over 12 ms of drawing in
-  Home's tour (3 to 8 on `sky`; the previews are pixel for pixel the same).
-  And a glass over a frost (`preblurred`) captures nothing: it reads the frost's blur (`Frost.blurred`)
-  where it lies. Capturing the frost for itself was a pass a panel at each of the frost's refreshes,
-  five on the Anime tab on top of the frost's five (16 passes a frame through a crossfade, 6 at rest).
+  which capture only while visible (`frozen` captures once, and again while `sourceBusy`).
+- A glass draws its source again to blur it, the whole of it, whatever part lies under the panel, so
+  give it a blur that is already made where there is one (`preblurred`: it captures nothing and reads
+  `source.blurred` where it lies). Nothing blurs the backdrop as it is drawn: `Backdrop` keeps a blur
+  of each picture, made once as the picture comes in, and puts the crossfade, the drift and the pan on
+  the two blurs in one small pass a frame (`Backdrop.blurred`). Its frost shows that blur
+  (`Frost.made`), a filter bar reads it through the frost, and the tab bar and the search bar read it
+  under the frost's darkening and the shade (`skyBlurred`, App.qml). Before, the bars blurred the
+  whole scene (the screens drawn twice every frame: 14 to 18 frames over 12 ms of drawing in the tab
+  switches of Home's tour), then the backdrop's layers alone, five passes a frame, with the frost
+  following a crossfade twenty times a second, five passes each. Measured on the TV on 2026-11-19,
+  three tours each, turn about: Home had 6, 2 and 5 frames over 12 ms before and 2, 3 and 1 after, and
+  Anime's crossfades 2, 3 and 2 before and 1 each after. The mean frame is the same 5.3 ms: the gain
+  is in the frames that pile up, and the frost now follows a crossfade every frame instead of every
+  third. The previews did not change.
 - A full-screen texture nobody sees is not free. `Backdrop` lets go of the picture that faded out: its
   shader samples both, and the second 1080p texture cost 2 to 3.5 ms of every frame.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.
@@ -211,12 +216,13 @@ Each rule comes from a measured stall on the C5.
   work that runs while something slides away waits until it has (the calendar returns to today 520 ms
   after it leaves).
 - A frozen blur refreshes every 50 ms, not every frame, while its source changes (`BlurChain`); every
-  frame cost ~10 render passes and a blur that wide hides the difference, except during the backdrop's 700 ms crossfade
-  (`sourceMoving`), where a full-screen frost stepping at 20 Hz showed; that costs no late frames.
+  frame cost ~10 render passes and a blur that wide hides the difference. (A full-screen frost stepping
+  at 20 Hz through the backdrop's crossfade did show; the backdrop's frost now reads the backdrop's own
+  blur, which follows every frame.)
 - Blur once. Glass over a Frost samples the frost directly (`preblurred`) instead of blurring it again.
 - Nothing opaque is drawn over something still drawn under it. A frost fully faded in covers the
-  backdrop: it hides it (`hideCovered`, ShaderEffectSource `hideSource`, still captured) and the backdrop's
-  zoom pauses (`covered`). Drawing it under the frost was a full-screen pass a frame; with the
+  backdrop: the backdrop stops drawing its picture and its zoom pauses (`covered`), and the frost goes
+  on showing the blur the backdrop keeps. Drawing it under the frost was a full-screen pass a frame; with the
   off-screen cards (below) it held the Anime schedule at 30 fps (55 late frames a tour, now ~10).
 - Off screen is not free: a strip's cards and a list's rows that are fully off screen are `visible:
   false`. A sliding row keeps cards past both edges, and a recycled row slot sits below the screen.
@@ -241,13 +247,12 @@ Each rule comes from a measured stall on the C5.
   first row at once and the rest between frames (the player's stream sheet: nine rows at once were 53 ms
   on the GUI thread), and a title that arrives from the network is taken in on one frame and its page
   opened on the next (together they were one 60 to 70 ms stall).
-- A frost follows the backdrop only while the backdrop changes (`Backdrop.settling`: a crossfade running
-  or the picture shifting), not from the moment another picture is wanted: through the wait for that
-  picture nothing on screen has changed, and following it was five passes twenty times a second in the
-  frames a tab's screen comes in (Home's tour: 5 to 9 heavy frames in its tab switches, 2 to 5 after).
-- A frost follows its source only while it is wanted. On its way out its blur is left as it is
-  (`backdropFrost.leaving`): a backdrop still crossfading under it as a page opened had it blurred again
-  every frame of the fade, five passes more, and the page opened at 30 fps.
+- A frost that blurs the scene (the quick menu's) follows the backdrop only while the backdrop changes
+  (`Backdrop.settling`: a crossfade running or the picture shifting), not from the moment another
+  picture is wanted: through the wait for that picture nothing on screen has changed, and following it
+  was five passes twenty times a second in the frames a tab's screen comes in (Home's tour: 5 to 9
+  heavy frames in its tab switches, 2 to 5 after). And only while it is wanted: one that is only
+  warming, or on its way out, is left as it is.
   - A grid coming on screen shows its rows a frame apart (`CardGrid.arrived`): a tab's first visit drew
     two rows of new posters in one frame, 25 to 35 ms. Drawing a tab ahead at rest instead (faintly, as
     it is built) was tried and taken out: its heavy frames come 8 s after launch, when the first keys do.

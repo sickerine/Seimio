@@ -23,7 +23,7 @@ FocusScope {
     property var kinds: []                   // the kinds on offer, as a SegmentedBar's entries
     property int kind: 0                     // the one chosen
     property int zone: 0                     // 0 the field, 1 the kinds
-    property Item source                     // what the glass blurs
+    property Item source                     // a blur of what is under the bar, which its glass reads (as Glass's `preblurred`)
     property real iconX: 0                   // where the tab bar's search icon sits, in this bar
     readonly property int gap: 22
     readonly property alias kindBar: kindBar
@@ -40,7 +40,7 @@ FocusScope {
         id: kindBar
         selectOnOk: true
         focus: bar.zone === 1
-        source: bar.source; sx: x; sy: bar.y
+        source: bar.source; preblurred: true; sx: x; sy: bar.y
         x: field.x - bar.gap - width
         model: bar.kinds
         visible: field.visible
@@ -51,7 +51,7 @@ FocusScope {
         id: field
         open: bar.open
         focus: bar.zone === 0
-        source: bar.source; sy: bar.y
+        source: bar.source; preblurred: true; sy: bar.y
         iconX: bar.iconX
         openWidth: 720
         // the two as one row in the middle of the bar, the kinds first

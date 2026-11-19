@@ -622,13 +622,17 @@ WebOSWindow {
             visible: opacity > 0
             Behavior on opacity { NumberAnimation { duration: 500 } }
 
-            // The sky: what lies under the bars at the top of the screen, and nothing else. The backdrop, its
-            // frost and the shade over them are all a bar's glass ever blurs, so the tab bar and the search
-            // bar take this as their source. They took the whole scene, and a glass draws its source again
-            // for its blur: every frame the screens were drawn twice, and as one tab's screen went and the
-            // next came the frames passed 12 ms of drawing, which is what the TV's compositor answers with
-            // a swap held 100 ms now and then (FrameStats, probes.h). Home's tour had 14 to 18 such frames
-            // in its tab switches; with the tab bar's glass off, 3 to 4.
+            // The sky: what lies under the bars at the top of the screen: the backdrop, its frost and the
+            // shade over them. Nothing blurs it as it is drawn. The backdrop keeps a blur of each picture,
+            // made once (Backdrop.blurred): the frost shows that, a grid tab's filter bars read it through
+            // the frost, and the bars at the top read it as `skyBlurred`, under the frost's darkening and
+            // the shade.
+            // (The bars blurred what was drawn instead. First the whole scene: a glass draws its source
+            // again for its blur, so every frame the screens were drawn twice, and Home's tour had 14 to
+            // 18 frames over 12 ms of drawing in its tab switches, which is what the TV's compositor
+            // answers with a swap held 100 ms now and then (FrameStats, probes.h). Then these three
+            // layers alone: five passes every frame for the tab bar, and five more for the frost twenty
+            // times a second through every crossfade.)
             Item {
                 id: sky
                 anchors.fill: parent
@@ -641,36 +645,50 @@ WebOSWindow {
                     pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
                     Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
                     onCrossfadeStarted: { Remote.stir(); probe.act("hero crossfade") }   // a crossfade is movement too
+                    // fully in, the frost hides it: drawing it under an opaque frost was a wasted full-screen pass
                     covered: backdropFrost.covering
+                    // read on Home (the bars at the top, a grid tab's filter bars, the calendar's panels),
+                    // by the frost wherever it shows, and by the tab bar on its way off the screen
+                    blurWanted: app.onHome || backdropFrost.visible || sky.barsUp
                 }
                 // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
                 // is only a background
                 Frost {
                     id: backdropFrost
                     anchors.fill: parent
-                    source: hero
+                    made: hero.blurred; madeSize: hero.blurredSize
                     readonly property bool wanted: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player"
-                    // On its way out its blur stays as it is: a backdrop still crossfading under it as a page
-                    // opened had it blurred again every frame of the fade (five passes more), and the page opened
-                    // at 30 fps, six or seven late frames.
-                    readonly property bool leaving: !wanted && opacity > 0.01
-                    frozen: true; sourceBusy: !leaving && hero.settling; sourceMoving: wanted && hero.fading
-                    // The filter bars of a grid tab are glass made of this blur, also over a clear backdrop: left
-                    // alone there, it went stale and the bars wore a blur of whatever was up when it last showed.
-                    // (Not every frame of a crossfade for them: 20 a second while the backdrop settles is plenty.)
-                    needed: app.onHome && (app.animeTab || app.browseTab)
-                    onWantedChanged: if (wanted) refresh()      // back before it had gone: of the backdrop as it is now
-                    // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
-                    hideCovered: true
                     opacity: wanted ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
                     Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
                 }
-                Scrim {
+                Component {
+                    id: shade
+                    Scrim {
+                        readonly property bool page: app.layer === "show" || app.layer === "title" || app.layer === "streams" || home.dayOpen
+                        side: page ? 0.95 : 0.85
+                        sideMid: page ? 0.35 : 0.15
+                        footMid: page ? 0.7 : 0.55
+                    }
+                }
+                Loader { anchors.fill: parent; sourceComponent: shade }
+                // The sky blurred, which a bar's Glass reads as it reads a frost: the backdrop's blur, the
+                // frost's darkening as far as the frost is in, and the shade, put together at the blur's own
+                // size in one small pass a frame while a bar is on the screen.
+                readonly property bool barsUp: tabs.y + tabs.height > 0
+                Item {
+                    id: skyBlurred
                     anchors.fill: parent
-                    readonly property bool page: app.layer === "show" || app.layer === "title" || app.layer === "streams" || home.dayOpen
-                    side: page ? 0.95 : 0.85
-                    sideMid: page ? 0.35 : 0.15
-                    footMid: page ? 0.7 : 0.55
+                    readonly property alias blurred: together
+                    readonly property size blurredTexel: Qt.size(1 / hero.blurredSize.width, 1 / hero.blurredSize.height)
+                    readonly property real darken: 1
+                    Item {
+                        id: small
+                        width: hero.blurredSize.width; height: hero.blurredSize.height
+                        ShaderEffect { anchors.fill: parent; blending: false; property var source: hero.blurred }
+                        Rectangle { anchors.fill: parent; color: "black"; opacity: backdropFrost.opacity * (1 - backdropFrost.darken) }
+                        Loader { anchors.fill: parent; sourceComponent: shade }
+                    }
+                    ShaderEffectSource { id: together; sourceItem: small; textureSize: hero.blurredSize; live: sky.barsUp; hideSource: true; visible: false; smooth: true }
                 }
             }
             HeroInfo {
@@ -799,10 +817,7 @@ WebOSWindow {
         SegmentedBar {
             id: tabs
             focus: app.layer === "tabs" && !app.searchTab
-            source: sky                 // (the backdrop's layers alone: see `sky`)
-            // Its blur is taken every frame, five small passes: taken twice a second instead (the backdrop
-            // under it only drifts), each capture was a 14 to 16 ms frame on its own and often a late one,
-            // where the steady chain costs about 2 ms of every frame.
+            source: skyBlurred; preblurred: true      // (its glass blurs nothing: see `sky`)
             // The search at the left end, then the tabs: Left from Home reaches it, and Right from the
             // Library goes on to the account at the right edge of the screen.
             model: [{ icon: "search" }, "Home", "Anime", "Movies", "Series", "Library"]
@@ -828,7 +843,7 @@ WebOSWindow {
             focus: app.layer === "tabs" && app.searchTab
             opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims, as the tab bar does under a menu
             Behavior on opacity { NumberAnimation { duration: 300 } }
-            source: sky                 // (as the tab bar's: two glasses here, each drawing its source again)
+            source: skyBlurred          // (as the tab bar's)
             iconX: tabs.x
             // a kind the search found nothing of is dim
             kinds: app.searchKinds.map(function (k) { return { label: k[0], faint: search.found.length > 1 && !search.count(k[1]) } })

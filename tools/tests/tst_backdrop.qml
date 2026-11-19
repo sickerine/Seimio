@@ -1,13 +1,23 @@
 // Backdrop: `settling` says when what it shows is changing, which is when a frozen blur of it has to
 // follow. Waiting for a picture is not that: nothing on screen has changed until the crossfade starts.
 // A frost that followed through the wait captured twenty times a second for nothing.
+// And `blurred`, the blur it keeps of itself: it is made once a picture, so it has to be what a blur of
+// the backdrop as drawn would be, after a picture has changed too (a blur left at the picture before,
+// or the two pictures' blurs the wrong way round, is the frost showing another title's colours).
 import QtQuick 2.12
 import QtTest 1.2
 import Seimio.UI 1.0
 
 Item {
-    width: 640; height: 360
-    Backdrop { id: hero; anchors.fill: parent }
+    width: 1280; height: 360
+    // side by side (a grab is the window's pixels where the item lies): the backdrop under a frost that
+    // blurs it as it is drawn, and beside them a frost of the blur the backdrop keeps
+    Item {
+        width: 640; height: 360
+        Backdrop { id: hero; anchors.fill: parent; blurWanted: true }
+        Frost { id: drawn; anchors.fill: parent; source: hero; frozen: true }
+    }
+    Frost { id: kept; x: 640; width: 640; height: 360; made: hero.blurred; madeSize: hero.blurredSize }
     readonly property string first: Qt.resolvedUrl("../../app/icon.png")
     readonly property string second: Qt.resolvedUrl("../preview/baseline/home.png")
 
@@ -27,6 +37,28 @@ Item {
             verify(hero.settling, "a crossfade is followed");
             tryVerify(function () { return hero.shown === second && !hero.fading }, 5000);
             verify(!hero.settling, "and it is over with it");
+        }
+        // the two frosts at fifteen places: the furthest apart they are, in levels of 255
+        function apart() {
+            drawn.refresh(); wait(120);
+            var a = grabImage(kept), b = grabImage(drawn), worst = 0;
+            for (var x = 1; x <= 5; x++) for (var y = 1; y <= 3; y++) {
+                var px = Math.round(x * hero.width / 6), py = Math.round(y * hero.height / 4);
+                worst = Math.max(worst, Math.abs(a.red(px, py) - b.red(px, py)), Math.abs(a.green(px, py) - b.green(px, py)), Math.abs(a.blue(px, py) - b.blue(px, py)));
+            }
+            return worst;
+        }
+        function test_itsKeptBlurIsABlurOfWhatItShows() {
+            Theme.still = true;                                 // the drift held, so both blur the same moment
+            hero.target = first;
+            tryVerify(function () { return hero.shown === first && !hero.fading }, 5000);
+            var one = grabImage(kept).pixel(320, 180);
+            verify(apart() <= 6, "of the first picture");
+            hero.target = second;
+            tryVerify(function () { return hero.shown === second && !hero.fading }, 5000);
+            verify(apart() <= 6, "and of the one after it, once it has come");
+            verify(!Qt.colorEqual(grabImage(kept).pixel(320, 180), one), "(the two pictures blur to different colours there)");
+            Theme.still = false;
         }
         function test_aMoveAlongARowIsFollowedToo() {
             hero.pan = 10;
