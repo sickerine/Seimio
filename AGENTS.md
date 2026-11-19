@@ -74,8 +74,14 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   12 ms of sync and render a held swap followed within four frames 0.02% of the time; after one of
   12 to 17 ms, 1.5%; of 17 to 25 ms, 3 to 4%; above that, 5%. So a frame can be on time and still
   cost a 100 ms hitch: keep a frame's drawing under 12 ms, not only under a refresh. A tour counts
-  the frames over that (`heavy`, per phase and in all; no budget yet). On 2026-11-19: home 8 to 11,
-  browse 4 to 12, anime 13 to 14, most of them in tab switches and the first seconds of a launch.
+  the frames over that (`heavy`, per phase and in all) against a budget of 20 (30 on anime, 32 on
+  search). On 2026-11-19: home 5 to 11, browse 4 to 12, schedule 10, the other check routes 1 to 3,
+  anime 12 to 22, search 23; most of them in tab switches and the first seconds of a launch.
+  What is left in a tab switch, by turning things off on the TV, three Home tours each (5 to 8 heavy
+  frames as it is): rows arriving two or three frames apart instead of one changed nothing (8 to 10);
+  the frost kept up for the grid tabs' filter bars is about half of it (3 to 4 without it), and it is
+  its following the backdrop twenty times a second that costs, not its being switched on (kept up on
+  every tab it was worse, 9 to 12). The next step there is how those bars follow a crossfade.
 
 ## Performance rules
 
