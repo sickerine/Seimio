@@ -9,25 +9,36 @@ Item {
     property var ids: (Qt.application.arguments[Qt.application.arguments.length - 1] || "").split(",")
     property int at: -1
     property double askedAt: 0              // when the show on its way was asked for (`ms` in its line: how long it took)
+    function say(sourceId, item, show) {
+        giveUp.stop();
+        var tabs = (show.seasons || []).map(function (s) {
+            var entries = {};
+            s.episodes.forEach(function (e) { if (e.entry !== undefined) entries[e.entry] = true });
+            return { season: s.season, label: s.label || "", kind: s.kind || "", episodes: s.episodes.length, entries: Object.keys(entries).map(Number),
+                     first: s.episodes.length ? s.episodes[0].id : "" };
+        });
+        console.log("FRANCHISE " + JSON.stringify({ asked: sourceId, ms: Date.now() - root.askedAt, item: item.id, video: item.video || "", name: show.name, rest: show.rest || "",
+            entries: (show.entries || []).map(function (e) { return { id: e.id, kind: e.kind, title: e.title, logo: e.logo || "", backdrop: e.backdrop || "" } }),
+            tabs: tabs, related: (show.related || []).map(function (r) { return { id: r.id, title: r.title, relation: r.relation } }) }));
+        next.restart();
+    }
     Catalog {
         id: catalog
-        onFranchiseReady: {
-            if (sourceId !== root.ids[root.at]) return;
-            giveUp.stop();
-            var tabs = (show.seasons || []).map(function (s) {
-                var entries = {};
-                s.episodes.forEach(function (e) { if (e.entry !== undefined) entries[e.entry] = true });
-                return { season: s.season, label: s.label || "", kind: s.kind || "", episodes: s.episodes.length, entries: Object.keys(entries).map(Number),
-                         first: s.episodes.length ? s.episodes[0].id : "" };
-            });
-            console.log("FRANCHISE " + JSON.stringify({ asked: sourceId, ms: Date.now() - root.askedAt, item: item.id, video: item.video || "", name: show.name, rest: show.rest || "",
-                entries: (show.entries || []).map(function (e) { return { id: e.id, kind: e.kind, title: e.title, logo: e.logo || "", backdrop: e.backdrop || "" } }),
-                tabs: tabs, related: (show.related || []).map(function (r) { return { id: r.id, title: r.title, relation: r.relation } }) }));
-            next.restart();
-        }
+        onFranchiseReady: if (sourceId === root.ids[root.at]) root.say(sourceId, item, show)
         onFranchiseFailed: { if (sourceId !== root.ids[root.at]) return; giveUp.stop(); console.log("FRANCHISE " + JSON.stringify({ asked: sourceId, failed: reason })); next.restart() }
     }
     // (a franchise is three or four questions to AniList, which answers thirty a minute: one show every eight seconds)
-    Timer { id: next; interval: 8000; running: true; onTriggered: { root.at++; if (root.at >= root.ids.length) { console.log("SWEEP DONE"); Qt.quit(); return } giveUp.restart(); root.askedAt = Date.now(); catalog.loadFranchise({ id: root.ids[root.at], type: "series", name: "" }) } }
+    Timer {
+        id: next; interval: 8000; running: true
+        onTriggered: {
+            root.at++;
+            if (root.at >= root.ids.length) { console.log("SWEEP DONE"); Qt.quit(); return }
+            giveUp.restart(); root.askedAt = Date.now();
+            // (as the app asks: a page Catalog holds already, under an id an earlier one of the run turned
+            // out to be, is read from it, and `loadFranchise` says nothing of it again)
+            var id = root.ids[root.at], held = catalog.franchise(id);
+            if (held) root.say(id, held.item, held.show); else catalog.loadFranchise({ id: id, type: "series", name: "" });
+        }
+    }
     Timer { id: giveUp; interval: 45000; onTriggered: { console.log("FRANCHISE " + JSON.stringify({ asked: root.ids[root.at], failed: "no answer in 45 s" })); next.restart() } }
 }

@@ -28,7 +28,9 @@ echo "requests"; out=$({
   grep -nE -e '--\*?[A-Za-z_>-]*(left|pending)\b' -e 'make_shared<int>' native/src/*.h | grep -v '^native/src/query\.h:'
   grep -nE 'QThread::create|new QThread' native/src/*.h | grep -v '^native/src/pictures\.h:'
 }); [ -n "$out" ] && { echo "$out" | cut -c1-200; echo "  a request, a latest-wins counter, a count of answers or a thread kept by hand: a query (query.h), Net, query::All or query::onWorker does it"; fail=1; }
-echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app -import tools/preview/imports 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
+# (with the previews' recorded answers, as the visual check has them: a test that makes a Catalog asks
+# nothing of the network, and tst_pages has titles to ask for)
+echo "unit tests"; out=$(SEIMIO_REPLAY="$REPO/tools/preview/api" "$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app -import tools/preview/imports 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
 errs=$(echo "$out" | grep -E "TypeError|ReferenceError|Unable to assign|is not defined" | sort -u | head -4); [ -n "$errs" ] && { echo "  script errors in the tests:"; echo "$errs" | cut -c1-220; fail=1; }
 # the C++ libraries' own tests (query.h, net.h, watch.h), with the sanitizers and for leaks
 echo "library tests"; tools/tests/native/run.sh || fail=1
