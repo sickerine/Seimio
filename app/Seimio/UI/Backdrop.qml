@@ -28,8 +28,11 @@ Item {
     readonly property string incoming: swap.coming || ""
     readonly property bool busy: target !== shown
     readonly property bool fading: swap.phase === "entering"
-    // changing faster than its drift: a crossfade on its way, or the pan moving (a frozen blur of it follows)
-    readonly property bool settling: busy || panned.running
+    // Changing faster than its drift: a crossfade running, or the pan moving (a frozen blur of it follows).
+    // Not the wait for a picture (`busy` without `fading`): while it loads nothing on screen has changed,
+    // and a frost that followed through the wait took its five passes twenty times a second for nothing,
+    // in the frames a tab's screen comes in (tools/tests/tst_backdrop.qml).
+    readonly property bool settling: fading || panned.running
     onPanChanged: panned.restart()
     Timer { id: panned; interval: 120 }
     signal crossfadeStarted()

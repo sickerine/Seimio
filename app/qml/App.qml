@@ -789,7 +789,7 @@ WebOSWindow {
             // second through the first second, and frames of the launch came late for it (the search
             // tour, which opens the search as the app starts, had 12, 6 and 10 late against 3, 3 and 7
             // once the title's panel stayed busy until its chips were in).
-            frozen: true; sourceBusy: wanted && (hero.busy || info.busy)
+            frozen: true; sourceBusy: wanted && (hero.settling || info.busy)
             onWantedChanged: if (wanted) refresh()      // of the scene as it is when the menu opens
             // around the held card, or the held Play button or episode
             hole: app.playMenu ? Qt.rect(app.menuAnchor.x - 14, app.menuAnchor.y - 14, app.menuAnchor.width + 28, app.menuAnchor.height + 28) : home.focusRect
