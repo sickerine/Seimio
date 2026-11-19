@@ -18,8 +18,14 @@
 //  - A fade starts from where `level` is and takes that much of its time: going out half way in, coming
 //    back half way out. One coming in where nothing was on show can take another time (`appearMs`), and
 //    with no time to go out or come in (`outMs`, `inMs` 0) one takes the other's place in the same frame.
-//  - `settled` once what is wanted is on show and fully in (or nothing is wanted and it is out); `cut`
-//    when one coming in is replaced before it was in, which is a flicker and is counted.
+//  - `settled` once what is wanted is on show and fully in (or nothing is wanted and it is out), each
+//    time it comes to rest after having been busy, however it got there; `cut` when one coming in is
+//    replaced before it was in, which is a flicker and is counted.
+//  - `shown` and `coming` are written only when they become another. A `var` tells of every write, the
+//    same value too, and what an owner hangs on them starts over each time: the title panel's chips
+//    came in again whenever Swap looked at its title (a logo turning ready, a fade ending), and flashed
+//    until the panel was in. What comes in with a new one is started from `switched`, never from a
+//    binding on `shown`.
 // Decisions are taken once the owner's bindings have all run (as Fade and Latch do), never half way
 // through an assignment: a picture that is in memory turns ready inside the assignment that asks for
 // it, and a handler that read a bound flag there read the one from before.
@@ -52,6 +58,8 @@ QtObject {
     signal switched()
     signal settled()
     signal cut()
+    property bool unsettled: false          // busy since it last said `settled`
+    onBusyChanged: if (busy) unsettled = true
 
     function alike(a, b) { return a === b || (!!a && !!b && !!same && same(a, b)) }
     onWantChanged: {
@@ -74,13 +82,15 @@ QtObject {
             return;
         }
         if (shown !== null && alike(w, shown)) {        // what is on show is wanted (again): in place, and back in
-            shown = w; gone = false;
+            if (shown !== w) shown = w;
+            gone = false;
             if (level < 1) { if (phase !== "entering") enter() } else rest();
             return;
         }
         if (!ready) {
             // not loaded yet: the one on show stays, and comes back if it was going out for another
-            if (!gone && shown !== null && level < 1) { if (phase !== "entering") enter() }
+            // (one that has only just begun to go out, and has not moved yet, is going out all the same)
+            if (!gone && shown !== null && (level < 1 || phase === "leaving")) { if (phase !== "entering") enter() }
             else if (phase !== "leaving") phase = "waiting";
             return;
         }
@@ -92,12 +102,24 @@ QtObject {
         switched();
         if (level < 1) enter(appearing ? appearMs : inMs); else rest();
     }
-    function leave() { phase = "leaving"; fadeIn.stop(); fadeOut.duration = Math.max(1, Math.round(outMs * level)); fadeOut.restart() }
-    function enter(ms) { phase = "entering"; fadeOut.stop(); fadeIn.duration = Math.max(1, Math.round((ms === undefined ? inMs : ms) * (1 - level))); fadeIn.restart() }
+    // (a way with no time to it, or no distance left, is done here and now: an animation of no length
+    // would leave the level where it was until its first tick)
+    function leave() {
+        fadeIn.stop();
+        var ms = Math.round(outMs * level);
+        if (ms <= 0) { fadeOut.stop(); level = 0; phase = "waiting"; step(); return }
+        phase = "leaving"; fadeOut.duration = ms; fadeOut.restart();
+    }
+    function enter(ms) {
+        fadeOut.stop();
+        var d = Math.round((ms === undefined ? inMs : ms) * (1 - level));
+        if (d <= 0) { fadeIn.stop(); level = 1; phase = "waiting"; step(); return }
+        phase = "entering"; fadeIn.duration = d; fadeIn.restart();
+    }
     function rest() {
-        var was = phase;
+        fadeIn.stop(); fadeOut.stop();                  // (one started and not yet moved would go on to its end)
         phase = "rest";
-        if (was !== "rest" && !busy) settled();
+        if (unsettled && !busy) { unsettled = false; settled() }
     }
     property NumberAnimation fadeOut: NumberAnimation {
         target: swap; property: "level"; to: 0; easing.type: Easing.InQuad
@@ -112,9 +134,14 @@ QtObject {
     function stepCross() {
         if (phase === "entering") return;               // finishes first; then the newest want
         var w = want;
-        if (w !== gaveUp) gaveUp = null;
-        if (w === null || alike(w, shown) || w === gaveUp) { if (w !== null && w !== gaveUp) shown = w; coming = null; rest(); return }
-        coming = w;                                     // (its owner starts loading it here, and `ready` and `failed` are of this one from now)
+        if (w !== gaveUp && gaveUp !== null) gaveUp = null;
+        if (w === null || alike(w, shown) || w === gaveUp) {
+            if (w !== null && w !== gaveUp && shown !== w) shown = w;
+            if (coming !== null) coming = null;
+            rest();
+            return;
+        }
+        if (coming !== w) coming = w;                   // (its owner starts loading it here, and `ready` and `failed` are of this one from now)
         if (failed) { gaveUp = w; coming = null; rest(); return }
         if (!ready) { phase = "waiting"; return }
         phase = "entering"; level = 0;

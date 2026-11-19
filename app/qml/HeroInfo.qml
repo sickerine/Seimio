@@ -7,7 +7,8 @@
 //   before the next can be, so moving on at any pace never cuts a fade-in short.
 // - No item fades the panel out at once. An item equal to `m` fades straight back in, and one that
 //   shows the same (the Anime tab's show once it's made playable) takes its place without a fade.
-// `busy` is true until the panel shows `item` fully.
+// - A title's chips arrive one after another as it becomes the one on show (`switched`), once.
+// `busy` is true until the panel shows `item` fully, has stopped rising and has its chips in.
 import QtQuick 2.12
 import Seimio.UI 1.0
 
@@ -31,7 +32,9 @@ Item {
     readonly property var pending: item !== m ? item : null     // lab: the one it is on its way to
     readonly property real fadeIn: swap.level
     property real rise: 0
-    readonly property bool busy: swap.busy
+    // (the rise and the chips go on past the fade: a frost frozen over the panel is stale until they end,
+    // and one frozen with the fade kept the title short of its place and without its chips)
+    readonly property bool busy: swap.busy || rising.running || chips.moving
     transform: Translate { y: info.rise }
 
     Swap {
@@ -40,7 +43,8 @@ Item {
         // its logo is in, or it has none, or it can't be had
         ready: preload.source.toString() === "" || preload.status !== Image.Loading
         same: info.same
-        onSwitched: { Remote.tally("info"); info.rise = 18; rising.restart() }
+        // (the title has become another, out of sight: it rises in, and its chips arrive one after another)
+        onSwitched: { Remote.tally("info"); info.rise = 18; rising.restart(); chips.arrive() }
         onCut: Remote.tally("info cut")          // lab: a title replaced by another while it was still fading in, which is a flicker
     }
     // (the address, the size and the fit TitleArt's picture asks for: Qt keeps a picture by the three, and
@@ -73,7 +77,7 @@ Item {
             y: info.chipsY; spacing: 10
             Chip { visible: !!(info.m && info.m.episode); kind: "solid"; icon: "play"; size: info.chipSize; text: info.m && info.m.episode ? info.m.episode : "" }
             Chip { visible: !!(info.m && info.m.rating); kind: "rating"; icon: "star"; size: info.chipSize; text: info.m ? info.m.rating || "" : "" }
-            ChipRow { model: info.m ? info.m.chips || [] : []; stagger: 50; size: info.chipSize }
+            ChipRow { id: chips; model: info.m ? info.m.chips || [] : []; stagger: 50; size: info.chipSize }
         }
         Text {
             id: description

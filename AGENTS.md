@@ -124,6 +124,10 @@ Each rule comes from a measured stall on the C5.
   flickered along a show's seasons, the header that stood empty and the stale flag read in a handler
   were each in such a copy. It decides once the owner's bindings have run, so bind `ready` to the
   picture's own state and never call into it from a status handler.
+  What comes in with a new one (the title panel's chips, one after another) is started from Swap's
+  `switched`, never from a binding or a handler on a `var`: a `var` tells of every write, the same
+  value too, so an entrance hung on `onModelChanged` started over each time its owner looked at its
+  title again, and the chips flashed until the panel was in (`ChipRow.arrive()`, tst_hero.qml).
   A swap with nothing to wait for and told by a call (a grid's `show`, a strip's page turn) stays a
   `SequentialAnimation` of out, a `ScriptAction` that switches, and in: Qt restarts that from where
   the values are, which is all those need. `check.sh` fails on a value kept for what is on its way

@@ -34,7 +34,21 @@ TestCase {
         tryVerify(function () { return swap.phase === "rest" && swap.level === 0 && cross.phase === "rest" });
         switches = settles = cuts = 0;
     }
+    function cleanup() {
+        for (var i = 0; i < watchers.length; i++) watchers[i].destroy();
+        watchers = [];
+        swap.outMs = 60; swap.inMs = 120; swap.appearMs = Qt.binding(function () { return swap.inMs });
+    }
     function rested(on) { tryVerify(function () { return swap.phase === "rest" && swap.shown === on && swap.level === 1 }, 2000, "at rest on " + (on ? on.name : on)) }
+    // what the Swap went through from here on: the lowest `level`, each `phase`, how often `shown` was told of
+    property var watchers: []
+    function watch() {
+        var w = Qt.createQmlObject('import QtQuick 2.12; Connections { property real low: 1; property var phases: []; property int shownTold: 0; '
+                                   + 'onLevelChanged: low = Math.min(low, target.level); onPhaseChanged: phases.push(target.phase); onShownChanged: shownTold++ }', swap);
+        w.low = swap.level; w.target = swap;
+        watchers.push(w);
+        return w;
+    }
 
     function test_theFirstOneComesIn() {
         var a = thing("a"); load("a"); want = a;
@@ -90,11 +104,45 @@ TestCase {
     }
     function test_goingOutForOneReplacedByOneNotReadyItComesBack() {
         var a = thing("a"), b = thing("b"), c = thing("c"); load("a"); load("b"); want = a; rested(a);
-        want = b; tryVerify(function () { return swap.phase === "leaving" && swap.level < 0.9 });
+        swap.outMs = 600;                                   // (slow enough to catch it on its way)
+        want = b; tryVerify(function () { return swap.phase === "leaving" && swap.level < 0.9 && swap.level > 0.2 });
         want = c;                                           // c's content isn't in
         tryVerify(function () { return swap.shown === a && swap.level === 1 && swap.phase === "waiting" }, 2000, "a is back, fully in, and waits");
         compare(switches, 1);
         load("c"); rested(c);
+    }
+    function test_oneThatHadOnlyBegunToGoOutNeverLeaves() {
+        var a = thing("a"), b = thing("b"), c = thing("c"); load("a"); load("b"); want = a; rested(a);
+        var seen = watch();
+        want = b; swap.step();                              // it begins to go out for b: nothing has moved yet
+        compare(swap.phase, "leaving"); compare(swap.level, 1);
+        want = c; swap.step();                              // c's content isn't in
+        compare(swap.phase, "waiting"); compare(swap.level, 1);
+        wait(200);
+        compare(seen.low, 1, "a stayed whole"); compare(swap.shown, a); compare(switches, 1);
+        load("c"); rested(c);
+    }
+    function test_wantedAgainBeforeItHasMovedItStaysWholeAndSettlesOnce() {
+        var a = thing("a"), b = thing("b"); load("a"); load("b"); want = a; rested(a);
+        var seen = watch(), settled = settles;
+        want = b; swap.step();                              // it begins to go out: nothing has moved yet
+        compare(swap.phase, "leaving"); compare(swap.level, 1);
+        want = a; swap.step();
+        compare(swap.phase, "rest");
+        wait(200);
+        compare(seen.low, 1, "the fade that had begun was stopped");
+        compare(swap.shown, a); compare(switches, 1); compare(settles, settled + 1, "settled, once");
+    }
+    function test_whatIsOnShowIsToldOfOnlyWhenItBecomesAnother() {
+        var a = thing("a"), b = thing("b"); load("a");
+        var seen = watch();
+        want = a; rested(a);
+        compare(seen.shownTold, 1);
+        want = b; wait(100);                                // looked at while b's content is on its way
+        load("b"); rested(b);                               // its content came, one fade went out, another came in and ended
+        compare(seen.shownTold, 2, "once for each that came on show");
+        want = b; swap.step(); swap.step(); wait(50);       // looked at again with nothing changed
+        compare(seen.shownTold, 2);
     }
     function test_nothingWantedGoesOutAtOnceAndComesStraightBack() {
         var a = thing("a"), b = thing("b"); load("a"); want = a; rested(a);
@@ -127,13 +175,26 @@ TestCase {
         swap.outMs = 0; swap.inMs = 0; swap.appearMs = 200;
         want = a; tryCompare(swap, "phase", "entering");    // where nothing was, it still fades in
         rested(a);
-        var low = 1, c = Qt.createQmlObject('import QtQuick 2.12; Connections { property real low: 1; onLevelChanged: low = Math.min(low, target.level) }', swap);
-        c.target = swap;
+        var seen = watch(), settled = settles;
         want = b;
         tryCompare(swap, "shown", b);
-        compare(swap.level, 1); compare(swap.phase, "rest"); compare(c.low, 1, "never out of sight on the way");
-        c.destroy();
-        swap.outMs = 60; swap.inMs = 120; swap.appearMs = Qt.binding(function () { return swap.inMs });
+        compare(swap.level, 1); compare(swap.phase, "rest"); compare(seen.low, 1, "never out of sight on the way");
+        compare(settles, settled + 1, "and it says it has settled, though nothing was animated");
+        // replaced while it was still appearing: the other is there whole, and the fade that was running stops
+        want = null; tryVerify(function () { return swap.level === 0 && swap.phase === "rest" });
+        want = a; tryCompare(swap, "phase", "entering");
+        want = b; swap.step();
+        compare(swap.shown, b); compare(swap.level, 1); compare(swap.phase, "rest");
+        wait(260);
+        compare(swap.level, 1, "nothing went on fading under it");
+    }
+    function test_withNoTimeToComeInItIsThereAtTheSwitch() {
+        var a = thing("a"), b = thing("b"); load("a"); load("b"); want = a; rested(a);
+        swap.inMs = 0;
+        var seen = watch();
+        want = b; rested(b);
+        compare(seen.phases.indexOf("entering"), -1, "no fade of no length to wait a frame for");
+        compare(switches, 2);
     }
     function test_replacedWhileComingInIsACut() {
         var a = thing("a"), b = thing("b"); load("a"); load("b");
