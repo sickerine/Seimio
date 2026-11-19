@@ -13,6 +13,7 @@ struct Service : QTcpServer {
     QHash<QString, QVector<Line>> lines;
     QHash<QString, int> asked;
     QStringList methods;
+    QList<QByteArray> heads;                // each request as it came: its first line and its headers
     Service() {
         listen(QHostAddress::LocalHost);
         connect(this, &QTcpServer::newConnection, this, [this] {
@@ -20,7 +21,9 @@ struct Service : QTcpServer {
                 connect(s, &QTcpSocket::readyRead, this, [this, s] {
                     if (s->property("answered").toBool() || !s->peek(65536).contains("\r\n\r\n")) return;
                     s->setProperty("answered", true);
-                    const QList<QByteArray> first = s->readAll().split('\r').first().split(' ');
+                    const QByteArray asking = s->readAll();
+                    heads << asking.left(asking.indexOf("\r\n\r\n"));
+                    const QList<QByteArray> first = asking.split('\r').first().split(' ');
                     const QString path = QString::fromLatin1(first.value(1));
                     methods << QString::fromLatin1(first.value(0));
                     const int n = asked[path]++;

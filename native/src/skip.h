@@ -43,18 +43,19 @@ signals:
 private:
     struct Item { QString kind; double from, to; QString source; double episodeLength; };
     using Spans = QVector<QPair<double, double>>;              // chapters as { from, to }, in order
-    struct State { QVector<Item> items; Spans spans; double duration = 0; int pending = 0; query::Call<QVariantMap> call; };
-    // the fetch of a video's query: the chapters, and each source that knows the episode
+    struct State { QVector<Item> items; Spans spans; double duration = 0; };
+    // the fetch of a video's query: the chapters, and each source that knows the episode, all asked at once
     void gather(const QString &videoId, double durationMs, const QVariantList &chapters, const QString &imdbEpisode, query::Call<QVariantMap> call) {
         auto state = std::make_shared<State>();
-        state->duration = durationMs; state->call = call;
+        query::All all;
+        state->duration = durationMs;
         state->items = fromChapters(chapters, durationMs);
         state->spans = spansOf(sorted(chapters), durationMs);
         static const QRegularExpression imdb("^(tt\\d+):(\\d+):(\\d+)$"), kitsu("^kitsu:(\\d+):(\\d+)$");
         const auto mk = kitsu.match(videoId), mi = imdb.match(mk.hasMatch() ? imdbEpisode : videoId);
         if (mi.hasMatch()) {
             QUrlQuery q; q.addQueryItem("imdb_id", mi.captured(1)); q.addQueryItem("season", mi.captured(2)); q.addQueryItem("episode", mi.captured(3));
-            get(state, "https://api.introdb.app/segments?" + q.toString(), [](const QJsonObject &o, QVector<Item> &out) {
+            get(state, all, "https://api.introdb.app/segments?" + q.toString(), [](const QJsonObject &o, QVector<Item> &out) {
                 for (auto kind : { "intro", "outro" }) {
                     const QJsonObject r = o.value(kind).toObject();
                     if (r.isEmpty()) continue;
@@ -64,7 +65,7 @@ private:
                 }
             });
             q.addQueryItem("duration_ms", QString::number(qRound64(durationMs)));
-            get(state, "https://api.theintrodb.org/v3/media?" + q.toString(), [](const QJsonObject &o, QVector<Item> &out) {
+            get(state, all, "https://api.theintrodb.org/v3/media?" + q.toString(), [](const QJsonObject &o, QVector<Item> &out) {
                 for (auto pair : { std::make_pair("intro", "intro"), std::make_pair("credits", "outro") })
                     for (const QJsonValue &v : o.value(pair.first).toArray()) {
                         const QJsonObject r = v.toObject();
@@ -76,14 +77,14 @@ private:
         }
         if (mk.hasMatch()) {
             const QString episode = mk.captured(2);
-            state->pending++;
+            // (AniSkip goes by MyAnimeList's id, which Kitsu has: its answer is a part asked for when this one is in)
             fetch("https://kitsu.io/api/edge/anime/" + mk.captured(1) + "/mappings?filter[externalSite]=myanimelist/anime",
-                  [this, state, episode](const QJsonObject &o) {
+                  [this, state, all, episode, in = all.part()](const QJsonObject &o) {
                 const QString mal = o.value("data").toArray().first().toObject().value("attributes").toObject().value("externalId").toString();
                 if (!mal.isEmpty()) {
                     const QString url = "https://api.aniskip.com/v2/skip-times/" + mal + "/" + episode + "?types[]=op&types[]=ed&types[]=mixed-op&types[]=mixed-ed&episodeLength="
                                         + QString::number(qRound(state->duration / 1000));
-                    get(state, url, [](const QJsonObject &o, QVector<Item> &out) {
+                    get(state, all, url, [](const QJsonObject &o, QVector<Item> &out) {
                         if (!o.value("found").toBool()) return;
                         for (const QJsonValue &v : o.value("results").toArray()) {
                             const QJsonObject r = v.toObject(), iv = r.value("interval").toObject();
@@ -94,10 +95,10 @@ private:
                         }
                     });
                 }
-                done(state);
+                in();
             });
         }
-        if (!state->pending) done(state);
+        all.then([state, call] { call.ok(reconcile(state->items, state->duration, state->spans)); });
     }
 public:
     // tests: what reconcile() makes of candidates [{ kind, from, to, source, episodeLength }] (ms) for a file
@@ -152,9 +153,8 @@ private:
         }
         return out;
     }
-    template <typename F> void get(const std::shared_ptr<State> &state, const QString &url, F parse) {
-        state->pending++;
-        fetch(url, [this, state, parse](const QJsonObject &o) { parse(o, state->items); done(state); });
+    template <typename F> void get(const std::shared_ptr<State> &state, const query::All &all, const QString &url, F parse) {
+        fetch(url, [state, parse, in = all.part()](const QJsonObject &o) { parse(o, state->items); in(); });
     }
     // one source's answer (an empty object when it couldn't be had: a source the less, asked once)
     template <typename F> void fetch(const QString &url, F onDone) {
@@ -162,10 +162,6 @@ private:
         m_net.read(url, QByteArray(), once, [onDone](std::shared_ptr<const Answer> a, const query::Failure &) {
             onDone(a && a->status >= 200 && a->status < 300 ? QJsonDocument::fromJson(a->body).object() : QJsonObject());
         });
-    }
-    void done(const std::shared_ptr<State> &state) {
-        if (--state->pending > 0) return;
-        state->call.ok(reconcile(state->items, state->duration, state->spans));
     }
 
     // skip-timestamps.js: plausible(), strongestCluster(), sharedSegment(), reconcile()

@@ -70,6 +70,25 @@ private slots:
         QVERIFY(!g.ok); QCOMPARE(g.status, 404); QCOMPARE(g.body, QByteArray("{\"error\":\"none\"}"));
         QCOMPARE(s.asked["/gone"], 1);                  // not asked again
     }
+    void aNoSaysWhy() {
+        Service s; query::Queries cache; Net net(&cache);
+        std::shared_ptr<const Answer> got; bool done = false;
+        net.read(s.at("/gone"), QByteArray(), query::Options(), [&](std::shared_ptr<const Answer> a, const query::Failure &) { got = a; done = true; });
+        QTRY_VERIFY(done);
+        QVERIFY(got); QCOMPARE(got->status, 404);
+        QVERIFY(!got->error.isEmpty());                 // Qt's words for it, for a screen that says what went wrong
+    }
+    void aRequestCarriesItsNetsHeadersAndItsOwnOverThem() {
+        Service s; Net net;
+        net.headers = { { "Accept", "application/vnd.api+json" }, { "X-Every", "1" } };
+        s.lines["/form"] = { { 200, "ok", "", 0 } };
+        Got g; net.send(s.at("/form"), "a=b", into(g), false, { { "Content-Type", "application/x-www-form-urlencoded" }, { "X-Every", "2" } });
+        QTRY_VERIFY(g.done);
+        const QByteArray head = s.heads.value(0).toLower();
+        QVERIFY(head.contains("accept: application/vnd.api+json"));
+        QVERIFY(head.contains("content-type: application/x-www-form-urlencoded"));     // over the JSON a body is sent as otherwise
+        QVERIFY(head.contains("x-every: 2") && !head.contains("x-every: 1"));
+    }
     void tooManyRequestsWaitsAsLongAsTheServiceSays() {
         Service s; query::Queries cache; Net net(&cache);
         s.lines["/a"] = { { 429, "", "Retry-After: 1\r\n", 0 }, { 200, "fine", "", 0 } };

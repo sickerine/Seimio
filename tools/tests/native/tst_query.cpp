@@ -319,6 +319,80 @@ private slots:
         QTRY_COMPARE(t.value(), 11);
         worker->wait(); delete worker;
     }
+    void workIsDoneOffTheCachesThreadAndWhatItReturnsIsTheAnswer() {
+        Queries cache; Told t;
+        std::atomic<QThread *> ran { nullptr };
+        Observer<int> o(&cache, t.fn());
+        o.watch({ "k" }, onWorker<int>([&ran] { ran = QThread::currentThread(); return 12; }), quick());
+        QVERIFY(!ran.load() || ran.load() != QThread::currentThread());
+        QTRY_COMPARE(t.value(), 12);
+        QVERIFY(ran.load() && ran.load() != QThread::currentThread());
+    }
+    void workReplacedRunsToItsEndAndTheNewestIsTheAnswer() {
+        Queries cache; Told t;
+        std::atomic<int> runs { 0 };
+        Observer<int> o(&cache, t.fn());
+        const auto work = onWorker<int>([&runs] { const int n = ++runs; QThread::msleep(n == 2 ? 60 : 5); return n; });
+        o.watch({ "k" }, work, quick());
+        QTRY_COMPARE(t.value(), 1);
+        cache.invalidate({ "k" }); turn();              // a read under way (the slow one),
+        cache.invalidate({ "k" });                      // and what it reads changes again
+        QTRY_COMPARE(t.value(), 3);
+        QTRY_COMPARE(cache.counts().dropped, 1);        // the slow one ended later, and changed nothing
+        QCOMPARE(t.value(), 3);
+    }
+    void allRunsWhatFollowsOnceWhenTheLastPartIsIn() {
+        All all; int ran = 0;
+        const auto a = all.part(), b = all.part();
+        a();
+        all.then([&ran] { ++ran; });
+        QCOMPARE(ran, 0);                               // one part is still out
+        a();                                            // the same part again counts once
+        QCOMPARE(ran, 0);
+        b();
+        QCOMPARE(ran, 1);
+        b();
+        QCOMPARE(ran, 1);
+    }
+    void allRunsAtOnceWhenEveryPartWasInAlreadyOrThereWereNone() {
+        All answered, none; int ran = 0;
+        const auto a = answered.part();
+        a();                                            // in before what follows was said: nothing ran early
+        QCOMPARE(ran, 0);
+        answered.then([&ran] { ++ran; });
+        QCOMPARE(ran, 1);
+        none.then([&ran] { ++ran; });
+        QCOMPARE(ran, 2);
+    }
+    void inTurnsOnlySoManyAreOutAtATime() {
+        QVector<std::function<void()>> out; QVector<int> asked; int done = 0;
+        inTurns(5, 2, [&](int n, std::function<void()> in) { asked << n; out << in; }, [&done] { ++done; });
+        QCOMPARE(asked, (QVector<int> { 0, 1 }));
+        out[1]();                                       // one in: the next goes out
+        QCOMPARE(asked, (QVector<int> { 0, 1, 2 }));
+        out[1]();                                       // (the same one again: nothing)
+        QCOMPARE(asked.size(), 3);
+        out[0](); out[2]();
+        QCOMPARE(asked, (QVector<int> { 0, 1, 2, 3, 4 }));
+        out[3]();
+        QCOMPARE(done, 0);
+        out[4]();
+        QCOMPARE(done, 1);
+        int none = 0;
+        inTurns(0, 8, [](int, std::function<void()>) { QFAIL("nothing to ask for"); }, [&none] { ++none; });
+        QCOMPARE(none, 1);
+    }
+    void theCacheSaysHowManyOfAKindAreBeingFetched() {
+        Source s; Queries cache;
+        const auto then = [](std::shared_ptr<const int>, const Failure &) {};
+        cache.fetch<int>({ "page", "a" }, s.fn(), quick(60000), then);
+        cache.fetch<int>({ "page", "b" }, s.fn(), quick(60000), then);
+        cache.fetch<int>({ "other" }, s.fn(), quick(60000), then);
+        QCOMPARE(cache.fetching({ "page" }), 2); QCOMPARE(cache.fetching({ "page", "a" }), 1);
+        s.asked[0].ok(1); turn();
+        QCOMPARE(cache.fetching({ "page" }), 1); QCOMPARE(cache.fetching({ "page", "a" }), 0);       // held now, no longer on its way
+        QCOMPARE(cache.fetching({ "page", "never asked" }), 0);
+    }
     void aFaultMakesAQuerySlowOrFailing() {
         Source s; Queries cache; Told slow, failing;
         cache.fault("slow", 40, false); cache.fault("broken", 0, true);

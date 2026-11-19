@@ -41,16 +41,16 @@ public:
     // minutes.
     void home(std::function<void(Docs)> done) {
         auto docs = std::make_shared<Docs>();
-        auto left = std::make_shared<int>(3);
-        auto finish = [docs, left, done] { if (--*left == 0) done(*docs); };
-        rows(docs, finish);
-        continueWatching(docs, finish);
+        query::All all;
+        rows(docs, all.part());
+        continueWatching(docs, all.part());
         const auto now = seasonAt(QDate::currentDate());
-        chartList(now.first, now.second, [docs, finish, now](const QJsonArray &shows) {
+        chartList(now.first, now.second, [docs, in = all.part(), now](const QJsonArray &shows) {
             docs->season = QJsonObject { { "season", now.first }, { "year", now.second } };
             docs->airing = airingOf(shows);
-            finish();
+            in();
         });
+        all.then([docs, done] { done(*docs); });
     }
     static constexpr qint64 kHours = 6 * 60 * 60 * 1000;    // how long the lists that change by the day are fresh
     static QString metahub(const QString &kind, const QString &id) { return "https://images.metahub.space/" + kind + "/medium/" + id + "/img"; }
@@ -111,15 +111,15 @@ public:
     // follows (`searchAnime`).
     void search(const QString &query, std::function<void(QJsonObject)> done) {
         auto out = std::make_shared<QJsonObject>();
-        auto left = std::make_shared<int>(3);
-        auto finish = [out, left, done] { if (--*left == 0) done(*out); };
+        query::All all;
         for (const char *type : { "movie", "series" })
-            get(QString(kCinemeta) + "/catalog/" + type + "/top/search=" + QString::fromUtf8(QUrl::toPercentEncoding(query)) + ".json", [this, out, finish, type](const QJsonDocument &d, bool) {
-                withPosters(d.object().value("metas").toArray(), [out, finish, type](const QJsonArray &metas) {
-                    (*out)[type == QByteArray("movie") ? "movies" : "series"] = metas; finish();
+            get(QString(kCinemeta) + "/catalog/" + type + "/top/search=" + QString::fromUtf8(QUrl::toPercentEncoding(query)) + ".json", [this, out, in = all.part(), type](const QJsonDocument &d, bool) {
+                withPosters(d.object().value("metas").toArray(), [out, in, type](const QJsonArray &metas) {
+                    (*out)[type == QByteArray("movie") ? "movies" : "series"] = metas; in();
                 });
             });
-        searchAnime(query, 1, [out, finish](const QJsonArray &shows, bool more, bool) { (*out)["anime"] = shows; (*out)["animeMore"] = more; finish(); });
+        searchAnime(query, 1, [out, in = all.part()](const QJsonArray &shows, bool more, bool) { (*out)["anime"] = shows; (*out)["animeMore"] = more; in(); });
+        all.then([out, done] { done(*out); });
     }
     // A page of the anime a name finds on AniList, the most popular of the matches first: `done(shows,
     // more, had)`, fifty a page, `more` when another page follows, `had` false when the page couldn't be
@@ -195,11 +195,11 @@ private:
                                    [docs, done](std::shared_ptr<const QJsonArray> rows, const query::Failure &) { if (rows) docs->rows = *rows; done(); });
     }
     void rows(query::Call<QJsonArray> call) {
-        auto left = std::make_shared<int>(2);
+        query::All all;
         auto rows = std::make_shared<QVector<QJsonObject>>(2);
         const QStringList kinds { "movie", "series" }, titles { "Popular movies", "Popular series" };
         for (int k = 0; k < 2; k++)
-            get(QString(kCinemeta) + "/catalog/" + kinds[k] + "/top.json", [=](const QJsonDocument &d, bool) {
+            get(QString(kCinemeta) + "/catalog/" + kinds[k] + "/top.json", [rows, titles, k, in = all.part()](const QJsonDocument &d, bool) {
                 QJsonArray items;
                 for (const QJsonValue &v : d.object().value("metas").toArray()) {
                     const QJsonObject m = v.toObject();
@@ -212,11 +212,13 @@ private:
                     if (items.size() == 14) break;
                 }
                 (*rows)[k] = QJsonObject { { "title", titles[k] }, { "items", items } };
-                if (--*left) return;
-                // (neither list came: not kept, so the next Home asks again)
-                if ((*rows)[0].value("items").toArray().isEmpty() && (*rows)[1].value("items").toArray().isEmpty()) { query::Failure none; none.reason = "no lists"; none.final = true; call.fail(none); }
-                else call.ok(QJsonArray { (*rows)[0], (*rows)[1] });
+                in();
             });
+        all.then([rows, call] {
+            // (neither list came: not kept, so the next Home asks again)
+            if ((*rows)[0].value("items").toArray().isEmpty() && (*rows)[1].value("items").toArray().isEmpty()) { query::Failure none; none.reason = "no lists"; none.final = true; call.fail(none); }
+            else call.ok(QJsonArray { (*rows)[0], (*rows)[1] });
+        });
     }
     // Stremio's Continue Watching, each title's meta live; a show's meta also gives its episodes, with
     // Stremio's watch state laid over them. The library's other shows come the same way (`kept`): they
@@ -237,15 +239,9 @@ public:
         }
         docs->cw = QJsonArray(); docs->series = QJsonObject(); docs->library = QJsonObject();
         for (auto it = library.begin(); it != library.end(); ++it) docs->library[it.key()] = it.value();
-        if (list.isEmpty()) { done(); return; }
-        auto left = std::make_shared<int>(list.size());
         auto out = std::make_shared<QVector<QJsonObject>>(list.size());
         // eight metas at a time, however long the library is
-        auto at = std::make_shared<int>(0);
-        auto ask = std::make_shared<std::function<void()>>();
-        *ask = [=] {
-            if (*at >= list.size()) return;
-            const int n = (*at)++;
+        query::inTurns(list.size(), 8, [=](int n, std::function<void()> in) {
             const QJsonObject i = list[n].toObject();
             const QString id = i.value("id").toString(), type = i.value("type").toString();
             title(type, id, [=](const QJsonObject &m) {
@@ -259,13 +255,12 @@ public:
                                           { "year", m.value("releaseInfo").toVariant().toString() }, { "kept", i.value("kept").toBool() },
                                           { "library", mine.contains(id) } };
                 if (type == "series" && !m.isEmpty()) docs->series[id] = show(m, library.value(id));
-                if (--*left) { (*ask)(); return; }
-                for (const QJsonObject &o : *out) docs->cw << o;
-                *ask = nullptr;                             // (it holds itself)
-                done();
+                in();
             });
-        };
-        for (int k = 0; k < 8; k++) (*ask)();
+        }, [out, docs, done] {
+            for (const QJsonObject &o : *out) docs->cw << o;
+            done();
+        });
     }
     // a show's seasons from its meta: watched episodes from Stremio's bitfield, progress on the current one
     static QJsonObject show(const QJsonObject &meta, const QJsonObject &state) {
@@ -393,29 +388,26 @@ private:
     // poster's address, and behind a fan upload's or a reaction video's there is no picture: its card was
     // blank with a name on. The image host is asked once a title, all at once (a search has some twenty).
     void withPosters(const QJsonArray &metas, std::function<void(QJsonArray)> done) {
-        if (metas.isEmpty()) { done(metas); return; }
         auto there = std::make_shared<QVector<bool>>(metas.size(), true);
-        auto left = std::make_shared<int>(metas.size());
+        query::All all;
         for (int i = 0; i < metas.size(); i++) {
             const QJsonObject m = metas[i].toObject();
-            m_net.exists(m.value("poster").toString(metahub("poster", m.value("id").toString())), [metas, there, left, done, i](bool ok) {
-                (*there)[i] = ok;
-                if (--*left) return;
-                QJsonArray kept;
-                for (int k = 0; k < metas.size(); k++) if ((*there)[k]) kept << metas[k];
-                done(kept);
-            });
+            m_net.exists(m.value("poster").toString(metahub("poster", m.value("id").toString())), [there, i, in = all.part()](bool ok) { (*there)[i] = ok; in(); });
         }
+        all.then([metas, there, done] {
+            QJsonArray kept;
+            for (int k = 0; k < metas.size(); k++) if ((*there)[k]) kept << metas[k];
+            done(kept);
+        });
     }
     // each show's Kitsu id (`kitsu`: "kitsu:N", the title Stremio's library knows it by; none when Kitsu
     // doesn't have it): ARM maps AniList to Kitsu, 100 at a time
     void kitsuIds(std::shared_ptr<QJsonArray> shows, std::function<void()> done) {
-        if (shows->isEmpty()) { done(); return; }
-        auto left = std::make_shared<int>((shows->size() + 99) / 100);
+        query::All all;
         for (int from = 0; from < shows->size(); from += 100) {
             QJsonArray ask;
             for (int i = from; i < shows->size() && i < from + 100; i++) ask << QJsonObject { { "anilist", (*shows)[i].toObject().value("anilist") } };
-            request("https://arm.haglund.dev/api/v2/ids", QJsonDocument(ask).toJson(QJsonDocument::Compact), [shows, from, left, done](const QByteArray &data, bool, int) {
+            request("https://arm.haglund.dev/api/v2/ids", QJsonDocument(ask).toJson(QJsonDocument::Compact), [shows, from, in = all.part()](const QByteArray &data, bool, int) {
                 const QJsonArray ids = QJsonDocument::fromJson(data).array();
                 for (int k = 0; k < ids.size(); k++) {
                     const int kitsu = ids[k].toObject().value("kitsu").toInt();
@@ -424,19 +416,18 @@ private:
                     s["kitsu"] = "kitsu:" + QString::number(kitsu);
                     (*shows)[from + k] = s;
                 }
-                if (--*left == 0) done();
+                in();
             });
         }
+        all.then(done);
     }
     // each show's full-screen fanart and logo, which the Kitsu addon has (by its `kitsu`: kitsuIds first)
     void art(std::shared_ptr<QJsonArray> shows, std::function<void()> done) {
-        auto left = std::make_shared<int>(1);
-        auto finish = [left, done] { if (--*left == 0) done(); };
+        query::All all;
         for (int at = 0; at < shows->size(); at++) {
             const QString kitsu = (*shows)[at].toObject().value("kitsu").toString();
             if (kitsu.isEmpty()) continue;
-            ++*left;
-            get(QString(kKitsu) + "/meta/series/" + kitsu + ".json", [shows, at, finish](const QJsonDocument &d, bool) {
+            get(QString(kKitsu) + "/meta/series/" + kitsu + ".json", [shows, at, in = all.part()](const QJsonDocument &d, bool) {
                 const QJsonObject m = d.object().value("meta").toObject();
                 QJsonObject s = (*shows)[at].toObject();
                 // (the backdrop's places end with AniList's own wide strip, or its cover: there for every show)
@@ -444,9 +435,9 @@ private:
                 s["background"] = m.value("background").toString().isEmpty() ? QString() : picture(m, "background", { banner.isEmpty() ? s.value("cover").toString() : banner });
                 s["logo"] = picture(m, "logo");
                 (*shows)[at] = s;
-                finish();
+                in();
             });
         }
-        finish();
+        all.then(done);
     }
 };

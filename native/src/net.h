@@ -27,8 +27,9 @@
 #include <functional>
 #include "query.h"
 
-// what a service said: its status and the bytes that came with it; `cached` when they came off the disk
-struct Answer { QByteArray body; int status = 0; bool cached = false; };
+// what a service said: its status and the bytes that came with it; `cached` when they came off the disk;
+// `error` Qt's words for it when it said no (a 4xx)
+struct Answer { QByteArray body; int status = 0; bool cached = false; QString error; };
 
 class Net : public QObject {
 public:
@@ -66,9 +67,11 @@ public:
                              [done](std::shared_ptr<const bool> there, const query::Failure &) { done(!there || *there); });
     }
 
+    using Headers = QVector<QPair<QByteArray, QByteArray>>;
     // The transfer itself, once: `done(body, ok, status)` when it ends, status 0 when nothing answered.
-    void send(const QString &url, const QByteArray &body, Done done, bool secret = false) {
-        transfer(url, body, secret, 0, [done](const Reply &r) { done(r.body, r.ok, r.status); });
+    // `with`: headers of this request's own (a service's key, a form's type), over the ones every request has.
+    void send(const QString &url, const QByteArray &body, Done done, bool secret = false, const Headers &with = Headers()) {
+        transfer(url, body, secret, 0, [done](const Reply &r) { done(r.body, r.ok, r.status); }, with);
     }
 
 private:
@@ -84,7 +87,7 @@ private:
     void read(const QString &url, const QByteArray &body, query::Call<Answer> call) {
         const auto stop = transfer(url, body, false, call.priority(), [call](const Reply &r) {
             const bool no = r.status >= 400 && r.status < 500 && r.status != 408 && r.status != 429;
-            if (r.ok || no) { call.ok(Answer { r.body, r.status, r.cached }); return; }
+            if (r.ok || no) { call.ok(Answer { r.body, r.status, r.cached, r.ok ? QString() : r.error }); return; }
             query::Failure why; why.status = r.status; why.reason = r.error;
             why.final = r.final;
             if (r.status == 429) why.waitMs = r.waitMs > 0 ? r.waitMs : 20000;
@@ -117,7 +120,7 @@ private:
 
     // One request, answered from the recordings in a preview and on the wire otherwise; `done` on a later
     // turn when it ends, unless the function it returns stopped it first.
-    std::function<void()> transfer(const QString &url, const QByteArray &body, bool secret, int priority, std::function<void(const Reply &)> done) {
+    std::function<void()> transfer(const QString &url, const QByteArray &body, bool secret, int priority, std::function<void(const Reply &)> done, const Headers &with = Headers()) {
         auto later = [this, done](Reply r) { QTimer::singleShot(0, this, [done, r] { done(r); }); return [] {}; };
         if (replaying() && m_recorded && secret) { Reply none; none.final = true; return later(none); }
         const QString file = secret ? QString() : recording(url, body);
@@ -135,7 +138,7 @@ private:
         r.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         r.setPriority(priority > 0 ? QNetworkRequest::HighPriority : priority < 0 ? QNetworkRequest::LowPriority : QNetworkRequest::NormalPriority);
         if (!body.isEmpty()) { r.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); r.setRawHeader("Accept", "application/json"); }
-        for (const auto &h : headers) r.setRawHeader(h.first, h.second);
+        for (const auto &h : headers + with) r.setRawHeader(h.first, h.second);
         QNetworkReply *reply = body.isEmpty() ? m_net->get(r) : m_net->post(r, body);
         // given up on after 20 s with nothing arriving: a slow answer that keeps coming is let come (a
         // backdrop from a host that serves 25 KB/s takes longer than that whole)
@@ -166,5 +169,5 @@ private:
     bool m_recorded;
 public:
     int idleMs = 20000;                         // how long a transfer may bring nothing before it is given up on
-    QVector<QPair<QByteArray, QByteArray>> headers;         // sent with every request of this Net's (what its services ask for)
+    Headers headers;                            // sent with every request of this Net's (what its services ask for)
 };

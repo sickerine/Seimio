@@ -22,16 +22,19 @@
 //  - An observer (`Observer`) watches one key at a time. Pointed at another, it hears only of that one:
 //    an answer for a key it has left is the cache's and no longer its own. With `keepPrevious` it shows
 //    the data it had (`placeholder`) until the new key has its own.
-// A cache belongs to one thread and is used from it; a fetch function may answer from any thread.
+// A cache belongs to one thread and is used from it; a fetch function may answer from any thread, and
+// one that is work to do (`onWorker`) does it on a pooled thread.
 // Tooling: `lab()` lists every entry, `counts()` what the cache did, and `fault()` makes the queries it
 // names slow or failing, to see how a screen takes it.
 #include <QHash>
 #include <QMutex>
 #include <QObject>
 #include <QPointer>
+#include <QRunnable>
 #include <QSet>
 #include <QStringList>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QVariant>
 #include <QVector>
@@ -75,6 +78,63 @@ inline int backoff(int n, const Failure &why) {
     return why.final ? -1 : why.waitMs > 0 ? why.waitMs : int(qMin<qint64>(qint64(1000) << qMin(n - 1, 20), 30000));
 }
 
+// `work` on one of Qt's pooled threads. It answers through a Call, which finds its cache there or gone;
+// anything else it touches is its own to keep alive.
+inline void onPool(std::function<void()> work) {
+    // (Qt 5.12's pool takes a QRunnable only; a function as it is came with 5.15)
+    struct Job : QRunnable { std::function<void()> go; void run() override { go(); } };
+    auto *job = new Job;                        // the pool's from here: deleted when it has run
+    job->go = std::move(work);
+    QThreadPool::globalInstance()->start(job);
+}
+
+// ---- putting what was asked for together -----------------------------------------------------------------
+// Several things asked for at once, and one call when the last of them is in: `part()` gives the function
+// a part calls when it is in, `then(done)` says what follows. `done` runs once, when every part handed out
+// has been called: with the last of them, or at once when they all were (or there were none). A part
+// called twice counts once. (QtPromise's `all` is this and more, and is not used: its handlers belong to
+// no object, so one that captures `this` runs after the object is gone, where an answer from the cache or
+// from Net is dropped with its owner; and it has no way to stop. docs/state-and-query-research.md.)
+class All {              // (a handle: copies are the same gathering)
+public:
+    std::function<void()> part() const {
+        const auto s = m_state;
+        const auto called = std::make_shared<bool>(false);
+        ++s->left;
+        return [s, called] { if (*called) return; *called = true; if (--s->left == 0) fire(s); };
+    }
+    void then(std::function<void()> done) const { m_state->done = std::move(done); if (m_state->left == 0) fire(m_state); }
+private:
+    struct State { int left = 0; std::function<void()> done; };
+    static void fire(const std::shared_ptr<State> &s) {
+        const auto done = std::move(s->done);
+        s->done = nullptr;
+        if (done) done();
+    }
+    std::shared_ptr<State> m_state = std::make_shared<State>();
+};
+// The same for `count` of a kind, `atOnce` of them out at a time: `ask(n, in)` asks for the n-th and calls
+// `in` when it is in; `done` when all are (at once when there are none). For many requests to one host: a
+// request waiting its turn inside Qt has its clock running (Net gives up on one that brings nothing).
+inline void inTurns(int count, int atOnce, std::function<void(int, std::function<void()>)> ask, std::function<void()> done) {
+    struct Turns : std::enable_shared_from_this<Turns> {
+        int count = 0, next = 0, left = 0;
+        std::function<void(int, std::function<void()>)> ask;
+        std::function<void()> done;
+        void step() {
+            if (next >= count) return;
+            const int n = next++;
+            const auto self = shared_from_this();
+            const auto called = std::make_shared<bool>(false);
+            ask(n, [self, called] { if (*called) return; *called = true; if (--self->left == 0) self->done(); else self->step(); });
+        }
+    };
+    if (count <= 0) { done(); return; }
+    const auto turns = std::make_shared<Turns>();
+    turns->count = turns->left = count; turns->ask = std::move(ask); turns->done = std::move(done);
+    for (int k = 0; k < atOnce && k < count; k++) turns->step();
+}
+
 // One go at fetching. The fetch function keeps its Call for as long as it works, and answers through it.
 // The way from a fetch back to its cache. A fetch function may answer on any thread, and the cache may
 // end while it does: both go through the gate's lock, so an answer finds the cache there or gone, never
@@ -105,6 +165,13 @@ private:
     std::shared_ptr<Run> run;
 };
 template <class T> using Fetch = std::function<void(Call<T>)>;
+
+// A fetch that is work rather than a request (a megabyte of JSON to read and shape): `work` runs on one
+// of Qt's pooled threads and what it returns is the answer. Work can't be stopped half way: cancelled or
+// replaced, it runs to its end and its answer is dropped.
+template <class T> Fetch<T> onWorker(std::function<T()> work) {
+    return [work](Call<T> call) { onPool([work, call] { call.ok(work()); }); };
+}
 
 struct ObserverBase {
     virtual ~ObserverBase() = default;
@@ -165,6 +232,8 @@ public:
         const auto it = m_entries.constFind(idOf(key));
         return it == m_entries.constEnd() || (*it)->type != std::type_index(typeid(T)) ? nullptr : std::static_pointer_cast<const T>((*it)->data);
     }
+    // how many of the keys that begin with `prefix` are being fetched now
+    int fetching(const Key &prefix) const { int n = 0; for (const auto &e : matching(prefix)) n += e->fetching; return n; }
     // puts data in by hand (what another answer already carried), as if it had just been fetched
     template <class T> void put(const Key &key, T value, const Options &options = Options()) {
         Entry &e = entry<T>(key, nullptr, options);
@@ -226,6 +295,16 @@ public:
         QVariantList out;
         for (const Finished &f : m_history) out << QVariantMap { { "key", f.key }, { "took", f.tookMs }, { "ok", f.ok }, { "ago", now() - f.at } };
         return out;
+    }
+    // the lab report's part: the entries in use (`held`), how many more are only kept, the last forty
+    // fetches that ended, and the counts
+    QVariantMap summary() const {
+        QVariantList held; int kept = 0;
+        for (const QVariant &v : lab()) { const QVariantMap e = v.toMap(); if (e["observers"].toInt() || e["fetching"].toBool()) held << e; else kept++; }
+        const QVariantList ended = history();
+        return { { "held", held }, { "kept", kept }, { "history", ended.mid(qMax(0, ended.size() - 40)) },
+                 { "counts", QVariantMap { { "fetches", m_counts.fetches }, { "joined", m_counts.joined }, { "fresh", m_counts.fresh }, { "retries", m_counts.retries },
+                                           { "cancelled", m_counts.cancelled }, { "dropped", m_counts.dropped }, { "failed", m_counts.failed } } } };
     }
     int size() const { return m_entries.size(); }
     // The queries whose key holds `match` take `delayMs` longer and, with `fail`, fail: to see what a
@@ -470,6 +549,7 @@ public:
         return r;
     }
     bool watching() const { return !m_id.isEmpty(); }
+    bool watching(const Key &key) const { return m_id == idOf(key); }
 
 private:
     std::shared_ptr<Entry> entry() const { return m_cache && !m_id.isEmpty() ? m_cache->m_entries.value(m_id) : nullptr; }

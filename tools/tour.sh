@@ -8,8 +8,9 @@
 # resting on an episode; the episodes, a season change, the actions), menu (quick actions opening and
 # closing on a timer), play (an SDR episode from a show page: the loading screen, then the video with
 # the controls over it; an HDR or Dolby Vision video would leave the panel at 48 Hz after it, which LG
-# keeps until an SDR video plays), streams (a show's stream list, opened by the lab 12 s after launch:
-# scrolling, filtering, leaving), player (an SDR episode's overlay: the transport, seeking, the Audio
+# keeps until an SDR video plays), streams (a show's stream list, opened by the lab 12 s after the app
+# starts: scrolling, filtering, leaving; its keys wait 16 s from the launch, since at 13 s an app a
+# second slow to start had them on Home instead), player (an SDR episode's overlay: the transport, seeking, the Audio
 # and Subtitles lists, the Streams sheet, the episode row; nothing is chosen, so no track choice is
 # saved), anime (the Anime tab: moving along the chart crossfades its fanart; a show opening and
 # closing; the filters walked, one chosen and undone), schedule (the Anime tab's schedule: down through
@@ -46,7 +47,7 @@ case $route in
           p DOWN 1 900; p RIGHT 3 250; p LEFT 2 1300; p UP 1 900; p ENTER 1 1200; p DOWN 1 400; p BACK 1 900
           p RIGHT 1 400; p ENTER 1 1200; p DOWN 3 300; p BACK 1 900; p RIGHT 1 400; p ENTER 1 1500; p DOWN 4 300; p BACK 1 900
           p DOWN 1 900; p DOWN 1 1200; p RIGHT 2 500; p UP 1 900; p BACK 1 900; p BACK 1 2500 ;;
-  streams) p RIGHT 1 5000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
+  streams) p RIGHT 1 8000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
   schedule) p UP 1 900; p RIGHT 1 2500; p DOWN 1 900; p RIGHT 1 400; p ENTER 1 2000; p DOWN 1 1200; p RIGHT 3 400; p DOWN 1 900
             p DOWN 1 900; p DOWN 1 900; p RIGHT 2 400; p UP 1 900; p UP 1 900; p DOWN 3 500; p UP 4 600 ;;
   browse) p UP 1 900; p RIGHT 2 2000; p DOWN 1 900; p DOWN 1 900; p RIGHT 3 350; p DOWN 3 700; p UP 2 700; p ENTER 1 2000; p BACK 1 1500

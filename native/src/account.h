@@ -11,10 +11,8 @@
 // when a series moves on to its next episode, and syncs it. A seek is said as a seek: time jumped over is
 // not time watched.
 #include <QSet>
-#include <QThread>
 #include <QTimer>
 #include <QVariantMap>
-#include <memory>
 #include "core.h"
 
 class Account : public QObject {
@@ -72,6 +70,7 @@ public:
     Q_INVOKABLE QStringList ids() const { return m_ids; }
     Q_INVOKABLE void browse(const QString &what) {
         if (what == m_browse) return;
+        m_page.stop();                  // (a page still being read is the grid's before)
         m_browse = what; m_items.clear(); m_ids.clear(); m_browsing = QVariantMap { { "what", what }, { "filters", QVariantList() }, { "count", 0 }, { "more", false }, { "loading", true } };
         emit browsingChanged();
         if (what.isEmpty()) return;
@@ -170,36 +169,41 @@ private:
         if (Net::replaying()) return;
         for (const char *what : { "PullAddonsFromAPI", "SyncLibraryWithAPI" }) ctx(what);
     }
-    // The account and the library's ids as the core has them now, read on a worker (the library is 70 KB
-    // of JSON for 125 titles, and the core says it changed at every sync and every push)
+    // What the core holds is read as a query (query.h) whose work is done on a worker: watched the first
+    // time, and from then on invalidated each time the core says it changed, so a read under way from
+    // before the change is replaced and the newest is the one that shows.
+    template <class T> void read(query::Observer<T> &shown, const query::Key &key, std::function<T()> work) {
+        if (shown.watching(key)) { m_queries.invalidate(key); return; }
+        query::Options o; o.keepMs = 0; o.retries = 0;          // (the core keeps it; this is its last reading)
+        shown.watch(key, query::onWorker<T>(std::move(work)), o);
+    }
+    // The account and the library's ids as the core has them now (the library is 70 KB of JSON for 125
+    // titles, and the core says it changed at every sync and every push)
     // (`episodes`: a number for which episodes are watched, of every title: an episode marked changes it)
     struct Read { bool signedIn = false; QString email, avatar; QSet<QString> library, watched; uint episodes = 0; };
     void refresh() {
-        const int ticket = ++m_refresh;
-        auto out = std::make_shared<Read>();
-        QThread *worker = QThread::create([out] {
+        read<Read>(m_account, { "account" }, [] {
+            Read out;
             const QJsonObject a = Core::view("account").object();
-            out->signedIn = a.value("signedIn").toBool(); out->email = a.value("email").toString(); out->avatar = a.value("avatar").toString();
+            out.signedIn = a.value("signedIn").toBool(); out.email = a.value("email").toString(); out.avatar = a.value("avatar").toString();
             for (const QJsonValue &v : Core::view("library").array()) {
                 const QJsonObject i = v.toObject(), state = i.value("state").toObject();
-                if (!i.value("removed").toBool()) out->library << i.value("_id").toString();
-                if (state.value("timesWatched").toInt() > 0) out->watched << i.value("_id").toString();
-                out->episodes += qHash(i.value("_id").toString() + state.value("watched").toString());      // (a sum: the core lists them in no order)
+                if (!i.value("removed").toBool()) out.library << i.value("_id").toString();
+                if (state.value("timesWatched").toInt() > 0) out.watched << i.value("_id").toString();
+                out.episodes += qHash(i.value("_id").toString() + state.value("watched").toString());      // (a sum: the core lists them in no order)
             }
+            return out;
         });
-        connect(worker, &QThread::finished, this, [this, out, ticket] {
-            if (ticket != m_refresh) return;                // a newer read is on its way
-            const bool was = m_signedIn;
-            m_signedIn = out->signedIn; m_email = out->email; m_avatar = out->avatar; m_read = true;
-            if (m_signedIn && m_poll.isActive()) cancelSignIn();
-            emit changed();
-            if (out->library != m_library || out->watched != m_watched || out->episodes != m_episodes) {
-                m_library = out->library; m_watched = out->watched; m_episodes = out->episodes; m_revision++; emit libraryChanged();
-            }
-            if (m_signedIn && !was) sync();
-        });
-        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-        worker->start();
+    }
+    void took(const Read &read) {
+        const bool was = m_signedIn;
+        m_signedIn = read.signedIn; m_email = read.email; m_avatar = read.avatar; m_read = true;
+        if (m_signedIn && m_poll.isActive()) cancelSignIn();
+        emit changed();
+        if (read.library != m_library || read.watched != m_watched || read.episodes != m_episodes) {
+            m_library = read.library; m_watched = read.watched; m_episodes = read.episodes; m_revision++; emit libraryChanged();
+        }
+        if (m_signedIn && !was) sync();
     }
     void linked() {
         const QJsonObject l = Core::state("link").object(), code = l.value("code").toObject(), data = l.value("data").toObject();
@@ -218,13 +222,12 @@ private:
         if (link != m_link) { m_link = link; emit linkChanged(); }
     }
     // The grid's page as the core has it now, read and shaped on a worker: a list of Cinemeta series is
-    // half a megabyte of JSON.
+    // half a megabyte of JSON. (A query by what is browsed: a page read for the grid before is not this one's.)
+    struct Page { QVariantMap browsing; QVariantList items; QStringList ids; };
     void browsed() {
         const QString what = m_browse;
-        const int ticket = ++m_ticket;
-        struct Page { QVariantMap browsing; QVariantList items; QStringList ids; };
-        auto out = std::make_shared<Page>();
-        QThread *worker = QThread::create([out, what] {
+        read<Page>(m_page, { "browse", what }, [what] {
+            Page out;
             const QJsonObject page = Core::view(what == "library" ? "library.page" : "discover.page").object();
             QVariantList filters;
             for (const char *key : { "type", "sort", "list", "genre" }) {
@@ -240,35 +243,39 @@ private:
                 const QJsonArray genres = i.value("genres").toArray();
                 for (int g = 0; g < genres.size() && g < 2; g++) chips << genres[g].toString();
                 chips.removeAll(QString());
-                out->ids << i.value("id").toString();
-                out->items << QVariantMap { { "id", i.value("id").toString() }, { "type", i.value("type").toString() }, { "name", i.value("name").toString() },
+                out.ids << i.value("id").toString();
+                out.items << QVariantMap { { "id", i.value("id").toString() }, { "type", i.value("type").toString() }, { "name", i.value("name").toString() },
                     { "title", i.value("name").toString() }, { "art", i.value("poster").toString() }, { "poster", i.value("poster").toString() },
                     { "backdrop", i.value("backdrop").toString() }, { "logo", i.value("logo").toString() }, { "description", i.value("description").toString().left(220) },
                     { "chips", chips }, { "rating", i.value("rating").toString() }, { "episode", QString() }, { "progress", -1 } };
             }
-            out->browsing = QVariantMap { { "what", what }, { "filters", filters }, { "count", out->items.size() },
-                                       { "more", page.value("more").toBool() }, { "loading", page.value("loading").toBool() } };
+            out.browsing = QVariantMap { { "what", what }, { "filters", filters }, { "count", out.items.size() },
+                                      { "more", page.value("more").toBool() }, { "loading", page.value("loading").toBool() } };
+            return out;
         });
-        connect(worker, &QThread::finished, this, [this, out, ticket] {
-            if (ticket != m_ticket) return;                 // a newer page is on its way
-            m_items = out->items; m_ids = out->ids; m_browsing = out->browsing;
-            emit browsingChanged();
-        });
-        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-        worker->start();
     }
+    void took(const Page &page) {
+        m_items = page.items; m_ids = page.ids; m_browsing = page.browsing;
+        emit browsingChanged();
+    }
+    // (an answer shows when no newer read is under way)
+    template <class T> std::function<void(const query::Result<T> &)> latest() {
+        return [this](const query::Result<T> &r) { if (r.data && !r.fetching) took(*r.data); };
+    }
+    query::Queries m_queries { this };
+    query::Observer<Read> m_account { &m_queries, latest<Read>() };
+    query::Observer<Page> m_page { &m_queries, latest<Page>() };
     QString m_browse;
     QVariantMap m_browsing;
     QVariantList m_items;
     QStringList m_ids;                              // m_items' ids, for ids()
-    int m_ticket = 0;
     bool m_libraryAsked = false;
     bool m_signedIn = false, m_reporting = false;
     QString m_email, m_avatar;
     QVariantMap m_link;
     QSet<QString> m_library, m_watched;                    // ids in the library; ids watched (Stremio's `timesWatched`)
     uint m_episodes = 0;                                   // which episodes are watched (Read::episodes)
-    int m_revision = 0, m_refresh = 0;
+    int m_revision = 0;
     bool m_read = false;
     QTimer m_poll, m_renew;
 };
