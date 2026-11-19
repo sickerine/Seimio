@@ -112,7 +112,7 @@ private:
             if (status == 200 || status == 404) call.ok(status != 404);
             else { query::Failure why; why.status = status; why.reason = reply->errorString(); call.fail(why); }
         });
-        call.onCancel([reply] { reply->disconnect(); reply->abort(); reply->deleteLater(); });
+        call.onCancel([reply = QPointer<QNetworkReply>(reply)] { if (reply) { reply->disconnect(); reply->abort(); reply->deleteLater(); } });
     }
 
     // One request, answered from the recordings in a preview and on the wire otherwise; `done` on a later

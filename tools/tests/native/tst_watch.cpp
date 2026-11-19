@@ -46,6 +46,18 @@ private slots:
         QTRY_COMPARE(t.value(), 20);
         for (const Result<int> &r : t.results) QVERIFY(!r.data || *r.data == 20);       // never the first key's
     }
+    // (Home is asked for twice at launch, as the account's core says it is ready more than once: the
+    // first answer crossed under the first asking's number and was dropped, and the second asking, with
+    // nothing changed over there, was never answered. Home stayed empty.)
+    void askedAgainForTheSameKeyItStillHears() {
+        Far far; Told t; QObject holder;
+        Watch<int> w(far.cache, &holder, t.fn());
+        Options kept = quick(); kept.freshMs = 60000;
+        w.watch({ "home" }, gives(7), kept);
+        QThread::msleep(60);                            // the answer is across, waiting for this thread's turn
+        w.watch({ "home" }, gives(8), kept);            // the same key again, still fresh over there
+        QTRY_COMPARE(t.value(), 7);
+    }
     void stoppedItHearsNothingMore() {
         Far far; Told t; QObject holder;
         Watch<int> w(far.cache, &holder, t.fn());

@@ -26,6 +26,7 @@
 // Tooling: `lab()` lists every entry, `counts()` what the cache did, and `fault()` makes the queries it
 // names slow or failing, to see how a screen takes it.
 #include <QHash>
+#include <QMutex>
 #include <QObject>
 #include <QPointer>
 #include <QSet>
@@ -75,15 +76,20 @@ inline int backoff(int n, const Failure &why) {
 }
 
 // One go at fetching. The fetch function keeps its Call for as long as it works, and answers through it.
+// The way from a fetch back to its cache. A fetch function may answer on any thread, and the cache may
+// end while it does: both go through the gate's lock, so an answer finds the cache there or gone, never
+// half way.
+class Queries;
+struct Gate { QMutex lock; Queries *cache = nullptr; };
+
 struct Run {
-    QPointer<QObject> cache;
+    std::shared_ptr<Gate> gate;
     QString id;
     int attempt = 1, priority = 0;
     std::atomic<bool> over { false };           // answered, cancelled or replaced: what it says after is dropped
     std::vector<std::function<void()>> stops;   // what to stop if it is cancelled (the transfer)
 };
 
-class Queries;
 template <class T> class Call {
 public:
     void ok(T value) const;
@@ -131,10 +137,15 @@ struct Finished { QString key; int tookMs; bool ok; qint64 at; };        // a fe
 
 class Queries : public QObject {
 public:
-    explicit Queries(QObject *parent = nullptr) : QObject(parent) {}
+    explicit Queries(QObject *parent = nullptr) : QObject(parent) { m_gate->cache = this; }
     // (nothing may leave a destructor, and the compiler's own way of saying so is newer than the TV's C++
     // runtime: native/check-symbols.sh. The same in ~Observer and ~Watch.)
-    ~Queries() override { try { for (auto &e : m_entries) if (e->run) stop(*e->run); } catch (...) { } }
+    ~Queries() override {
+        try {
+            { QMutexLocker closing(&m_gate->lock); m_gate->cache = nullptr; }       // no answer comes in from here on
+            for (auto &e : m_entries) if (e->run) stop(*e->run);
+        } catch (...) { }
+    }
 
     // Asks once. `then(data, failure)` on a later turn: the data, kept if it is still fresh, or none and
     // why it couldn't be had (after the tries Options allow).
@@ -183,8 +194,15 @@ public:
     void remove(const Key &prefix) {
         for (const auto &e : matching(prefix)) {
             if (e->run) cancel(*e);
-            if (e->observers.isEmpty()) { m_entries.remove(e->id); continue; }
             e->data.reset(); e->status = Pending; e->error = Failure(); e->invalidated = false;
+            if (e->observers.isEmpty()) {
+                // those who asked once are told it was cancelled, on a later turn like any answer
+                const auto waiters = std::move(e->waiters);
+                e->waiters.clear();
+                m_entries.remove(e->id);
+                if (!waiters.empty()) QTimer::singleShot(0, this, [waiters, e] { for (const auto &w : waiters) w(*e); });
+                continue;
+            }
             dirty(*e);
             if (e->start) ask(*e);
         }
@@ -255,7 +273,7 @@ private:
     }
     void launch(Entry &e, int attempt) {
         auto run = std::make_shared<Run>();
-        run->cache = this; run->id = e.id; run->attempt = attempt; run->priority = e.options.priority;
+        run->gate = m_gate; run->id = e.id; run->attempt = attempt; run->priority = e.options.priority;
         e.run = run;
         for (const Fault &f : m_faults) if (e.id.contains(f.match)) {
             const bool fail = f.fail;
@@ -285,9 +303,8 @@ private:
         dirty(e); settle(e);
     }
 
-    // a fetch function's answer, from whichever thread it worked on
+    // a fetch function's answer, on the cache's thread (Call brings it over from any other)
     void arrived(const std::shared_ptr<Run> &run, std::shared_ptr<const void> data) {
-        if (QThread::currentThread() != thread()) { QMetaObject::invokeMethod(this, [this, run, data] { arrived(run, data); }, Qt::QueuedConnection); return; }
         const auto e = m_entries.value(run->id);
         if (run->over || !e || e->run != run) { ++m_counts.dropped; return; }
         run->over = true; run->stops.clear(); e->run.reset();
@@ -303,7 +320,6 @@ private:
         if (m_history.size() > 200) m_history.erase(m_history.begin(), m_history.begin() + 50);
     }
     void failed(const std::shared_ptr<Run> &run, const Failure &why) {
-        if (QThread::currentThread() != thread()) { QMetaObject::invokeMethod(this, [this, run, why] { failed(run, why); }, Qt::QueuedConnection); return; }
         const auto e = m_entries.value(run->id);
         if (run->over || !e || e->run != run) { ++m_counts.dropped; return; }
         run->over = true; run->stops.clear();
@@ -313,7 +329,7 @@ private:
             // the next try: a run of its own from now, so that cancelling in the wait finds it
             ++m_counts.retries;
             auto next = std::make_shared<Run>();
-            next->cache = this; next->id = e->id; next->attempt = run->attempt + 1; next->priority = e->options.priority;
+            next->gate = m_gate; next->id = e->id; next->attempt = run->attempt + 1; next->priority = e->options.priority;
             e->run = next;
             QTimer::singleShot(wait, this, [this, next] {
                 const auto e = m_entries.value(next->id);
@@ -371,6 +387,7 @@ private:
         }
     }
 
+    std::shared_ptr<Gate> m_gate = std::make_shared<Gate>();
     QHash<QString, std::shared_ptr<Entry>> m_entries;
     QSet<ObserverBase *> m_observers;           // the ones alive
     QSet<QString> m_dirty;
@@ -380,12 +397,25 @@ private:
     std::vector<Fault> m_faults;
 };
 
-// (an answer to a fetch that is over is dropped by the cache, which counts it)
+// An answer goes to the cache on the cache's thread: straight in from there, and from another thread
+// posted to it under the gate's lock, where the cache is either still there to post to or gone. (An
+// answer to a fetch that is over is dropped by the cache, which counts it.)
 template <class T> void Call<T>::ok(T value) const {
-    if (QObject *c = run->cache.data()) static_cast<Queries *>(c)->arrived(run, std::make_shared<const T>(std::move(value)));
+    auto data = std::make_shared<const T>(std::move(value));
+    const auto r = run;
+    QMutexLocker here(&r->gate->lock);
+    Queries *cache = r->gate->cache;
+    if (!cache) return;
+    if (QThread::currentThread() == cache->thread()) { here.unlock(); cache->arrived(r, data); }
+    else QMetaObject::invokeMethod(cache, [cache, r, data] { cache->arrived(r, data); }, Qt::QueuedConnection);
 }
 template <class T> void Call<T>::fail(Failure why) const {
-    if (QObject *c = run->cache.data()) static_cast<Queries *>(c)->failed(run, why);
+    const auto r = run;
+    QMutexLocker here(&r->gate->lock);
+    Queries *cache = r->gate->cache;
+    if (!cache) return;
+    if (QThread::currentThread() == cache->thread()) { here.unlock(); cache->failed(r, why); }
+    else QMetaObject::invokeMethod(cache, [cache, r, why] { cache->failed(r, why); }, Qt::QueuedConnection);
 }
 
 // what an observer shows of the query it watches
@@ -427,6 +457,8 @@ public:
     void stop() { detach(); m_held.reset(); m_told = Result<T>(); }
     // fetches what it watches again, whatever its age (a fetch under way is joined)
     void refetch() { if (const auto e = entry()) m_cache->ask(*e); }
+    // tells what it shows once more on the next turn, changed or not (for one who may have missed it: Watch)
+    void retell() { m_again = true; if (const auto e = entry()) m_cache->dirty(*e); }
     Result<T> result() const {
         Result<T> r;
         const auto e = entry();
@@ -448,8 +480,8 @@ private:
     void changed() override {
         const Result<T> r = result();
         if (r.data && !r.placeholder) m_held.reset();
-        if (r == m_told) return;
-        m_told = r;
+        if (r == m_told && !m_again) return;
+        m_told = r; m_again = false;
         const auto changed = m_changed;     // (its own: the callback may be the end of this observer)
         if (changed) changed(r);
     }
@@ -459,6 +491,7 @@ private:
     QString m_id;
     std::shared_ptr<const T> m_held;        // what it showed of the key before, for `placeholder`
     Result<T> m_told;                       // the last result it told of
+    bool m_again = false;                   // to be told once more whatever it is (`retell`)
 };
 
 }  // namespace query

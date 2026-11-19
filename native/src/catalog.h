@@ -207,7 +207,8 @@ public:
         core->start();
         if (core->ready()) load();
     }
-    ~Catalog() override { m_thread.quit(); m_thread.wait(); delete m_live; delete m_franchise; delete m_cache; }
+    // (the cache first: ending, it tells the fetches under way to stop, and those are Live's and Franchise's)
+    ~Catalog() override { m_thread.quit(); m_thread.wait(); delete m_cache; delete m_live; delete m_franchise; }
     bool ready() const { return m_ready; }
     QVariantList continueWatching() const { return m_data ? m_data->continueWatching : QVariantList(); }
     QVariantList popular() const { return m_data ? m_data->popular : QVariantList(); }
@@ -269,6 +270,7 @@ public:
         // already had.
         if (q == m_searching) {
             if (m_found && q == m_foundFor) QTimer::singleShot(0, this, [this, q] { if (q == m_searching && m_found) emit found(q, m_found->results); });
+            else if (q.size() >= 2) m_search.refetch();     // it found nothing or couldn't be had: asked again (a fetch under way is joined)
             return;
         }
         m_searching = q; m_found.reset(); m_foundFor.clear();
@@ -289,6 +291,7 @@ public:
         }, kept);
     }
     void searched(const query::Result<Found> &r) {
+        if (r.fetching && !r.data) return;                  // on its way (a failure from before is no answer to this asking)
         if (r.status == query::Error) { m_found.reset(); m_foundFor.clear(); m_animeMore = false; emit found(m_searching, QVariantMap()); return; }
         if (!r.data || r.data == m_found) return;           // on its way, or what is shown already
         m_found = r.data; m_foundFor = m_searching;
@@ -310,7 +313,11 @@ public:
         const int page = ++m_animePage;
         query::Options kept; kept.freshMs = kept.keepMs = Live::kKept; kept.retries = 0;
         m_more.watch({ "search-more", q, QString::number(page) }, [this, q, page](query::Call<Found> call) {
-            m_live->searchAnime(q, page, [call](const QJsonArray &found, bool more) { call.ok(Found { QVariantMap { { "anime", shows(found) } }, more }); });
+            m_live->searchAnime(q, page, [call](const QJsonArray &found, bool more, bool had) {
+                if (had) { call.ok(Found { QVariantMap { { "anime", shows(found) } }, more }); return; }
+                query::Failure none; none.reason = "no answer"; none.final = true;        // (not kept as an end of the list: asked for again)
+                call.fail(none);
+            });
         }, kept);
     }
     QString today() const { return m_today; }
@@ -365,6 +372,8 @@ public:
         query::Options o; o.retries = 0;                    // (each request under it has its own tries)
         m_home.watch({ "home" }, [this](query::Call<Home> call) {
             m_live->home([this, call](const Live::Docs &docs) {
+                // (replaced by a newer asking meanwhile: its library is older than the one Franchise has)
+                if (call.cancelled()) return;
                 // the library first: `loaded` has the page in hand ask for its franchise again, which is put
                 // together from what was fetched at once, with the library the franchise has then
                 m_franchise->setLibrary(docs.library, docs.airing);
@@ -429,6 +438,7 @@ public:
         }, kept);
     }
     void tookSeason(const query::Result<Season> &r) {
+        if (r.fetching && !r.data) return;                  // on its way (a failure from before is no answer to this asking)
         if (r.status == query::Error) {
             // it couldn't be had: the one on screen stays, and is what is asked for again
             const QString name = m_seasonAsked;
@@ -480,12 +490,12 @@ public:
     // the picture loader's part (pictures.h), the same way: how many pictures were asked for and shown,
     // the last of them with the place each came from and how long it took, and what was fetched
     Q_INVOKABLE QVariantMap pictures() {
-        pictures::Loader::instance()->look([this](const QVariantMap &seen) { back([this, seen] { m_pictures = seen; }); });
+        pictures::Loader::with(pictures::Loader::app(), [this](pictures::Loader *l) { l->look([this](const QVariantMap &seen) { back([this, seen] { m_pictures = seen; }); }); });
         return m_pictures;
     }
     // lets go of every picture the loader has on disk, so that the next view of each is a first view
-    Q_INVOKABLE void forgetPictures() { pictures::Loader::instance()->forget(); }
-    Q_INVOKABLE void tunePictures(int decoders, int onTheSide) { pictures::Loader::instance()->tune(decoders, onTheSide); }
+    Q_INVOKABLE void forgetPictures() { pictures::Loader::with(pictures::Loader::app(), [](pictures::Loader *l) { l->forget(); }); }
+    Q_INVOKABLE void tunePictures(int decoders, int onTheSide) { pictures::Loader::with(pictures::Loader::app(), [=](pictures::Loader *l) { l->tune(decoders, onTheSide); }); }
     // The queries whose key holds `match` take `delayMs` longer and, with `fail`, fail (query.h); an empty
     // `match` ends it. For seeing on the TV what a screen does with a slow or a failed answer.
     Q_INVOKABLE void fault(const QString &match, int delayMs, bool fail) {

@@ -96,6 +96,30 @@ private slots:
         QCOMPARE(g.colour(), QColor(Qt::red));          // its own after all, as long as that takes
         QCOMPARE(s.asked["/own"], 1);                   // the one fetch, which was on the side until then
     }
+    void aPlaceThatStallsDoesNotHoldBackItsOwnPictureOnceThatIsIn() {
+        Service s; QTemporaryDir dir; Loader loader(dir.path());
+        s.lines["/own"] = { { 200, png(Qt::red), kPicture, 150 } };
+        s.lines["/quick"] = { { -1, "", "", 0 } };      // never answers (given up on only after 20 s of nothing)
+        QElapsedTimer t; t.start();
+        Got g; loader.request(of({ s.at("/own"), s.at("/quick") }), g.fn());
+        QTRY_VERIFY_WITH_TIMEOUT(g.done, 3000);
+        QCOMPARE(g.colour(), QColor(Qt::red));          // its own, which came in on the side meanwhile
+        QVERIFY(t.elapsed() < 2000);
+    }
+    void atItsEndTheLoaderAnswersWhatIsStillAskedFor() {
+        Service s; QTemporaryDir dir;
+        s.lines["/own"] = { { -1, "", "", 0 } };
+        auto *loader = new Loader(dir.path());
+        const std::shared_ptr<Door> door = loader->door();
+        Got g; loader->request(of({ s.at("/own") }), g.fn());
+        QTest::qWait(30);
+        loader->drain();
+        QVERIFY(g.done); QVERIFY(g.image.isNull()); QCOMPARE(g.times, 1);
+        delete loader;
+        bool reached = false;
+        Loader::with(door, [&reached](Loader *) { reached = true; });      // what a response left behind does: nobody is there
+        QVERIFY(!reached);
+    }
     void whatIsNoPictureLeavesItToTheNext() {
         Service s; QTemporaryDir dir; Loader loader(dir.path());
         s.lines["/own"] = { { 200, png(Qt::red), kPicture, 60 } };

@@ -119,11 +119,12 @@ public:
                     (*out)[type == QByteArray("movie") ? "movies" : "series"] = metas; finish();
                 });
             });
-        searchAnime(query, 1, [out, finish](const QJsonArray &shows, bool more) { (*out)["anime"] = shows; (*out)["animeMore"] = more; finish(); });
+        searchAnime(query, 1, [out, finish](const QJsonArray &shows, bool more, bool) { (*out)["anime"] = shows; (*out)["animeMore"] = more; finish(); });
     }
     // A page of the anime a name finds on AniList, the most popular of the matches first: `done(shows,
-    // more)`, fifty a page, `more` when another page follows. A page is a query too, kept as long.
-    void searchAnime(const QString &query, int page, std::function<void(QJsonArray, bool)> done) {
+    // more, had)`, fifty a page, `more` when another page follows, `had` false when the page couldn't be
+    // had (which is no end of the list). A page is a query too, kept as long.
+    void searchAnime(const QString &query, int page, std::function<void(QJsonArray, bool, bool)> done) {
         query::Options kept; kept.freshMs = kept.keepMs = kKept; kept.retries = 0;
         m_cache->fetch<QJsonObject>({ "search-anime", query, QString::number(page) }, [this, query, page](query::Call<QJsonObject> call) {
             anilist("query ($q: String, $page: Int) { Page(page: $page, perPage: 50) { pageInfo { hasNextPage } media(search: $q, type: ANIME, sort: POPULARITY_DESC) { " + fields() + " } } }",
@@ -137,7 +138,7 @@ public:
                 kitsuIds(shows, [shows, more, call] { call.ok(QJsonObject { { "shows", *shows }, { "more", more } }); });       // (what a result's watched check goes by)
             });
         }, kept, [done](std::shared_ptr<const QJsonObject> page, const query::Failure &) {
-            done(page ? page->value("shows").toArray() : QJsonArray(), page && page->value("more").toBool());
+            done(page ? page->value("shows").toArray() : QJsonArray(), page && page->value("more").toBool(), !!page);
         });
     }
     // One title's meta (a film, a series), from the Kitsu addon or Cinemeta by its id, or nothing. Kept ten

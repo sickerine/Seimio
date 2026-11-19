@@ -355,6 +355,43 @@ private slots:
         cache.remove({ "gone" });
         QVERIFY(!cache.peek<int>({ "gone" }));
     }
+    void removingAnEntryTellsThoseWhoAskedOnce() {
+        Source s; Queries cache; QStringList why; int got = 0;
+        cache.fetch<int>({ "k" }, s.fn(), quick(), [&](std::shared_ptr<const int> d, const Failure &f) { got++; if (!d) why << f.reason; });
+        turn();
+        cache.remove({ "k" });
+        QCOMPARE(got, 0);                               // not from inside the call
+        turn();
+        QCOMPARE(got, 1); QCOMPARE(why, QStringList { "cancelled" });
+        QVERIFY(s.asked[0].cancelled());
+    }
+    void toldAgainAnObserverSaysWhatItShows() {
+        Source s; Queries cache; Told t;
+        Observer<int> o(&cache, t.fn());
+        o.watch({ "k" }, s.fn(), quick(60000)); turn();
+        s.asked[0].ok(1); turn();
+        const int told = t.results.size();
+        o.watch({ "k" }, s.fn(), quick(60000)); turn();
+        QCOMPARE(t.results.size(), told);               // nothing changed: nothing said
+        o.retell(); turn();
+        QCOMPARE(t.results.size(), told + 1); QCOMPARE(t.value(), 1);
+    }
+    // an answer on another thread at the moment the cache ends finds it there or gone, never half way
+    void anAnswerFromAnotherThreadMayMeetTheCachesEnd() {
+        for (int round = 0; round < 300; round++) {
+            auto *cache = new Queries;
+            std::atomic<bool> go { false };
+            QThread *worker = nullptr;
+            cache->fetch<int>({ "k" }, [&](Call<int> call) {
+                worker = QThread::create([call, &go] { while (!go) QThread::yieldCurrentThread(); call.ok(1); call.fail({ 0, "late" }); });
+                worker->start();
+            }, quick(), [](std::shared_ptr<const int>, const Failure &) {});
+            go = true;
+            if (round % 2) QThread::yieldCurrentThread();
+            delete cache;
+            worker->wait(); delete worker;
+        }
+    }
     void anObserverMayGoInsideItsOwnCallback() {
         Source s; Queries cache;
         Observer<int> *o = nullptr; int told = 0;

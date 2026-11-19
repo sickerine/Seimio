@@ -6,7 +6,7 @@
 // The one thing two threads add is that an answer can be on its way across while the holder has already
 // asked for something else. A Watch numbers what it asks for, and a result that crosses over for an
 // earlier asking is dropped here, once, for everything that watches: the holder hears only of the key it
-// watches now. (tools/tests/native/tst_watch.cpp)
+// watches now, and hears of it after every asking. (tools/tests/native/tst_watch.cpp)
 #include <QCoreApplication>
 #include <QPointer>
 #include <atomic>
@@ -45,6 +45,10 @@ public:
                 }, Qt::QueuedConnection);
             }));
             far->observer->watch(key, fn, options, keepPrevious);
+            // Every asking is answered, the same key asked for again too: its result may be on its way
+            // across under the number before, where it is dropped, and the observer, showing what it
+            // showed, would have nothing new to tell.
+            far->observer->retell();
         });
     }
     // watches nothing: what was on its way is dropped

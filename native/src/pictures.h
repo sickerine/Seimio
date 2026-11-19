@@ -171,6 +171,11 @@ private:
     bool m_pictures;
 };
 
+// The way in to a loader from other threads. A response an Image holds outlives the loader at the app's
+// end, and asks or cancels through this: under its lock the loader is either there or gone.
+class Loader;
+struct Door { QMutex lock; Loader *loader = nullptr; };
+
 class Loader : public QObject {
 public:
     // `image` (none: `error` says why), on the loader's thread, once for every `request`
@@ -190,12 +195,27 @@ public:
         // Qt's own image reader have three: with two decoding here, the Anime tour had 10, 12 and 6 late
         // frames on a warm cache where it has 7, 8 and 5 with one (2026-11-18, three runs each).
         m_pool.setMaxThreadCount(1);
+        m_door->loader = this;
     }
-    ~Loader() override { try { m_pool.waitForDone(); } catch (...) { } }
+    ~Loader() override {
+        try {
+            { QMutexLocker closing(&m_door->lock); m_door->loader = nullptr; }
+            m_pool.waitForDone();
+        } catch (...) { }
+    }
+    std::shared_ptr<Door> door() const { return m_door; }
+    // `use` with the loader behind a door, if it is still there (from any thread)
+    static void with(const std::shared_ptr<Door> &door, const std::function<void(Loader *)> &use) {
+        QMutexLocker here(&door->lock);
+        if (door->loader) use(door->loader);
+    }
+    // every picture still asked for is answered with none: before the loader ends, so that no response is left waiting
+    void drain() { const auto jobs = m_jobs.values(); for (const auto &job : jobs) finish(job, QImage(), "the app is closing", QString(), false); }
 
-    // the app's own: on a thread of its own, there until the app ends
-    static Loader *instance() {
-        static Loader *loader = [] {
+    // The app's own, by its door: on a thread of its own until the app ends. At the end what is still
+    // asked for is answered with nothing, the thread stops and the loader goes; the door stays, closed.
+    static std::shared_ptr<Door> app() {
+        static std::shared_ptr<Door> door = [] {
             const bool fixed = Net::replaying();
             auto *thread = new QThread; thread->setObjectName("pictures");
             auto *l = new Loader(fixed ? Fixed::directory() : QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/net/art", fixed);
@@ -209,10 +229,14 @@ public:
             // with that the Anime tour lost no frame to a picture and pictures took over 2 s off the disk.
             QMetaObject::invokeMethod(l, [] { setpriority(PRIO_PROCESS, 0, 10); }, Qt::QueuedConnection);
 #endif
-            QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [thread, l] { thread->quit(); thread->wait(); delete l; delete thread; }, Qt::DirectConnection);
-            return l;
+            QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [thread, l] {
+                QMetaObject::invokeMethod(l, [l] { l->drain(); }, Qt::BlockingQueuedConnection);
+                thread->quit(); thread->wait();
+                delete l; delete thread;
+            }, Qt::DirectConnection);
+            return l->door();
         }();
-        return loader;
+        return door;
     }
 
     quint64 request(const Want &want, Done done) {
@@ -263,7 +287,18 @@ private:
         if (onDisk >= 0) job->order << onDisk;
         for (int i = 1; i < places.size(); i++) if (i != onDisk) job->order << i;
         if (onDisk != 0 && !places.isEmpty()) job->order << 0;
-        if (onDisk != 0 && places.size() > 1) aside(places[0]);
+        if (onDisk != 0 && places.size() > 1) {
+            aside(places[0]);
+            // With nothing on disk, the title's own may be the first to come: an alternative that stalls
+            // (nothing arriving for 20 s) is not waited out with its own picture already in hand.
+            if (onDisk < 0 && m_asides.contains(places[0])) {
+                const QString own = places[0];
+                query::Options o; o.keepMs = 0; o.priority = -1; o.retries = 2;
+                m_net->read(own, QByteArray(), o, [this, job, own](std::shared_ptr<const Answer> a, const query::Failure &) {
+                    if (!job->over && a && a->status >= 200 && a->status < 300) decode(job, own, a, [] {});
+                });
+            }
+        }
         next(job);
     }
     void next(const std::shared_ptr<Job> &job) {
@@ -275,19 +310,24 @@ private:
         m_net->read(url, QByteArray(), o, [this, job, url](std::shared_ptr<const Answer> a, const query::Failure &why) {
             if (job->over) return;
             if (!a || a->status < 200 || a->status >= 300) { job->failed << QString("%1 %2").arg(a ? a->status : why.status).arg(a ? QString("from %1").arg(QUrl(url).host()) : why.reason.left(40)); next(job); return; }
-            const QSize size = job->want.size; const bool banded = job->want.banded, cached = a->cached;
-            job->fetchedAt = m_cache->now();
-            // (one no longer wanted by the time its turn comes is not decoded: along a row walked fast the
-            // pictures of the titles passed held the one of the title rested on back 0.9 s, off the disk)
-            m_pool.start(new Work([this, job, url, a, size, banded, cached] {
-                const QImage image = job->over ? QImage() : decoded(a->body, size, banded);
-                QMetaObject::invokeMethod(this, [this, job, url, image, cached] {
-                    if (job->over) return;
-                    if (image.isNull()) { job->failed << "no picture from " + QUrl(url).host(); next(job); return; }
-                    finish(job, image, QString(), url, cached);
-                }, Qt::QueuedConnection);
-            }), job->want.rank());
+            decode(job, url, a, [this, job, url] { job->failed << "no picture from " + QUrl(url).host(); next(job); });
         });
+    }
+    // The bytes of one place decoded on the decoder's thread, and the job answered with the picture;
+    // `otherwise` when they are no picture. (One no longer wanted by the time its turn comes is not
+    // decoded: along a row walked fast the pictures of the titles passed held the one of the title
+    // rested on back 0.9 s, off the disk.)
+    void decode(const std::shared_ptr<Job> &job, const QString &url, const std::shared_ptr<const Answer> &a, std::function<void()> otherwise) {
+        const QSize size = job->want.size; const bool banded = job->want.banded, cached = a->cached;
+        if (!job->fetchedAt) job->fetchedAt = m_cache->now();
+        m_pool.start(new Work([this, job, url, a, size, banded, cached, otherwise] {
+            const QImage image = job->over ? QImage() : decoded(a->body, size, banded);
+            QMetaObject::invokeMethod(this, [this, job, url, image, cached, otherwise] {
+                if (job->over) return;
+                if (image.isNull()) { otherwise(); return; }
+                finish(job, image, QString(), url, cached);
+            }, Qt::QueuedConnection);
+        }), job->want.rank());
     }
     void finish(const std::shared_ptr<Job> &job, const QImage &image, const QString &error, const QString &from, bool cached) {
         if (job->over) return;
@@ -319,6 +359,7 @@ private:
     }
     struct Work : QRunnable { std::function<void()> fn; explicit Work(std::function<void()> f) : fn(std::move(f)) {} void run() override { fn(); } };
 
+    std::shared_ptr<Door> m_door = std::make_shared<Door>();
     bool m_fixed;
     QNetworkAccessManager *m_manager;
     query::Queries *m_cache;
@@ -343,13 +384,20 @@ private:
 };
 class Response : public QQuickImageResponse {
 public:
-    // (`finished` is sent from this object's own thread, on a later turn of it: whoever asked has had its
-    // hands on the response by then, where sent from the loader's thread it could come before that)
-    Response(Loader *loader, const Want &want) : m_loader(loader), m_banded(want.banded) {
-        m_ticket = loader->request(want, [this](const QImage &image, const QString &error) {
-            m_image = image; m_error = error;
-            QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
+    // `finished` is sent from this object's own thread, on a later turn of it: whoever asked has had its
+    // hands on the response by then. Sent from the loader's thread it can come before the one asking has
+    // connected to it, and Qt's own check for that only sees a signal sent on its reader's thread. (At the
+    // app's end the loader answers everything still asked for before Qt's reader stops: Loader::app.)
+    Response(const std::shared_ptr<Door> &door, const Want &want) : m_door(door), m_banded(want.banded) {
+        bool asked = false;
+        Loader::with(door, [&](Loader *loader) {
+            asked = true;
+            m_ticket = loader->request(want, [this](const QImage &image, const QString &error) {
+                m_image = image; m_error = error;
+                QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
+            });
         });
+        if (!asked) { m_error = "the app is closing"; QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection); }
     }
     QQuickTextureFactory *textureFactory() const override {
         // (an Image's is Qt's own factory: the picture is laid out by the size it was decoded at, as one
@@ -357,9 +405,9 @@ public:
         return m_image.isNull() ? nullptr : m_banded ? new Plain(m_image) : QQuickTextureFactory::textureFactoryForImage(m_image);
     }
     QString errorString() const override { return m_error; }
-    void cancel() override { m_loader->cancel(m_ticket); }
+    void cancel() override { const quint64 ticket = m_ticket; Loader::with(m_door, [ticket](Loader *loader) { loader->cancel(ticket); }); }
 private:
-    Loader *m_loader; bool m_banded; quint64 m_ticket = 0;
+    std::shared_ptr<Door> m_door; bool m_banded; quint64 m_ticket = 0;
     QImage m_image; QString m_error;
 };
 
@@ -374,7 +422,7 @@ public:
         Want want = wanted(id);
         const qreal dense = qGuiApp ? qGuiApp->devicePixelRatio() : 1;
         want.size = dense > 1 ? QSize(qRound(requestedSize.width() / dense), qRound(requestedSize.height() / dense)) : requestedSize;
-        return new Response(Loader::instance(), want);
+        return new Response(Loader::app(), want);
     }
 };
 
