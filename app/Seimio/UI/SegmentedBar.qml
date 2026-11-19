@@ -3,7 +3,11 @@
 // `model` entries are strings, or { label, icon } for icon-only segments, or { label, trailing } for a
 // label with a small icon after it (chevrons on a segment that opens a menu), or { label, faint } for a
 // label drawn dim (a kind a search found nothing of: it can still be chosen); a new model of the same
-// length relabels the segments in place. Other keys, and Left or Right past an end, pass on to the
+// length relabels the segments in place. { label, trailing, room } is a choice that opens a list: `room`
+// is every label it may come to show, and the segment is as wide as the longest, so the bar keeps its
+// width and what stands after it keeps its place when the choice changes (a select box's way: sized by
+// its label, "Chart" turning to "Schedule" pushed the three bars after it along in one frame). Its label
+// starts where the longest would and its chevrons stay at the end. Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 // Moving selects, unless `selectOnOk`: then a cursor walks the segments and OK selects the one under it
 // (bars side by side, see BarRow). The selection is a soft pill that stays on its segment; the cursor is
@@ -54,6 +58,7 @@ FocusScope {
     height: barHeight
 
     Shadow { opacity: bar.shadow; drop: 8 }
+    FontMetrics { id: lettering; font.family: Theme.face; font.pixelSize: bar.fontSize; font.weight: Font.DemiBold }      // (a segment's `room`)
     Glass {
         id: glass
         source: bar.source
@@ -107,10 +112,13 @@ FocusScope {
                     readonly property string icon: typeof m === "string" ? "" : (m && m.icon || "")
                     readonly property string trailing: typeof m === "string" ? "" : (m && m.trailing || "")
                     readonly property bool faint: typeof m !== "string" && !!(m && m.faint)
+                    readonly property var room: typeof m === "string" ? [] : (m && m.room || [])
+                    // its label's width, or the longest it may come to have
+                    readonly property real lettered: { var w = text.implicitWidth; for (var i = 0; i < room.length; i++) w = Math.max(w, lettering.advanceWidth(room[i])); return w }
                     readonly property bool current: bar.currentIndex === index
                     readonly property color ink: bar.showFocus && bar.cursor === index ? Theme.inkOnLight : Theme.ink
                     // the label and its trailing icon, centred as one block by what's drawn
-                    readonly property real block: text.implicitWidth + (trailing ? 8 + tail.inkRight - tail.inkLeft : 0)
+                    readonly property real block: lettered + (trailing ? 8 + tail.inkRight - tail.inkLeft : 0)
                     width: icon !== "" ? bar.barHeight : block + bar.segmentPad
                     height: segments.height
                     Text {
@@ -129,7 +137,7 @@ FocusScope {
                         visible: parent.trailing !== ""
                         name: parent.trailing; color: parent.ink
                         width: Math.round(bar.fontSize * 28 / 26); height: width     // as icons are to a 26 px label in a Button
-                        x: text.x + text.implicitWidth + 8 - inkLeft; anchors.verticalCenter: parent.verticalCenter
+                        x: text.x + parent.lettered + 8 - inkLeft; anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }

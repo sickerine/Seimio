@@ -451,6 +451,15 @@ format list differs from the TV, so neither settles anything.
   `Icon.inkLeft`/`inkRight`, and centre a label and anything under it (a progress bar) as one block.
   Measure the gaps on a 2x render (see the gallery) rather than trusting box maths.
 - Nothing shifts once shown: give placeholders the final size, and fade art in when it's decoded.
+- A filter with two choices is a switch, both in sight; one with more shows its choice and drops a
+  list (`FilterBar`, his rule of 2026-11-19: "tabs if it has two options or fewer"). A bar that
+  drops a list is as wide as its longest choice (`SegmentedBar`'s `room`), so the bars after it stay
+  where they are when the choice changes: sized by its label, "Chart" turning to "Schedule" pushed
+  three bars along in one frame.
+- A control that has no say where you are is not in the row: it is not dimmed (the order in the
+  Anime tab's schedule, the view for a season with nothing airing). Put the one that comes and goes
+  last, so nothing moves for it; where it can't be last, its place closes after it has faded
+  (`Fade`'s `gap`: a Row drops an item that turned invisible and moves what follows in one frame).
 - One version of everything. A title's backdrop, logo, name and facts show once, in their final form:
   never a name that a logo then replaces, a small backdrop that a larger one replaces, or the same
   picture again from another URL. Load first (preload, then commit; `TitleArt`, `HeroInfo`, `Backdrop`

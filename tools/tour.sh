@@ -48,12 +48,15 @@ case $route in
           p RIGHT 1 400; p ENTER 1 1200; p DOWN 3 300; p BACK 1 900; p RIGHT 1 400; p ENTER 1 1500; p DOWN 4 300; p BACK 1 900
           p DOWN 1 900; p DOWN 1 1200; p RIGHT 2 500; p UP 1 900; p BACK 1 900; p BACK 1 2500 ;;
   streams) p RIGHT 1 8000; p DOWN 6 350; p UP 3 350; p UP 1 900; p LEFT 1 1200; p RIGHT 1 1200; p DOWN 1 600; p DOWN 4 350; p BACK 1 2000 ;;
-  schedule) p UP 1 900; p RIGHT 1 2500; p DOWN 1 900; p RIGHT 1 400; p ENTER 1 2000; p DOWN 1 1200; p RIGHT 3 400; p DOWN 1 900
+  # (down onto the controls at the season, right over Chart onto Schedule, OK)
+  schedule) p UP 1 900; p RIGHT 1 2500; p DOWN 1 900; p RIGHT 2 400; p ENTER 1 2000; p DOWN 1 1200; p RIGHT 3 400; p DOWN 1 900
             p DOWN 1 900; p DOWN 1 900; p RIGHT 2 400; p UP 1 900; p UP 1 900; p DOWN 3 500; p UP 4 600 ;;
   browse) p UP 1 900; p RIGHT 2 2000; p DOWN 1 900; p DOWN 1 900; p RIGHT 3 350; p DOWN 3 700; p UP 2 700; p ENTER 1 2000; p BACK 1 1500
           p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 2 400; p BACK 1 900; p UP 1 900; p RIGHT 1 2000; p DOWN 2 900; p RIGHT 3 350 ;;
   anime) p UP 1 900; p RIGHT 1 2500; p DOWN 2 900; p RIGHT 5 1200; p LEFT 3 1200; p ENTER 1 2500; p BACK 1 1500
-         p UP 1 900; p RIGHT 3 300; p ENTER 1 1500; p LEFT 1 300; p ENTER 1 1500; p UP 1 900 ;;
+         # up to the controls at the season, right over the view and the genres onto the format; its list
+         # dropped and TV chosen, then dropped again and "All formats" chosen back
+         p UP 1 900; p RIGHT 4 300; p ENTER 1 900; p DOWN 1 400; p ENTER 1 1500; p ENTER 1 900; p UP 1 400; p ENTER 1 1500; p UP 1 900 ;;
   search) sleep 5; p RIGHT 4 350; p DOWN 1 900; p RIGHT 1 500; p UP 1 900; p LEFT 2 350; p ENTER 1 2500; p BACK 1 1500
           # up to the kinds, the one beside the chosen one picked and walked, then the first one picked
           # again: the account's own pick is what it was

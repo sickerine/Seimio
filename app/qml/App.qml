@@ -570,6 +570,7 @@ WebOSWindow {
                      queries: catalog.queries(),            // what the data thread's cache holds and fetched (Catalog.queries)
                      pictures: catalog.pictures(),          // and the picture loader: where each picture came from, and how long it took
                      season: { asked: catalog.seasonAsked, shown: catalog.seasonName },
+                     anime: { view: anime.view, format: anime.format, sort: anime.sort, genre: anime.genre, row: anime.row, list: anime.menu },      // its controls, and the list that is dropped
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem), held: id(app.held ? app.held.item : null),
                      video: app.playTarget ? app.playTarget.id : "", trail: app.trail.map(function (t) { return t.layer }).join(">"),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,

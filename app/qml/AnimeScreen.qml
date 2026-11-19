@@ -1,7 +1,7 @@
 // The Anime tab: a season as AniChart charts it. Under the focused show's info (App's HeroInfo) and
 // its next episode's countdown sit the controls: the season (its name is the control: it drops the list
-// of seasons), the view (the chart, or the week's schedule by day and time), the format, the order, and
-// a genre. A season picked is fetched live and shown once it is in whole: until then its name is in
+// of seasons), the view (the chart, or the week's schedule by day and time), a genre, the format and
+// the order. A season picked is fetched live and shown once it is in whole: until then its name is in
 // the title and the season on screen stays, dimmed and out of reach. Below them the shows: a grid of covers, each counting down
 // to its next episode, or a row per day with air times. Moving into the rows lifts the controls into the
 // tab bar's place, as the calendar's months do, and the info steps aside.
@@ -30,14 +30,14 @@ FocusScope {
     property string format: "all"
     property string sort: "popular"
     property string genre: ""
-    property string menu: ""                 // the list that is open: "season", "genre" or none
+    readonly property string menu: listBar ? listBar.filter.key : ""       // the list that is open, by its control's key, or none
     // a season was picked and isn't in yet
     readonly property bool seasonLoading: !!catalog && catalog.seasonAsked !== catalog.seasonName
     // a season with nothing left to air has no week to lay out: the schedule is passed over
     property bool airs: true
 
     readonly property var views: [["Chart", "chart"], ["Schedule", "schedule"]]
-    readonly property var formats: [["All", "all"], ["TV", "tv"], ["Movies", "movie"], ["ONA & OVA", "other"]]
+    readonly property var formats: [["All formats", "all"], ["TV", "tv"], ["Movies", "movie"], ["ONA & OVA", "other"]]
     readonly property var sorts: [["Popular", "popular"], ["Top rated", "score"], ["Airing soon", "airing"], ["A–Z", "title"]]
     readonly property int perRow: 7
 
@@ -93,7 +93,7 @@ FocusScope {
         onSeasonLoaded: {
             if (anime.genre && anime.catalog.seasonGenres.indexOf(anime.genre) < 0) anime.genre = "";
             anime.airs = anime.catalog.seasonChart("all", "", "popular", anime.now).some(function (m) { return m.nextAt > anime.now });
-            if (!anime.airs) viewBar.currentIndex = 0;
+            if (!anime.airs) anime.view = "chart";
             anime.row = -1;
             anime.refresh();
         }
@@ -232,62 +232,65 @@ FocusScope {
         width: bars.width; height: 64
         focus: anime.row < 0
         Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
-        // one cursor across every option; OK picks (the schedule has no order, so its bar is passed over)
+        // The controls, in a row walked by one cursor: the season, the view, a genre, the format and the
+        // order. One with two choices is a switch, both in sight (the view); one with more shows its
+        // choice and drops a list, and is as wide as its longest choice, so nothing after it moves when
+        // the choice changes (FilterBar).
+        // A control that has no say is not in the row: the view for a season with nothing airing (the
+        // ones after it close up, Fade's `gap`), and the order in the schedule, which is in air-time
+        // order (the last in the row, so nothing moves for it).
         BarRow {
             id: bars
             focus: true
             spacing: 22
-            bars: [seasonBar].concat(anime.airs ? [viewBar] : [], [formatBar], anime.view === "schedule" ? [] : [sortBar], [genreBar])
-            // the season's name, larger than the other bars' labels: the page's title, and the way to another
+            bars: [seasonBar].concat(anime.airs ? [viewBar] : [], [genreBar, formatBar], anime.view === "schedule" ? [] : [sortBar])
+            // the season's name, larger than the other bars' labels: the page's title, and the way to
+            // another. (Not a FilterBar, nor the genres': each is a list to drop however few it holds,
+            // and says the season asked for, or "All genres", before its list is in.)
             SegmentedBar {
                 id: seasonBar; selectOnOk: true
+                readonly property var filter: anime.seasonFilter
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 27; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: [{ label: anime.catalog ? anime.catalog.seasonAsked : "", trailing: "chevrons" }]
-                onTriggered: anime.openMenu("season")
+                model: [{ label: anime.catalog ? anime.catalog.seasonAsked : "", trailing: "chevrons", room: filter.options }]
+                onTriggered: anime.openList(seasonBar)
             }
-            SegmentedBar {
-                id: viewBar; selectOnOk: true
-                opacity: anime.airs ? 1 : 0.3      // holds: only dims; its labels don't change
-                Behavior on opacity { NumberAnimation { duration: Theme.base } }
-                source: anime.glassSource; preblurred: true
-                sx: controls.x + x; sy: controls.y + y
-                barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: anime.views.map(function (v) { return v[0] })
-                onCurrentIndexChanged: anime.view = anime.views[currentIndex][1]
-            }
-            SegmentedBar {
-                id: formatBar; selectOnOk: true
-                source: anime.glassSource; preblurred: true
-                sx: controls.x + x; sy: controls.y + y
-                barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: anime.formats.map(function (v) { return v[0] })
-                onCurrentIndexChanged: anime.format = anime.formats[currentIndex][1]
-            }
-            SegmentedBar {
-                id: sortBar; selectOnOk: true
-                source: anime.glassSource; preblurred: true
-                sx: controls.x + x; sy: controls.y + y
-                barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: anime.sorts.map(function (v) { return v[0] })
-                // the schedule is in air-time order: the order has no say there
-                opacity: anime.view === "schedule" ? 0.3 : 1      // holds: only dims; its labels don't change
-                Behavior on opacity { NumberAnimation { duration: Theme.base } }
-                onCurrentIndexChanged: anime.sort = anime.sorts[currentIndex][1]
-            }
-            // what's left of the width, so the genre control ends on the right margin whatever its name
-            Item {
-                width: Math.max(0, anime.contentWidth - seasonBar.width - viewBar.width - formatBar.width - sortBar.width - genreBar.width - 5 * bars.spacing)
-                height: 1
+            Fade {
+                id: viewPlace; value: anime.airs; gap: bars.spacing; duration: Theme.slow
+                FilterBar {
+                    id: viewBar; filter: anime.fixedFilter("view", anime.views)
+                    source: anime.glassSource; preblurred: true
+                    sx: controls.x + viewPlace.x; sy: controls.y + viewPlace.y
+                    barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
+                    onChosen: anime.pick("view", option)
+                }
             }
             SegmentedBar {
                 id: genreBar; selectOnOk: true
+                readonly property var filter: anime.genreFilter
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: [{ label: anime.genre || "All genres", trailing: "chevrons" }]   // it opens the genre list
-                onTriggered: anime.openMenu("genre")
+                model: [{ label: anime.genre || "All genres", trailing: "chevrons", room: filter.options }]
+                onTriggered: anime.openList(genreBar)
+            }
+            FilterBar {
+                id: formatBar; filter: anime.fixedFilter("format", anime.formats)
+                source: anime.glassSource; preblurred: true
+                sx: controls.x + x; sy: controls.y + y
+                barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
+                onDropped: anime.openList(formatBar)
+            }
+            Fade {
+                id: sortPlace; value: anime.view !== "schedule"
+                FilterBar {
+                    id: sortBar; filter: anime.fixedFilter("sort", anime.sorts)
+                    source: anime.glassSource; preblurred: true
+                    sx: controls.x + sortPlace.x; sy: controls.y + sortPlace.y
+                    barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
+                    onDropped: anime.openList(sortBar)
+                }
             }
         }
         Keys.onUpPressed: anime.exitTop()
@@ -306,41 +309,47 @@ FocusScope {
         onCardHeld: anime.held(item, rect)
     }
 
-    // The lists that drop from the controls, by their bar and over the rows: above it while it sits under
-    // the info (the rows fill the space under it), below once it's at the top. One is open at a time
-    // (`menu`), starting on what's chosen; closing gives the remote back to the bar it came from.
-    function openMenu(which) {
-        if (which === "season") seasons.currentIndex = Math.max(0, catalog.seasons.map(function (s) { return s.label }).indexOf(catalog.seasonAsked));
-        else genres.currentIndex = genre ? catalog.seasonGenres.indexOf(genre) + 1 : 0;
-        menu = which;
+    // What each control chooses from ({ key, options, current } for its bar; `details`, a line under each
+    // option in its list), and what a choice does.
+    readonly property var seasonFilter: {
+        var all = catalog ? catalog.seasons : [], names = all.map(function (s) { return s.label });
+        return { key: "season", options: names, details: all.map(function (s) { return s.detail || "" }), current: Math.max(0, names.indexOf(catalog ? catalog.seasonAsked : "")) };
     }
-    onMenuChanged: if (!menu && row < 0) bars.forceActiveFocus()
+    readonly property var genreFilter: {
+        var all = catalog ? catalog.seasonGenres : [];
+        return { key: "genre", options: ["All genres"].concat(all), current: genre ? all.indexOf(genre) + 1 : 0 };
+    }
+    function fixedFilter(key, choices) {
+        return { key: key, options: choices.map(function (c) { return c[0] }), current: Math.max(0, choices.map(function (c) { return c[1] }).indexOf(anime[key])) };
+    }
+    function pick(key, option) {
+        if (key === "season") { var s = catalog.seasons[option]; catalog.showSeason(s.season, s.year) }
+        else if (key === "genre") genre = option === 0 ? "" : catalog.seasonGenres[option - 1];
+        else anime[key] = ({ view: views, format: formats, sort: sorts })[key][option][1];
+    }
+    // The list a control drops, by its bar and over the rows: above it while it sits under the info (the
+    // rows fill the space under it), below once it's at the top. One at a time, starting on what's
+    // chosen; closing gives the remote back to the bar it came from.
+    property Item listBar: null
+    function openList(bar) { options.currentIndex = bar.filter.current; listBar = bar }
+    onListBarChanged: if (!listBar && row < 0) bars.forceActiveFocus()
+    Latch { id: dropped; value: anime.listBar; live: !!anime.listBar }
     DropMenu {
-        id: seasons
+        id: options
         z: 3
-        open: anime.menu === "season"
+        open: !!anime.listBar
+        readonly property Item bar: dropped.current || null
         up: !anime.scrolled
-        x: controls.x + seasonBar.x
+        x: bar ? controls.x + (bar.parent.gap !== undefined ? bar.parent.x : bar.x) : 0      // (a bar in a Fade is where its place is)
         y: up ? controls.y - height - 16 : controls.y + controls.height + 16
         maxRows: 5                                              // clear of the tab bar above
-        model: (anime.catalog ? anime.catalog.seasons : []).map(function (s) { return { label: s.label, detail: s.detail, checked: s.label === anime.catalog.seasonAsked } })
-        onTriggered: { var s = anime.catalog.seasons[rowIndex]; anime.menu = ""; anime.catalog.showSeason(s.season, s.year) }
-    }
-    DropMenu {
-        id: genres
-        z: 3
-        open: anime.menu === "genre"
-        up: !anime.scrolled; fromRight: true
-        x: controls.x + genreBar.x + genreBar.width - width
-        y: up ? controls.y - height - 16 : controls.y + controls.height + 16
-        maxRows: 5
-        model: [{ label: "All genres", checked: anime.genre === "" }].concat((anime.catalog ? anime.catalog.seasonGenres : []).map(function (g) { return { label: g, checked: anime.genre === g } }))
-        onTriggered: { anime.genre = rowIndex === 0 ? "" : anime.catalog.seasonGenres[rowIndex - 1]; anime.menu = "" }
+        model: bar ? bar.filter.options.map(function (o, i) { return { label: o, detail: bar.filter.details ? bar.filter.details[i] : "", checked: i === bar.filter.current } }) : []
+        onTriggered: { var key = bar.filter.key; anime.listBar = null; anime.pick(key, rowIndex) }
     }
 
     Keys.onPressed: {
         if (!Remote.isBack(event.key)) return;
-        if (menu) { menu = ""; event.accepted = true }
+        if (listBar) { listBar = null; event.accepted = true }
         else if (row >= 0) { row = -1; event.accepted = true }
     }
 }

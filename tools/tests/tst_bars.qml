@@ -16,6 +16,34 @@ TestCase {
         SegmentedBar { id: formats; selectOnOk: true; model: ["All", "TV", "Movies", "ONA & OVA"] }
         SegmentedBar { id: sorts; selectOnOk: true; model: ["Popular", "Top rated"] }
     }
+    // a filter as its bar, and one standing after it in a row
+    property var filter: ({ key: "view", options: ["Chart", "Schedule"], current: 0 })
+    Row {
+        y: 60; spacing: 22
+        FilterBar { id: bar; filter: parent.parent.filter }
+        Rectangle { id: next; width: 40; height: 40 }
+    }
+    // Two choices are a switch, both in sight; more are one choice that drops a list. (Four were a
+    // switch too, and a row of them left no room for what else belonged in it.)
+    function test_twoChoicesAreASwitchAndMoreAreAList() {
+        filter = { key: "view", options: ["Chart", "Schedule"], current: 1 };
+        verify(!bar.drops); compare(bar.model.length, 2); compare(bar.currentIndex, 1, "on what is chosen");
+        filter = { key: "format", options: ["All formats", "TV", "Movies"], current: 0 };
+        verify(bar.drops); compare(bar.model.length, 1); compare(bar.model[0].label, "All formats");
+    }
+    // A bar that drops a list is as wide as its longest choice, so what stands after it in a row stays
+    // where it is when the choice changes. Sized by the choice it showed, "Chart" turning to "Schedule"
+    // pushed the bars after it along in one frame.
+    function test_aListKeepsItsWidthWhateverIsChosen() {
+        filter = { key: "sort", options: ["A–Z", "Popular", "Recently added"], current: 0 };
+        wait(50);
+        var width = bar.width, at = next.x;
+        filter = { key: "sort", options: ["A–Z", "Popular", "Recently added"], current: 2 };
+        wait(50);
+        compare(bar.model[0].label, "Recently added");
+        compare(bar.width, width, "as wide with its longest choice as with its shortest");
+        compare(next.x, at, "and what follows has not moved");
+    }
     function test_walkedInFromTheRight() {
         row.forceActiveFocus();
         row.go(1);                                          // onto Popular
