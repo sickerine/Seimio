@@ -1,42 +1,9 @@
 // What Net does with a service's answers (native/src/net.h), against a server in the test that answers
 // as it is told. Run by tools/tests/native/run.sh.
 #include <QtTest>
-#include <QTcpServer>
-#include <QTcpSocket>
 #include "net.h"
+#include "service.h"
 
-// Answers each path with the next of the answers lined up for it (the last one stays): a status, a body,
-// headers, and how long it takes over it.
-struct Service : QTcpServer {
-    struct Line { int status; QByteArray body; QByteArray headers; int afterMs; };
-    QHash<QString, QVector<Line>> lines;
-    QHash<QString, int> asked;
-    QStringList methods;
-    Service() {
-        listen(QHostAddress::LocalHost);
-        connect(this, &QTcpServer::newConnection, this, [this] {
-            while (QTcpSocket *s = nextPendingConnection()) {
-                connect(s, &QTcpSocket::readyRead, this, [this, s] {
-                    if (s->property("answered").toBool() || !s->peek(65536).contains("\r\n\r\n")) return;
-                    s->setProperty("answered", true);
-                    const QList<QByteArray> first = s->readAll().split('\r').first().split(' ');
-                    const QString path = QString::fromLatin1(first.value(1));
-                    methods << QString::fromLatin1(first.value(0));
-                    const int n = asked[path]++;
-                    const QVector<Line> &l = lines[path];
-                    const Line line = l.isEmpty() ? Line { 404, "nothing", "", 0 } : l[qMin(n, l.size() - 1)];
-                    QTimer::singleShot(line.afterMs, s, [s, line] {
-                        if (line.status == 0) { s->abort(); return; }               // hangs up without a word
-                        s->write("HTTP/1.1 " + QByteArray::number(line.status) + " X\r\nContent-Length: " + QByteArray::number(line.body.size()) + "\r\nConnection: close\r\n" + line.headers + "\r\n" + line.body);
-                        s->disconnectFromHost();
-                    });
-                });
-                connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
-            }
-        });
-    }
-    QString at(const QString &path) const { return "http://127.0.0.1:" + QString::number(serverPort()) + path; }
-};
 struct Got { QByteArray body; bool ok = false; int status = -1; bool done = false; };
 static Net::Done into(Got &g) { return [&g](const QByteArray &b, bool ok, int status) { g.body = b; g.ok = ok; g.status = status; g.done = true; }; }
 
@@ -121,6 +88,25 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(g.done, 8000);         // after its two tries again, 1 s and 2 s on
         QVERIFY(!g.ok); QCOMPARE(g.status, 0); QVERIFY(g.body.isEmpty());
         QCOMPARE(cache.counts().retries, 2);
+    }
+    void nothingArrivingIsGivenUpOnAndNotTriedAgain() {
+        Service s; query::Queries cache; Net net(&cache);
+        net.idleMs = 150;
+        s.lines["/silent"] = { { -1, "", "", 0 } };
+        QElapsedTimer t; t.start();
+        Got g; net.request(s.at("/silent"), QByteArray(), into(g));
+        QTRY_VERIFY_WITH_TIMEOUT(g.done, 2000);
+        QVERIFY(!g.ok); QCOMPARE(g.status, 0);
+        QVERIFY(t.elapsed() < 1000);                    // once, not three times over
+        QCOMPARE(s.asked["/silent"], 1);
+    }
+    void aSlowAnswerThatKeepsComingIsLetCome() {
+        Service s; query::Queries cache; Net net(&cache);
+        net.idleMs = 150;
+        s.lines["/slow"] = { { 200, "0123456789", "Drip", 0 } };       // 400 ms in all, never 150 ms without a byte
+        Got g; net.request(s.at("/slow"), QByteArray(), into(g));
+        QTRY_VERIFY_WITH_TIMEOUT(g.done, 3000);
+        QVERIFY(g.ok); QCOMPARE(g.body, QByteArray("0123456789"));
     }
     void existsSaysNoOnlyForA404() {
         Service s; query::Queries cache; Net net(&cache);

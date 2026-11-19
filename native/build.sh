@@ -33,9 +33,9 @@ docker run --rm -v ~/Library/Caches/webos-sdk:/sdk -v "$REPO":/repo -w /repo/nat
     -L/repo/third_party/libass/out/lib -lass -Wl,-rpath,\$ORIGIN -Wl,--allow-shlib-undefined
   arm-webos-linux-gnueabi-g++ -std=c++17 -O2 -fPIC -shared -o out/libseimiodata.so src/data_plugin.cpp out/moc/moc_catalog.cpp out/moc/moc_franchise.cpp out/moc/moc_live.cpp out/moc/moc_streams.cpp out/moc/moc_tracks.cpp out/moc/moc_skip.cpp \
     out/moc/moc_core.cpp out/moc/moc_account.cpp /repo/core/target/armv7-unknown-linux-gnueabi/release/libseimio_core.a \
-    -Isrc -Iout/moc -I$Q -I$Q/QtCore -I$Q/QtGui -I$Q/QtQml -I$Q/QtNetwork \
-    -DQT_NO_DEBUG -DQT_PLUGIN -DQT_QML_LIB -DQT_NETWORK_LIB -DQT_CORE_LIB \
-    -L/repo/tvlibs -l:libQt5Qml.so.5 -l:libQt5Network.so.5 -l:libQt5Core.so.5 -lpthread -ldl -lm -Wl,--allow-shlib-undefined -Wl,--gc-sections -Wl,--exclude-libs,ALL
+    -Isrc -Iout/moc -I$Q -I$Q/QtCore -I$Q/QtGui -I$Q/QtQml -I$Q/QtQuick -I$Q/QtNetwork \
+    -DQT_NO_DEBUG -DQT_PLUGIN -DQT_QML_LIB -DQT_QUICK_LIB -DQT_GUI_LIB -DQT_NETWORK_LIB -DQT_CORE_LIB \
+    -L/repo/tvlibs -l:libQt5Quick.so.5 -l:libQt5Qml.so.5 -l:libQt5Gui.so.5 -l:libQt5Network.so.5 -l:libQt5Core.so.5 -lpthread -ldl -lm -Wl,--allow-shlib-undefined -Wl,--gc-sections -Wl,--exclude-libs,ALL
   arm-webos-linux-gnueabi-strip --strip-unneeded out/libseimiodata.so      # the static library of the core comes with its symbols: 26 MB unstripped (no apostrophe in here: this script is one quoted string)
   cp src/qmldir out/
   cp /repo/third_party/libass/out/lib/libass.so.9.*.* out/libass.so.9

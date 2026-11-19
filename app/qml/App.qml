@@ -576,6 +576,7 @@ WebOSWindow {
             function id(x) { return x ? x.id || x.name || "?" : null }
             return { layer: app.layer, row: home.row, dayOpen: home.dayOpen, scrolled: home.scrolled,
                      queries: catalog.queries(),            // what the data thread's cache holds and fetched (Catalog.queries)
+                     pictures: catalog.pictures(),          // and the picture loader: where each picture came from, and how long it took
                      season: { asked: catalog.seasonAsked, shown: catalog.seasonName },
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem), held: id(app.held ? app.held.item : null),
                      video: app.playTarget ? app.playTarget.id : "", trail: app.trail.map(function (t) { return t.layer }).join(">"),
@@ -603,6 +604,10 @@ WebOSWindow {
             if (variant.signOut && account.signedIn) account.signOut();
             // lab: { "queryFault": ["search", 3000, false] } makes the queries with that in their key 3 s slower (true: fail)
             if (variant.queryFault) catalog.fault(variant.queryFault[0], variant.queryFault[1] || 0, !!variant.queryFault[2]);
+            // lab: { "forgetPictures": true } empties the picture loader's disk cache, to see and time first views again
+            if (variant.forgetPictures) catalog.forgetPictures();
+            // lab: { "tunePictures": [1, 2] }: one picture decoded at a time, two coming in on the side at once
+            if (variant.tunePictures) catalog.tunePictures(variant.tunePictures[0], variant.tunePictures[1]);
             if (variant.clearTrackChoices) trackChoice.clearPreferences(typeof variant.clearTrackChoices === "string" ? variant.clearTrackChoices : "");
             // lab: { "playId": { "type": "series", "id": "tt…:2:3" } } plays that video's ranked pick
             if (variant.playId) { app.playTarget = variant.playId; player.prepare({ name: variant.playId.id }, ""); app.layer = "player"; streams.play(variant.playId.type, variant.playId.id, variant.playId.id) }
@@ -629,8 +634,6 @@ WebOSWindow {
                 width: parent.width; height: parent.height
                 // an anime franchise's page wears the backdrop of the entry it's on (ShowScreen.backdrop)
                 target: app.layer === "show" && showPage.backdrop ? showPage.backdrop : app.backdropOf(app.pageItem)
-                // an anime from AniList's lists has AniList's own picture too, which shows until its fanart is on disk
-                fallback: app.layer === "show" && showPage.backdrop || !app.pageItem ? "" : app.pageItem.backdropFast || ""
                 // parallax: the backdrop drifts a little against moves along a row
                 pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
                 Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }

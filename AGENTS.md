@@ -198,6 +198,23 @@ Each rule comes from a measured stall on the C5.
 
 ## Data
 
+Everything asked of a service is a query (`native/src/query.h`, after TanStack Query;
+`docs/state-and-query-research.md` has the research). Never write another "is this still the latest
+request" counter, cache map, or retry loop:
+- A read goes through `Net::request` (net.h): one fetch for an address asked twice at once, a failure
+  for a passing reason tried again (a 5xx, no answer, a 429 when the service says), a "no" (4xx) the
+  answer, nothing arriving for 20 s a failure. Only Stremio's core sends its own requests (`Net::send`).
+- What is fetched and put together is a query with a key and a time it stays fresh (`Queries::fetch`):
+  a title's meta ten minutes, a show's fetched pieces ten, Home's rows and a season's list six hours.
+- A screen's side watches a query (`Watch`, watch.h) and hears only of the key it watches now: Home,
+  the season and the search in `Catalog`. Asking again is `invalidate`, and the newest asking answers.
+- The lab report's `queries` lists what the cache holds and each fetch that ended with how long it
+  took; `{"queryFault": ["search", 3000, false]}` makes the queries with that in their key slow, or
+  with `true` failing, to see what a screen does then.
+- Their rules are tested where they live: `tools/tests/native/run.sh` builds each `tst_*.cpp` twice,
+  with the address and undefined-behaviour sanitizers and under macOS's `leaks`, and `check.sh` runs
+  it. A new rule gets a test there first.
+
 Nothing is baked into the app: everything comes live from the services when it starts (`native/src/live.h`:
 Cinemeta, the Kitsu addon, AniList, ARM, metahub), and images go through a disk cache. Never add a fetched
 snapshot of data or art to make something look finished; the Mac's visual check alone replays recorded
@@ -278,17 +295,29 @@ Its page opens on it (`video`) and Play names it there (`Episodes.resting` reads
 agree; worked out apart, the card said one episode and the page another. The rule runs on the data
 thread: handing ten shows to QML to work it out there was 35 ms on the TV.
 
-Pictures from a host that says nothing of how long they keep are kept thirty days (`KeptPictures`,
-plugin.cpp). fanart.tv, where an anime's backdrops and logos are, sends no cache headers and serves
-about 25 KB/s a connection (2026-11-18): without that each backdrop was fetched again at every launch,
-40 to 67 s for a megabyte, with the title before it still on screen. The first view of one is still
-that slow, so two more things (`BandedImage`): a backdrop on its way that is no longer wanted goes on
-arriving (three at most), to be on disk the next time; cancelled as the cursor moved on, a fanart
-backdrop never arrived at all, and along the Anime chart only the titles with art on a fast host
-changed the screen. And a title that has a quick picture of its own (`backdropFast`: AniList's wide
-strip or its cover, for the chart's and a search's anime) shows that one, for good, when its fanart
-isn't in within 0.4 s (`Backdrop.fallback`). The lab report's `hero` says what each of the backdrop's
-two pictures is doing ("fetching 111/803 KB", "sending", "ready", "failed: why").
+A picture that can be had from more than one place goes through the picture loader
+(`native/src/pictures.h`), and so does every backdrop. An anime's logo and backdrop are on fanart.tv,
+which serves about 25 KB/s a connection from here on a bad day (2 to 9 s for a logo, 7 to 34 s for a
+backdrop, 2026-11-18); Stremio's image host has a logo and a backdrop by the title's IMDb id in a
+fifth of a second, and AniList a wide strip. Of 60 popular anime the image host's file was the same as
+fanart's for 51; of 35 airing ones for 19, the others being the franchise's logo where the title's own
+is its season's. So the data layer gives such a picture an address that lists its places, the title's
+own first (`Live::picture`, `pictures::address`), and the loader shows the first that is on disk, or
+with none on disk the quickest, while the title's own comes in on the side for the next time. One
+place alone is its own address and Qt loads it as ever. Never give a screen a second address to fall
+back to for the same picture: put the places in the one address.
+- Pictures from a host that says nothing of how long they keep are kept thirty days (`KeptPictures`).
+- The loader has its own thread for the network and one for decoding, at a tenth of a shared core
+  (nice 10): two decoders, or the same priority as what draws, cost the Anime tour frames; the idle
+  class cost none and starved the pictures (over 2 s off the disk). Measured in pictures.h.
+- Whose turn is first goes by what a picture is for: the backdrop, then a logo, then a card.
+- The lab report's `pictures` lists the last pictures with the place each came from, "disk" or "net",
+  and how long the bytes and the decoder took; `{"forgetPictures": true}` empties the loader's disk
+  cache, to see and time first views again; `{"tunePictures": [decoders, onTheSide]}` changes its two
+  limits. On a title the TV had never loaded, the logo was in after 0.25 s and the backdrop 0.28 s.
+- On the Mac the loader reads the previews' fixed cache (`pictures::Fixed`), and its provider takes
+  back the doubling Qt applies to a provider's size on a retina screen, so a preview draws a picture
+  as the TV does.
 The lab's frame counter is blind while the panel is at 48 Hz (LG leaves it there after an HDR video):
 every gap is 20.8 ms, so nearly no frame counts and a tour reads "80 frames, 80 late". Run
 `tools/tour.sh play` first: an SDR video puts the panel back to 60 Hz.

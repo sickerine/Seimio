@@ -17,12 +17,10 @@ import Seimio.Native 1.0
 
 Item {
     id: root
+    // (An address can list more than one place to get the picture from, and the picture loader shows the
+    // first at hand: an anime's fanart comes from a host that takes most of a minute over it, and until
+    // it was in, the title before stayed on screen. Seimio.Data's pictures.h.)
     property string target
-    // A picture to show in the target's place when the target isn't on disk yet: the target is fetched on
-    // the side for the next time (BandedImage.fallback). An anime's fanart comes from a host that takes most
-    // of a minute over it, and until it was in the title before stayed on screen; AniList's wide picture
-    // of the same title is there in a fifth of a second. The owner sets it with the target.
-    property string fallback: ""
     property size decodeSize: Qt.size(1920, 1080)          // the screen's own size: half of it looked soft
     property real pan: 0
     property real radius: 0                   // rounded corners for a framed backdrop (blends then)
@@ -44,7 +42,7 @@ Item {
         return { target: target.slice(-28), shown: shown.slice(-28), incoming: incoming.slice(-28), fadeIn: fadeIn, fading: fade.running, front: front,
                  pictures: [l0.url.slice(-28) + " " + l0.stage(), l1.url.slice(-28) + " " + l1.stage()] };
     }
-    onTargetChanged: Qt.callLater(root.apply)       // (once the owner has set the fallback that goes with it too)
+    onTargetChanged: apply()
 
     function apply() {
         if (fade.running) return;              // finishes first, then calls apply() again
@@ -52,7 +50,6 @@ Item {
         incoming = target;
         var back = img(1 - front);
         if (back.url === target && back.status === Image.Ready) { startFade(); return }
-        back.fallbackUrl = fallback;
         back.url = target;                     // starts a load; loaded() continues from there
     }
     function loaded(i, ok) {
@@ -77,13 +74,13 @@ Item {
     // (BandedImage: a picture this size reaches the GPU over eight frames before it is Ready, not in the
     // crossfade's first frame, which was late for it every time)
     BandedImage {
-        id: l0; property string url; property string fallbackUrl
-        fallback: fallbackUrl; source: url; sourceSize: root.decodeSize
+        id: l0; property string url
+        address: url; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(0, status === Image.Ready)
     }
     BandedImage {
-        id: l1; property string url; property string fallbackUrl
-        fallback: fallbackUrl; source: url; sourceSize: root.decodeSize
+        id: l1; property string url
+        address: url; sourceSize: root.decodeSize
         onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(1, status === Image.Ready)
     }
     // The drift: the picture zooms from 1 to 1.07 and back on a sine, 36 s the round (`drift` goes once

@@ -23,6 +23,7 @@
 #include <functional>
 #include <memory>
 #include "core.h"
+#include "pictures.h"
 #include "resting.h"
 
 class Live : public QObject {
@@ -53,6 +54,15 @@ public:
     }
     static constexpr qint64 kHours = 6 * 60 * 60 * 1000;    // how long the lists that change by the day are fresh
     static QString metahub(const QString &kind, const QString &id) { return "https://images.metahub.space/" + kind + "/medium/" + id + "/img"; }
+    // A Kitsu meta's logo or backdrop ("logo", "background") as the address the screens load: its own, and
+    // after it the places the same title's picture comes quicker from. Its own is on fanart.tv, slow from
+    // here; Stremio's image host has one by the title's IMDb id, and `more` are any others (AniList's).
+    // The picture loader shows the first at hand (pictures.h). None of its own: the first of `more`.
+    static QString picture(const QJsonObject &meta, const char *kind, const QStringList &more = QStringList()) {
+        const QString own = meta.value(kind).toString(), imdb = meta.value("imdb_id").toString();
+        if (own.isEmpty()) return more.value(0);
+        return pictures::address(QStringList { own, imdb.isEmpty() || !own.contains("fanart.tv") ? QString() : metahub(kind, imdb) } + more);
+    }
     static QJsonArray firstN(const QJsonArray &a, int n) { QJsonArray out; for (int i = 0; i < a.size() && i < n; i++) out << a[i]; return out; }
     // AniList's fields for a show, and the show as the catalog's documents carry it
     static QByteArray fields() {
@@ -238,8 +248,8 @@ public:
             const QJsonObject i = list[n].toObject();
             const QString id = i.value("id").toString(), type = i.value("type").toString();
             title(type, id, [=](const QJsonObject &m) {
-                const QString backdrop = m.value("background").toString(id.startsWith("tt") ? metahub("background", id) : QString());
-                const QString logo = m.value("logo").toString(id.startsWith("tt") ? metahub("logo", id) : QString());
+                const QString backdrop = id.startsWith("tt") ? m.value("background").toString(metahub("background", id)) : picture(m, "background");
+                const QString logo = id.startsWith("tt") ? m.value("logo").toString(metahub("logo", id)) : picture(m, "logo");
                 // (a show's card names the episode it rests on, with that one's progress: Catalog, from `series`;
                 // `progress` here is a film's)
                 (*out)[n] = QJsonObject { { "id", id }, { "name", i.value("name") }, { "type", type }, { "poster", i.value("poster") },
@@ -428,8 +438,10 @@ private:
             get(QString(kKitsu) + "/meta/series/" + kitsu + ".json", [shows, at, finish](const QJsonDocument &d, bool) {
                 const QJsonObject m = d.object().value("meta").toObject();
                 QJsonObject s = (*shows)[at].toObject();
-                s["background"] = m.value("background").toString();
-                s["logo"] = m.value("logo").toString();
+                // (the backdrop's places end with AniList's own wide strip, or its cover: there for every show)
+                const QString banner = s.value("banner").toString();
+                s["background"] = m.value("background").toString().isEmpty() ? QString() : picture(m, "background", { banner.isEmpty() ? s.value("cover").toString() : banner });
+                s["logo"] = picture(m, "logo");
                 (*shows)[at] = s;
                 finish();
             });

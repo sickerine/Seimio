@@ -17,6 +17,9 @@ import json, sys
 p = sys.argv[1]; d = json.load(open(p)); d["version"] = sys.argv[2]; json.dump(d, open(p, "w"), indent=2)
 PY
 ares-package --no-minify "$tmp/app" -o .lab/ipk >/dev/null || exit 1
+# the last five packages are kept (the one before, to put back and compare with): each is 3.7 MB, and
+# 461 of them had gathered, 16 GB
+ls -t .lab/ipk/*.ipk 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
 ares-launch -d tv --close "$id" >/dev/null 2>&1
 ares-install -d tv ".lab/ipk/${id}_${next}_all.ipk" >/dev/null || exit 1
 rm -rf "$tmp"

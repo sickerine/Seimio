@@ -383,7 +383,8 @@ private:
             const int entry = entries.size();
             entries << QVariantMap {
                 { "id", id }, { "kind", kind }, { "title", name },
-                { "logo", p.meta.value("logo").toString(showLogo) }, { "backdrop", p.meta.value("background").toString(showBackdrop) },
+                { "logo", p.meta.value("logo").toString().isEmpty() ? showLogo : Live::picture(p.meta, "logo") },
+                { "backdrop", p.meta.value("background").toString().isEmpty() ? showBackdrop : Live::picture(p.meta, "background") },
                 { "poster", p.meta.value("poster").toString() }, { "year", p.meta.value("year").toVariant().toString() },
                 { "runtime", p.meta.value("runtime").toString() }, { "genres", p.meta.value("genres").toArray().toVariantList() },
                 // IMDb's, as the franchise's; AniList's score only where IMDb has none
@@ -409,7 +410,7 @@ private:
                 mine << QVariantMap { { "id", vid }, { "episode", e.value("episode").toInt() }, { "number", e.value("episode").toInt() }, { "title", p.film ? name : e.value("title").toString() },
                                       { "overview", p.film ? entries.last().toMap().value("description") : e.value("overview").toString() },
                                       { "released", released == "1970-01-01" ? QString() : released }, { "runtime", e.value("runtime").toString() },
-                                      { "thumb", p.film ? p.meta.value("background").toString() : e.value("thumbnail").toString() },
+                                      { "thumb", p.film ? Live::picture(p.meta, "background") : e.value("thumbnail").toString() },
                                       { "type", p.film ? "movie" : "series" }, { "entry", entry }, { "poster", p.film ? p.meta.value("poster").toString() : QString() },
                                       { "watched", p.film ? watchedTitle(st) : seen.contains(vid) },
                                       { "progress", vid == stCurrent && duration > 0 ? qRound(1000 * offsetMs / duration) / 10.0 : 0 } };
@@ -436,13 +437,13 @@ private:
             const QJsonObject m = job.kitsu.value(r["id"].toString().section(':', 1).toInt());
             if (m.isEmpty()) continue;
             const int entry = entries.size();
-            entries << QVariantMap { { "id", r["id"] }, { "kind", "related" }, { "title", r["title"] }, { "logo", m.value("logo").toString() },
-                                     { "backdrop", m.value("background").toString() }, { "poster", r["poster"] }, { "year", m.value("year").toVariant().toString() },
+            entries << QVariantMap { { "id", r["id"] }, { "kind", "related" }, { "title", r["title"] }, { "logo", Live::picture(m, "logo") },
+                                     { "backdrop", Live::picture(m, "background") }, { "poster", r["poster"] }, { "year", m.value("year").toVariant().toString() },
                                      { "runtime", QString() }, { "genres", m.value("genres").toArray().toVariantList() },
                                      { "rating", m.value("imdbRating").toVariant().toString() }, { "description", clean(m.value("description").toString()) },
                                      { "episodes", m.value("videos").toArray().size() } };
             related << QVariantMap { { "id", r["id"] }, { "type", "show" }, { "relation", r["relation"] }, { "episode", related.size() + 1 }, { "title", r["title"] },
-                                     { "thumb", m.value("background").toString() }, { "poster", r["poster"] }, { "overview", clean(m.value("description").toString()) },
+                                     { "thumb", Live::picture(m, "background") }, { "poster", r["poster"] }, { "overview", clean(m.value("description").toString()) },
                                      { "released", QString() }, { "entry", entry }, { "watched", watchedTitle(job.library.value(r["id"].toString()).toObject()) } };
         }
         if (!related.isEmpty()) seasons << QVariantMap { { "season", 0 }, { "label", "Related" }, { "kind", "related" }, { "episodes", related } };

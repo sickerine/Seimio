@@ -477,6 +477,15 @@ public:
         });
         return m_queries;
     }
+    // the picture loader's part (pictures.h), the same way: how many pictures were asked for and shown,
+    // the last of them with the place each came from and how long it took, and what was fetched
+    Q_INVOKABLE QVariantMap pictures() {
+        pictures::Loader::instance()->look([this](const QVariantMap &seen) { back([this, seen] { m_pictures = seen; }); });
+        return m_pictures;
+    }
+    // lets go of every picture the loader has on disk, so that the next view of each is a first view
+    Q_INVOKABLE void forgetPictures() { pictures::Loader::instance()->forget(); }
+    Q_INVOKABLE void tunePictures(int decoders, int onTheSide) { pictures::Loader::instance()->tune(decoders, onTheSide); }
     // The queries whose key holds `match` take `delayMs` longer and, with `fail`, fail (query.h); an empty
     // `match` ends it. For seeing on the TV what a screen does with a slow or a failed answer.
     Q_INVOKABLE void fault(const QString &match, int delayMs, bool fail) {
@@ -623,7 +632,8 @@ private:
             static const QHash<QString, QString> formats { { "TV", "TV" }, { "TV_SHORT", "TV short" }, { "MOVIE", "Movie" }, { "ONA", "ONA" }, { "OVA", "OVA" }, { "SPECIAL", "Special" } };
             for (const QJsonValue &v : season["shows"].toArray()) {
                 const QJsonObject a = v.toObject();
-                // the backdrop: the full-screen fanart, or AniList's banner strip, or the cover
+                // the backdrop: the full-screen fanart (an address that lists its quicker places too: Live::picture),
+                // or AniList's banner strip, or the cover
                 const QString cover = art(a["cover"].toString()), banner = art(a["banner"].toString()), background = art(a["background"].toString());
                 const QString format = formats.value(a["format"].toString(), a["format"].toString());
                 const int episodes = a["episodes"].toInt();
@@ -639,8 +649,6 @@ private:
                     { "id", a["id"].toString() }, { "name", a["name"].toString() }, { "title", a["name"].toString() },
                     { "kitsu", a["kitsu"].toString() },          // the title Stremio's library knows it by, if Kitsu has it
                     { "art", cover }, { "cover", cover }, { "backdrop", !background.isEmpty() ? background : !banner.isEmpty() ? banner : cover }, { "logo", art(a["logo"].toString()) },
-                    // (AniList's own wide picture, a strip, or its cover: what shows while the fanart isn't on disk yet)
-                    { "backdropFast", background.isEmpty() ? QString() : !banner.isEmpty() ? banner : cover },
                     { "description", a["description"].toString() }, { "chips", chips }, { "genres", genres },
                     { "rating", a["score"].toInt() ? QString::number(a["score"].toInt()) + "%" : QString() }, { "score", a["score"].toInt() },
                     { "format", a["format"].toString() }, { "studio", a["studio"].toString() }, { "color", a["color"].toString() },
@@ -710,7 +718,7 @@ private:
     Watch<Season> m_season { m_cache, this, [this](const query::Result<Season> &r) { tookSeason(r); } };
     Watch<Found> m_search { m_cache, this, [this](const query::Result<Found> &r) { searched(r); } };
     Watch<Found> m_more { m_cache, this, [this](const query::Result<Found> &r) { searchedMore(r); } };
-    QVariantMap m_queries;                                  // the lab's last look at the cache (`queries`)
+    QVariantMap m_queries, m_pictures;                      // the lab's last look at the cache and at the picture loader
     std::shared_ptr<const Home> m_homeShown;
     std::shared_ptr<const Season> m_seasonShown;
     std::shared_ptr<const Found> m_found;
