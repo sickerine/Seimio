@@ -75,8 +75,11 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   12 to 17 ms, 1.5%; of 17 to 25 ms, 3 to 4%; above that, 5%. So a frame can be on time and still
   cost a 100 ms hitch: keep a frame's drawing under 12 ms, not only under a refresh. A tour counts
   the frames over that (`heavy`, per phase and in all) against a budget of 20 (30 on anime, 32 on
-  search). On 2026-11-19: home 5 to 11, browse 4 to 12, schedule 10, the other check routes 1 to 3,
-  anime 12 to 22, search 23; most of them in tab switches and the first seconds of a launch.
+  search). On 2026-11-19, as the budget was set: home 5 to 11, browse 4 to 12, schedule 10, the other
+  check routes 1 to 3, anime 12 to 22, search 23; most of them in tab switches and the first seconds
+  of a launch. By the end of that day (a glass over a frost reading its blur, the frost following
+  only a backdrop that changes, the ligatures written ahead): home 1 to 9, browse 3 to 8, anime 6 to
+  8, show 0 to 1, the check's eight routes 0 to 6.
   What is left in a tab switch, by turning things off on the TV, three Home tours each (5 to 8 heavy
   frames as it is): rows arriving two or three frames apart instead of one changed nothing (8 to 10);
   the frost kept up for the grid tabs' filter bars is about half of it (3 to 4 without it), and it is
@@ -223,13 +226,21 @@ Each rule comes from a measured stall on the C5.
     texture log says 3 ms; the driver does the rest at first use). Never write to a texture the last
     frame read: the driver stalls 10 to 15 ms.
   - Letters go to the glyph texture in batches of 2 to 7 ms. `Letters` writes the whole alphabet in each
-    weight at launch, off screen, so a title that comes in later uploads nothing.
+    weight at launch, off screen, so a title that comes in later uploads nothing. A letter there is a
+    glyph of the face, and the face's ligatures (fi, fl, ffi, ffl) are glyphs of their own: left out,
+    each was sent alone at its first use, 4 to 8 ms of the frame a title or a tab came in on, three
+    times a Home tour. `hb-shape` with the face's file lists a string's glyphs; the warm-up covers every
+    glyph of the face that the services' titles and descriptions use, and nothing the face lacks.
   - `VARIANT` with `qt.scenegraph.time.texture.debug=true` and `...time.glyph.debug=true` lists both per
     frame.
 - What a list makes, it makes a row a frame: a ListView one pixel tall with a `cacheBuffer` builds its
   first row at once and the rest between frames (the player's stream sheet: nine rows at once were 53 ms
   on the GUI thread), and a title that arrives from the network is taken in on one frame and its page
   opened on the next (together they were one 60 to 70 ms stall).
+- A frost follows the backdrop only while the backdrop changes (`Backdrop.settling`: a crossfade running
+  or the picture shifting), not from the moment another picture is wanted: through the wait for that
+  picture nothing on screen has changed, and following it was five passes twenty times a second in the
+  frames a tab's screen comes in (Home's tour: 5 to 9 heavy frames in its tab switches, 2 to 5 after).
 - A frost follows its source only while it is wanted. On its way out its blur is left as it is
   (`backdropFrost.leaving`): a backdrop still crossfading under it as a page opened had it blurred again
   every frame of the fade, five passes more, and the page opened at 30 fps.
