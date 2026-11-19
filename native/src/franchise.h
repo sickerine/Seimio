@@ -104,6 +104,16 @@ private:
     static QByteArray graphql(const QString &query) { return QJsonDocument(QJsonObject { { "query", query } }).toJson(QJsonDocument::Compact); }
 
     static bool shortForm(const QString &format) { return format == "MOVIE" || format == "OVA" || format == "SPECIAL"; }
+    // A side story no TVDB show has is one of a show's specials when it is a film, an OVA or a special, or
+    // a series that is finished and no longer than a season. A series still coming out, or longer than
+    // that, is a show of its own, listed with the related ones. MyGO's page had 196 "specials": the
+    // one-minute web shorts of "MyGO!!!!! Member no Nichijou", coming out since 2022, with nothing
+    // anywhere to play one. (Of the 73 special entries of AniList's 40 most popular shows and MyGO's,
+    // 2026-11-19, every other one is finished and has 8 episodes at most; 70 have something to play,
+    // the ones a minute long too, so its length is not what tells.)
+    static bool ownShow(const QJsonObject &node) {
+        return !shortForm(node.value("format").toString()) && (node.value("status").toString() == "RELEASING" || node.value("episodes").toInt() > 13);
+    }
     // Announced, with no day to start on: no season of a show yet, and nothing to list beside it (Tensura's
     // "4th Season Part 3", due some time in 2027, stood on its page as a Season 5 of thirty-three episodes)
     static bool undated(const QJsonObject &node) { return node.value("status").toString() == "NOT_YET_RELEASED" && !node.value("startDate").toObject().value("day").toInt(); }
@@ -140,7 +150,7 @@ private:
         const int anilist = ids.value("anilist").toInt();
         auto alone = [this, job, ids] { job->entries = QJsonArray { ids }; job->tail = ids.value("anilist").toInt(); sequels(job, 0); };
         if (!anilist) { alone(); return; }
-        send("https://graphql.anilist.co", graphql("{ Media(id:" + QString::number(anilist) + "){ format relations{ edges{ relationType node{ id type format status "
+        send("https://graphql.anilist.co", graphql("{ Media(id:" + QString::number(anilist) + "){ format status episodes relations{ edges{ relationType node{ id type format status "
                                                     "relations{ edges{ relationType node{ id type format status } } } } } } } }"),
              [this, job, ids, alone, anilist](const QByteArray &body, bool) {
             static const QStringList order { "PARENT", "PREQUEL", "SEQUEL", "SIDE_STORY" };
@@ -168,7 +178,8 @@ private:
                 QString called;
                 for (const QJsonValue &w : n.value("relations").toObject().value("edges").toArray())
                     if (w.toObject().value("node").toObject().value("id").toInt() == anilist) called = w.toObject().value("relationType").toString();
-                if (series && (rank >= 2 || (rank == 0 && called != "SIDE_STORY"))) continue;
+                // (and a side story that is a show of its own, `ownShow`, is no special of its parent's)
+                if (series && (rank >= 2 || (rank == 0 && (called != "SIDE_STORY" || ownShow(media))))) continue;
                 if (series && rank == 0) parents << n.value("id").toInt();
                 if (rank >= 0 && released(n)) ranked << qMakePair(rank, n.value("id").toInt());
                 // its source (a manga, a novel): that source's TV anime, after all of the above
@@ -234,7 +245,7 @@ private:
                 done();
             });
         send("https://graphql.anilist.co", graphql("{ Page(perPage:50){ media(id_in:[" + anilist.join(',') + "]){ id status startDate{ day } title{ english romaji } averageScore description(asHtml:false) "
-                    "relations{ edges{ relationType node{ id type format status startDate{ day } title{ english romaji } coverImage{ large } } } } } } }"),
+                    "relations{ edges{ relationType node{ id type format status episodes startDate{ day } title{ english romaji } coverImage{ large } } } } } } }"),
              [job, done = all.part()](const QByteArray &body, bool) {
             for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("data").toObject().value("Page").toObject().value("media").toArray())
                 job->anilist[v.toObject().value("id").toInt()] = v.toObject();
@@ -284,16 +295,18 @@ private:
                 const int a = e.value("anilist").toInt(), k = e.value("kitsu").toInt(), tv = e.value("thetvdb").toInt();
                 if (!nodes.contains(a)) continue;
                 const QJsonObject n = nodes[a];
-                // (a side story no TVDB show has is one of this show's specials, whatever its format: the
-                // same answer as when it is the title opened, `adopt`)
-                if (shortForm(n.value("format").toString()) || (!tv && relation[a] == "SIDE_STORY")) {
+                // (a side story no TVDB show has is one of this show's specials, unless it is a show of its
+                // own, `ownShow`: the same answer as when it is the title opened, `adopt`)
+                if (shortForm(n.value("format").toString()) || (!tv && relation[a] == "SIDE_STORY" && !ownShow(n))) {
                     if (tv || !k) continue;                                   // another show's, or not playable
                     e["thetvdb-season"] = 0; e["media"] = n.value("format").toString();
                     job->entries.append(e); fetch << k;
                 } else if (k && !tv && relation[a] == "SEQUEL") {                  // what follows an entry, in no TVDB show yet: a season (as `adopt` has it)
                     e["appended"] = true;
                     job->entries.append(e); fetch << k;
-                } else if (k && tv != job->tvdb && !(tv && shows.contains(tv))) {     // another show, playable
+                // (another show, playable. A side story that is a show of its own is one with no TVDB show
+                // on either side too, where nothing else tells two titles apart: opened, it is its own page)
+                } else if (k && (tv != job->tvdb || (!tv && relation[a] == "SIDE_STORY" && ownShow(n))) && !(tv && shows.contains(tv))) {
                     if (tv) shows << tv;
                     const QJsonObject t = n.value("title").toObject();
                     job->related << QVariantMap { { "id", "kitsu:" + QString::number(k) }, { "title", t.value("english").toString(t.value("romaji").toString()) },

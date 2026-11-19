@@ -69,6 +69,16 @@ ARM also answers the other way: `GET /api/v2/thetvdb?id=` lists every entry of a
    thirty-three episodes. `tools/franchises.sh` puts AniList's forty most popular shows together on the
    Mac with the app's own loader, opens everything they list as related, and fails when one comes back
    as the show it was listed on (2026-11-18: 5 of 40 did; none after).
+   **A special is short and finished.** A side-story series that is still coming out, or has more
+   episodes than a season (13), is a show of its own and is listed as related, from both sides
+   (`Franchise::ownShow`). BanG Dream! It's MyGO!!!!! had a Specials tab of 196 episodes: "MyGO!!!!!
+   Member no Nichijou", one-minute web shorts coming out since 2022, a side story on AniList that no
+   TVDB show has, with no stream anywhere for any of them. Of the 73 special entries of the forty
+   shows and MyGO's (2026-11-19), every other one is finished with 8 episodes at most, and 70 have
+   streams, the one-to-three-minute ones too, so an entry's length does not tell what can be played.
+   (Two of One Piece's have none: "Glorious Island" and "Film Gold episode 0".) The sweep fails on a
+   special entry of more than 13 episodes; with the rule the forty pages are as they were, and MyGO's
+   is its season, a film and two related titles.
 6. **Kitsu's dates**: unknown air dates are 1970-01-01, and planned episodes have guessed dates (Blue Box
    season 2 lists 25 with the last two on one day). `Episodes.aired` must treat 1970-01-01 as not aired.
 7. **No Kitsu id** (2 in 600: Ranma ½ 2024, Steel Ball Run): play by IMDb season and episode, which

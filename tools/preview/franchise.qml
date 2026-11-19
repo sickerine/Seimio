@@ -12,10 +12,10 @@ Item {
     function say(sourceId, item, show) {
         giveUp.stop();
         var tabs = (show.seasons || []).map(function (s) {
-            var entries = {};
-            s.episodes.forEach(function (e) { if (e.entry !== undefined) entries[e.entry] = true });
+            var entries = {};       // by entry: how many of the tab's episodes are its
+            s.episodes.forEach(function (e) { if (e.entry !== undefined) entries[e.entry] = (entries[e.entry] || 0) + 1 });
             return { season: s.season, label: s.label || "", kind: s.kind || "", episodes: s.episodes.length, entries: Object.keys(entries).map(Number),
-                     first: s.episodes.length ? s.episodes[0].id : "" };
+                     counts: Object.keys(entries).map(function (k) { return entries[k] }), first: s.episodes.length ? s.episodes[0].id : "" };
         });
         console.log("FRANCHISE " + JSON.stringify({ asked: sourceId, ms: Date.now() - root.askedAt, item: item.id, video: item.video || "", name: show.name, rest: show.rest || "",
             entries: (show.entries || []).map(function (e) { return { id: e.id, kind: e.kind, title: e.title, logo: e.logo || "", backdrop: e.backdrop || "" } }),
