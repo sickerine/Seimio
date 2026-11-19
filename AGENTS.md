@@ -79,7 +79,8 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   check routes 1 to 3, anime 12 to 22, search 23; most of them in tab switches and the first seconds
   of a launch. By the end of that day (a glass over a frost reading its blur, the frost following
   only a backdrop that changes, the ligatures written ahead): home 1 to 9, browse 3 to 8, anime 6 to
-  8, show 0 to 1, the check's eight routes 0 to 6.
+  8, show 0 to 1, the check's eight routes 0 to 6; and 0 to 4 once the backdrop kept its own blur.
+  What is left differs from run to run: single frames of 12 to 17 ms as a screen comes or goes.
   What is left in a tab switch, by turning things off on the TV, three Home tours each (5 to 8 heavy
   frames as it is): rows arriving two or three frames apart instead of one changed nothing (8 to 10);
   the frost kept up for the grid tabs' filter bars is about half of it (3 to 4 without it), and it is
@@ -145,8 +146,9 @@ Each rule comes from a measured stall on the C5.
   whole scene (the screens drawn twice every frame: 14 to 18 frames over 12 ms of drawing in the tab
   switches of Home's tour), then the backdrop's layers alone, five passes a frame, with the frost
   following a crossfade twenty times a second, five passes each. Measured on the TV on 2026-11-19,
-  three tours each, turn about: Home had 6, 2 and 5 frames over 12 ms before and 2, 3 and 1 after, and
-  Anime's crossfades 2, 3 and 2 before and 1 each after. The mean frame is the same 5.3 ms: the gain
+  three tours each, turn about: Home had 6, 2 and 5 frames over 12 ms before and 2, 3 and 1 after, the
+  Movies, Series and Library tour 7, 6 and 8 before and 5, 5 and 4 after, and Anime's crossfades 2, 3
+  and 2 before and 1 each after. The mean frame is the same 5.3 ms: the gain
   is in the frames that pile up, and the frost now follows a crossfade every frame instead of every
   third. The previews did not change.
 - A full-screen texture nobody sees is not free. `Backdrop` lets go of the picture that faded out: its
