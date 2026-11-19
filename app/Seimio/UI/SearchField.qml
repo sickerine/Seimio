@@ -2,7 +2,7 @@
 // `open` grows it from `iconX` (where the icon sits, in its parent) to the middle of its parent. Given the
 // remote (`focus`), its text has it, which brings up the TV's keyboard; opening takes nothing (it opens
 // again over results that have the remote). Enter on that keyboard is `accepted`. Left at the start of the
-// text, Up and Down pass on.
+// text, Right at its end, Up and Down pass on.
 // Back with the keyboard up goes to the keyboard, which closes: the field never sees that key. A keyboard
 // that goes away while the field still has the remote was that Back (after Enter it isn't): `dismissed`.
 // With the keyboard away, OK brings it back.

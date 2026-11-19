@@ -42,7 +42,10 @@ WebOSWindow {
     property bool profileOpen: false                       // the account's menu, under its picture
     onProfileOpenChanged: probe.captures()
     // the Anime tab has its own screen; Home's rows, selection and scroll belong to whichever is up
-    property alias tab: tabs.currentIndex                  // 0 Home, 1 Anime, 2 Movies, 3 Series, 4 Library, 5 search
+    // 0 Home, 1 Anime, 2 Movies, 3 Series, 4 Library, 5 search. The number is the app's; where a tab
+    // sits on the bar is the bar's (the search is drawn first, at the left end: `tabs.placeOf`).
+    property int tab: 0
+    onTabChanged: tabs.currentIndex = tabs.placeOf(tab)
     property alias searchText: searchBar.text
     readonly property bool animeTab: tab === 1
     // Movies, Series and the Library are one screen (BrowseScreen), each a list of Account's; `browsed` is
@@ -789,7 +792,11 @@ WebOSWindow {
             // Its blur is taken every frame, five small passes: taken twice a second instead (the backdrop
             // under it only drifts), each capture was a 14 to 16 ms frame on its own and often a late one,
             // where the steady chain costs about 2 ms of every frame.
-            model: ["Home", "Anime", "Movies", "Series", "Library", { icon: "search" }]
+            // The search at the left end, then the tabs: Left from Home reaches it, and Right from the
+            // Library goes on to the account at the right edge of the screen.
+            model: [{ icon: "search" }, "Home", "Anime", "Movies", "Series", "Library"]
+            function placeOf(tab) { return tab === 5 ? 0 : tab + 1 }
+            currentIndex: 1
             // the tab bar belongs to the top of Home; pages and the calendar move it away
             readonly property bool shown: app.onHome && !app.scrolled
             shadow: shown ? 0.8 : 0
@@ -797,11 +804,12 @@ WebOSWindow {
             opacity: app.searchTab ? 0 : app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims (or makes way for the search field); its tabs do not change
             Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Theme.ease } }
             Behavior on opacity { NumberAnimation { duration: 300 } }
-            onCurrentIndexChanged: probe.act("tabs")
+            onCurrentIndexChanged: { app.tab = currentIndex === 0 ? 5 : currentIndex - 1; probe.act("tabs") }
         }
-        // The search tab opens into this, in the tab bar's place: the field and, beside it, the kinds of
-        // title (SearchBar). Reaching the tab gives the field the remote and the TV's keyboard comes up.
-        // Left at the start of the text goes back to the tabs, Down to what was found.
+        // The search tab opens into this, in the tab bar's place: the field and, at its left, the kinds
+        // of title (SearchBar). Reaching the tab gives the field the remote and the TV's keyboard comes
+        // up. The tabs are to its right, where they were walked from: Right at the end of the text goes
+        // back to them, Left at its start onto the kinds, Down to what was found.
         SearchBar {
             id: searchBar
             width: parent.width; y: tabs.y
@@ -810,24 +818,24 @@ WebOSWindow {
             opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims, as the tab bar does under a menu
             Behavior on opacity { NumberAnimation { duration: 300 } }
             source: scene
-            iconX: tabs.x + tabs.width - height
+            iconX: tabs.x
             // a kind the search found nothing of is dim
             kinds: app.searchKinds.map(function (k) { return { label: k[0], faint: search.found.length > 1 && !search.count(k[1]) } })
             kind: Math.max(0, app.searchKinds.map(function (k) { return k[1] }).indexOf(catalog.searchKind))
             onChosen: { catalog.searchKind = app.searchKinds[index][1]; probe.act("search kind"); probe.captures() }
             onZoneChanged: { probe.act("search bar"); probe.captures() }
             Connections { target: searchBar.kindBar; onCursorChanged: { probe.act("search bar"); probe.captures() } }
-            onExitLeft: app.tab = 4
+            onExitRight: app.tab = 0
             Keys.onDownPressed: search.enter()
             Keys.onUpPressed: {}
             onAccepted: search.enter()                      // Enter on the keyboard: on to what was found
             onDismissed: text = ""                          // Back on the keyboard: it closes, and the bar is cleared
         }
-        // The account, at the top left on the tab bar's line: Left from Home's tab reaches it, OK opens its
-        // menu. It comes and goes with the tab bar.
+        // The account, at the top right on the tab bar's line: Right from the Library's tab reaches it, OK
+        // opens its menu, which hangs from its right edge. It comes and goes with the tab bar.
         FocusScope {
             id: profile
-            x: Theme.margin; y: tabs.y + (tabs.height - height) / 2
+            x: parent.width - Theme.margin - width; y: tabs.y + (tabs.height - height) / 2
             width: picture.width; height: picture.height
             focus: app.layer === "profile" && !app.profileOpen
             opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims; the picture does not change
@@ -835,12 +843,14 @@ WebOSWindow {
             Avatar { id: picture; source: account.avatar; focused: app.layer === "profile" }
             OkPress { id: profileOk; onTapped: app.profileOpen = true }
             Keys.forwardTo: [profileOk]
-            Keys.onRightPressed: app.layer = "tabs"
+            Keys.onLeftPressed: app.layer = "tabs"
+            Keys.onRightPressed: {}                         // (the end of the line)
             Keys.onDownPressed: app.layer = "home"
         }
         DropMenu {
-            x: profile.x; y: profile.y + profile.height + 18
             width: 620                                      // room for an address
+            x: profile.x + profile.width - width; y: profile.y + profile.height + 18
+            fromRight: true
             open: app.profileOpen
             model: [{ label: "Log out", detail: account.email }]
             onTriggered: { app.profileOpen = false; account.signOut() }
@@ -957,7 +967,8 @@ WebOSWindow {
             else if (Remote.isBack(event.key) && app.onHome && app.layer !== "home") { event.accepted = true; app.layer = "home" }
             else if (Remote.isBack(event.key) && app.layer !== "home") { event.accepted = true; app.back() }
             else if (event.key === Qt.Key_Down && app.layer === "tabs") { event.accepted = true; app.layer = "home" }
-            else if (event.key === Qt.Key_Left && app.layer === "tabs") { event.accepted = true; app.layer = "profile" }
+            else if (event.key === Qt.Key_Right && app.layer === "tabs") { event.accepted = true; app.layer = "profile" }     // past the last tab: the account
+            else if (event.key === Qt.Key_Left && app.layer === "tabs") event.accepted = true                               // (nothing left of the search)
         }
     }
 
