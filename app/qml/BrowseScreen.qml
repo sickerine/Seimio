@@ -108,6 +108,10 @@ FocusScope {
     opacity: shown ? 1 : 0      // holds: its rows stay until another list is in
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 320 } }
+    // How much higher than a tab with a title above its rows this one rests: the Library, by the room the
+    // title takes. App stands every grid tab's screen where the tab that is up rests (its `y`), so the
+    // Library rises into place and sinks out of it with the tab it changes places with.
+    readonly property int level: hero ? 0 : 560 - 169
 
     // ---- the filters ---------------------------------------------------------------------------------------
     // in the flow under the info (or under the tab bar, with no info), in the tab bar's place once the rows are up
@@ -126,14 +130,14 @@ FocusScope {
             bars: [barA, barB].slice(0, browse.filters.length)
             FilterBar {
                 id: barA; filter: browse.filters[0] || null
-                source: browse.glassSource; preblurred: true; sx: controls.x + x; sy: controls.y + y
+                source: browse.glassSource; preblurred: true; sx: controls.x + x; sy: browse.y + controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: browse.scrolled ? 0.8 : 0
                 onChosen: browse.choose(filter.key, option)
                 onDropped: browse.openMenu(barA)
             }
             FilterBar {
                 id: barB; filter: browse.filters[1] || null
-                source: browse.glassSource; preblurred: true; sx: controls.x + x; sy: controls.y + y
+                source: browse.glassSource; preblurred: true; sx: controls.x + x; sy: browse.y + controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: browse.scrolled ? 0.8 : 0
                 onChosen: browse.choose(filter.key, option)
                 onDropped: browse.openMenu(barB)

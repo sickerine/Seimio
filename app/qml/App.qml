@@ -54,11 +54,25 @@ WebOSWindow {
     readonly property string browsing: ["", ""].concat(browsings)[tab] || ""
     readonly property bool browseTab: browsing !== ""
     readonly property Item browse: (browsers.count, browsers.itemAt(Math.max(0, browsings.indexOf(browsing))))
+    // How much higher than the others the tab that is up rests (BrowseScreen.level: the Library, which
+    // has no title above its rows). The grid tabs' screens all stand there (their `y`, eased alike), so
+    // the tab going and the tab coming move as one sheet while one fades into the other: the grid
+    // glides up to the Library's place, or down from it, as Home's rows glide when it scrolls. (Each
+    // fading where it rests, the Library's posters came up over the title of the tab before.)
+    readonly property int level: browseTab && browse ? browse.level : 0
     readonly property bool searchTab: tab === 5              // the tab bar turns into the search bar; its results below
     onSearchTabChanged: { if (searchTab) searchBar.zone = 0; probe.captures() }    // reached from the tab bar: to type
     // the kinds of title a search finds, as its bar names them and as Catalog does
     readonly property var searchKinds: [["Anime", "anime"], ["Series", "series"], ["Movies", "movie"]]
-    readonly property bool bare: onHome && (browsing === "library" || (searchTab && !search.any))     // a tab with no title above its grid: no info, the backdrop frosted
+    readonly property bool plain: browsing === "library" || (searchTab && !search.any)      // a tab with no title above its grid
+    readonly property bool bare: onHome && plain            // and on it: no info, the backdrop frosted
+    // The title in hand was taken on such a tab (`commit`, from the tab or from a page opened over it),
+    // so the tabs have never shown it. On the next tab the info stays away and the backdrop frosted
+    // until that tab's own title is taken: for the 280 ms the cursor takes to rest, the Library's
+    // focused title stood large over the Series tab's rows, on its own picture, and then gave way to
+    // the right one.
+    property bool unseen: false
+    readonly property bool veiled: bare || unseen
     readonly property bool scrolled: animeTab ? anime.scrolled : browseTab ? !!browse && browse.scrolled : searchTab ? search.scrolled : home.scrolled
     readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? (browse ? browse.focusItem : null) : searchTab ? search.focusItem : home.focusItem
     property var displayItem: null
@@ -74,6 +88,7 @@ WebOSWindow {
             if (f) it = f.item; else if (!catalog.unfetchable(it.id)) return;
         }
         if (displayItem !== it) displayItem = it;
+        unseen = plain || (unseen && !it);      // (no title taken, a tab whose list is still on its way: what was unseen is still all there is)
     }
     // the cursor has rested on a title: it shows, a search's film or series once it has been fetched
     function rest() {
@@ -659,7 +674,7 @@ WebOSWindow {
                     id: backdropFrost
                     anchors.fill: parent
                     made: hero.blurred; madeSize: hero.blurredSize
-                    readonly property bool wanted: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player"
+                    readonly property bool wanted: (app.onHome && (app.scrolled || app.veiled) && !home.dayOpen) || app.layer === "streams" || app.layer === "player"
                     opacity: wanted ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
                     Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
                 }
@@ -699,13 +714,13 @@ WebOSWindow {
                 // hidden on the calendar, so it doesn't swap to every day there (logo loads, text layout)
                 // Home's selection; on the title page, the title in hand. Under a show page it is away, and
                 // keeps what it showed (the page has its own header)
-                item: (app.scrolled || app.bare) && app.onHome && !home.dayOpen ? null : app.layer === "title" && app.held ? app.held.item : app.displayItem
+                item: (app.scrolled || app.veiled) && app.onHome && !home.dayOpen ? null : app.layer === "title" && app.held ? app.held.item : app.displayItem
                 // on the title page it moves down to sit just above the actions
                 y: app.layer === "title" ? titlePage.actionsY - 40 - contentHeight : home.dayOpen ? 260 : (app.scrolled ? 90 : 150)
                 // it only glides while on screen; hidden, it takes its new place at once and fades in there
                 Behavior on y { enabled: info.visible; NumberAnimation { duration: 460; easing.type: Theme.ease } }
                 // below Home's first row, and on the show page, the info steps aside
-                property real away: ((app.scrolled || app.bare) && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
+                property real away: ((app.scrolled || app.veiled) && app.onHome && !home.dayOpen) || app.layer === "show" || app.layer === "streams" || app.layer === "player" ? 1 : 0
                 Behavior on away { NumberAnimation { duration: 380; easing.type: Theme.ease } }
                 opacity: 1 - away
                 visible: away < 1
@@ -752,6 +767,8 @@ WebOSWindow {
             AnimeScreen {
                 id: anime
                 width: parent.width; height: parent.height
+                y: -app.level
+                Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
                 focus: app.layer === "home" && app.animeTab && !app.playMenu
                 shown: app.onHome && app.animeTab
                 catalog: catalog
@@ -773,6 +790,8 @@ WebOSWindow {
                 readonly property var account: account      // (for the screens: in one, `account` is its own)
                 BrowseScreen {
                     width: parent.width; height: parent.height
+                    y: level - app.level
+                    Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
                     what: modelData
                     readonly property bool up: app.browsing === what
                     focus: app.layer === "home" && up && !app.playMenu
@@ -788,6 +807,8 @@ WebOSWindow {
             SearchScreen {
                 id: search
                 width: parent.width; height: parent.height
+                y: -app.level
+                Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
                 focus: app.layer === "home" && app.searchTab && !app.playMenu
                 shown: app.onHome && app.searchTab
                 catalog: catalog
@@ -873,7 +894,11 @@ WebOSWindow {
             focus: app.layer === "profile" && !app.profileOpen
             opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims; the picture does not change
             Behavior on opacity { NumberAnimation { duration: 300 } }
-            Avatar { id: picture; source: account.avatar; focused: app.layer === "profile" }
+            Avatar {
+                id: picture
+                source: account.avatar; focused: app.layer === "profile"
+                glassSource: skyBlurred; preblurred: true; sx: profile.x; sy: profile.y; shadow: tabs.shadow     // (the tab bar's glass and shadow)
+            }
             OkPress { id: profileOk; onTapped: app.profileOpen = true }
             Keys.forwardTo: [profileOk]
             Keys.onLeftPressed: app.layer = "tabs"

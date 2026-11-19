@@ -476,6 +476,19 @@ format list differs from the TV, so neither settles anything.
   and a tab's own choices come back with it: Discover is one core model for films and series and
   starts a type on its first list with no genre, so `Account.browse` selects the type's list and
   genre again, by name.
+- A tab that rests higher than the others (the Library: no title above its rows) changes places
+  with them in one movement: every grid tab's screen stands where the tab that is up rests
+  (`App.level`, each screen's `y`), so the one going and the one coming glide together, up to the
+  Library's place or down from it, while one fades into the other where their posters coincide
+  (his words, 2026-11-19: "the library one needs to slide up and down too since it rests higher").
+  Each fading where it rests, the Library's posters came up over the title of the tab before. A
+  screen's glass adds the screen's own `y` to where it reads its blur.
+- A title taken where no title shows (the Library, a search with nothing found) has never been on
+  show (`App.unseen`). On the next tab the info stays away and the backdrop frosted until that
+  tab's own title is taken: the Library's focused title stood large over the Series tab's rows,
+  on its own picture unblurred, for the 280 ms the cursor takes to rest.
+- What stands on the tab bar's line is on the tab bar's glass (`Avatar`: the same source, blur and
+  shadow). On a flat fill it read as a hole beside the bar.
 - A control that has no say where you are is not in the row: it is not dimmed (the order in the
   Anime tab's schedule, the view for a season with nothing airing). Put the one that comes and goes
   last, so nothing moves for it; where it can't be last, its place closes after it has faded

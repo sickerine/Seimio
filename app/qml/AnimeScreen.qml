@@ -251,7 +251,7 @@ FocusScope {
                 id: seasonBar; selectOnOk: true
                 readonly property var filter: anime.seasonFilter
                 source: anime.glassSource; preblurred: true
-                sx: controls.x + x; sy: controls.y + y
+                sx: controls.x + x; sy: anime.y + controls.y + y
                 barHeight: 64; fontSize: 27; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                 model: [{ label: anime.catalog ? anime.catalog.seasonAsked : "", trailing: "chevrons" }]
                 onTriggered: anime.openList(seasonBar)
@@ -261,7 +261,7 @@ FocusScope {
                 FilterBar {
                     id: viewBar; filter: anime.fixedFilter("view", anime.views)
                     source: anime.glassSource; preblurred: true
-                    sx: controls.x + viewPlace.x; sy: controls.y + viewPlace.y
+                    sx: controls.x + viewPlace.x; sy: anime.y + controls.y + viewPlace.y
                     barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                     onChosen: anime.pick("view", option)
                 }
@@ -270,7 +270,7 @@ FocusScope {
                 id: genreBar; selectOnOk: true
                 readonly property var filter: anime.genreFilter
                 source: anime.glassSource; preblurred: true
-                sx: controls.x + x; sy: controls.y + y
+                sx: controls.x + x; sy: anime.y + controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                 model: [{ label: anime.genre || "All genres", trailing: "chevrons" }]
                 onTriggered: anime.openList(genreBar)
@@ -278,7 +278,7 @@ FocusScope {
             FilterBar {
                 id: formatBar; filter: anime.fixedFilter("format", anime.formats)
                 source: anime.glassSource; preblurred: true
-                sx: controls.x + x; sy: controls.y + y
+                sx: controls.x + x; sy: anime.y + controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                 onDropped: anime.openList(formatBar)
             }
@@ -287,7 +287,7 @@ FocusScope {
                 FilterBar {
                     id: sortBar; filter: anime.fixedFilter("sort", anime.sorts)
                     source: anime.glassSource; preblurred: true
-                    sx: controls.x + sortPlace.x; sy: controls.y + sortPlace.y
+                    sx: controls.x + sortPlace.x; sy: anime.y + controls.y + sortPlace.y
                     barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
                     onDropped: anime.openList(sortBar)
                 }
