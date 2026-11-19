@@ -1,9 +1,9 @@
-// The hero backdrop, with a slow Ken Burns drift. `target` is its only input; the rest is internal
-// state with fixed rules:
-//   shown     the url fully visible now
-//   incoming  the url being loaded or crossfaded in, "" when idle
+// The hero backdrop, with a slow Ken Burns drift. `target` is its only input; what is shown changes
+// through a crossing Swap (Swap.qml), which has the rules:
+//   shown     the address fully visible now
+//   incoming  the address being loaded or crossfaded in, "" when idle
 // - A new target replaces an incoming one that hasn't started crossfading.
-// - A target equal to `shown` cancels the incoming one.
+// - A target equal to `shown` cancels the incoming one. No target keeps what is shown.
 // - A crossfade that has started always finishes; then the latest target is applied.
 // - A failed load drops the incoming one and keeps what is shown.
 // `busy` is true from a target change until the screen shows that target, so anything that
@@ -24,10 +24,10 @@ Item {
     property size decodeSize: Qt.size(1920, 1080)          // the screen's own size: half of it looked soft
     property real pan: 0
     property real radius: 0                   // rounded corners for a framed backdrop (blends then)
-    property string shown: ""
-    property string incoming: ""
+    readonly property string shown: swap.shown || ""
+    readonly property string incoming: swap.coming || ""
     readonly property bool busy: target !== shown
-    readonly property bool fading: fade.running
+    readonly property bool fading: swap.phase === "entering"
     // changing faster than its drift: a crossfade on its way, or the pan moving (a frozen blur of it follows)
     readonly property bool settling: busy || panned.running
     onPanChanged: panned.restart()
@@ -35,54 +35,33 @@ Item {
     signal crossfadeStarted()
 
     property int front: 0                     // which image is on screen; the other one loads and fades in
-    property real fadeIn: 0                   // how far the back image has faded in over the front one
+    readonly property real fadeIn: swap.level // how far the back image has faded in over the front one
     function img(i) { return i ? l1 : l0 }
     // lab: what it wants, what it shows and what each of its two pictures is doing (status as Image's)
     function labState() {
-        return { target: target.slice(-28), shown: shown.slice(-28), incoming: incoming.slice(-28), fadeIn: fadeIn, fading: fade.running, front: front,
+        return { target: target.slice(-28), shown: shown.slice(-28), incoming: incoming.slice(-28), fadeIn: fadeIn, fading: fading, front: front,
                  pictures: [l0.url.slice(-28) + " " + l0.stage(), l1.url.slice(-28) + " " + l1.stage()] };
     }
-    onTargetChanged: apply()
-
-    function apply() {
-        if (fade.running) return;              // finishes first, then calls apply() again
-        if (!target || target === shown) { incoming = ""; return }
-        incoming = target;
-        var back = img(1 - front);
-        if (back.url === target && back.status === Image.Ready) { startFade(); return }
-        back.url = target;                     // starts a load; loaded() continues from there
-    }
-    function loaded(i, ok) {
-        if (i !== 1 - front || img(i).url !== incoming || fade.running) return;
-        if (!ok) { incoming = ""; return }
-        startFade();
-    }
-    function startFade() { Remote.tally("backdrop"); fade.restart(); crossfadeStarted() }
-    NumberAnimation {
-        id: fade; target: root; property: "fadeIn"; from: 0; to: 1; duration: 700; easing.type: Easing.InOutQuad
-        onFinished: {
+    Swap {
+        id: swap
+        cross: true; inMs: 700; easing: Easing.InOutQuad
+        want: root.target || null
+        // the back image has it loaded, or couldn't
+        ready: root.img(1 - root.front).url === swap.coming && root.img(1 - root.front).status === Image.Ready
+        failed: root.img(1 - root.front).url === swap.coming && root.img(1 - root.front).status === Image.Error
+        onComingChanged: if (coming) root.img(1 - root.front).url = coming      // starts its load
+        onPhaseChanged: if (phase === "entering") { Remote.tally("backdrop"); root.crossfadeStarted() }
+        onSwitched: {
             root.front = 1 - root.front;
-            root.fadeIn = 0;
-            root.shown = root.incoming;
-            root.incoming = "";
             // the picture that faded out is let go: the shader samples both, and a second full-screen
             // texture nobody sees cost 2 to 3.5 ms of every frame on the TV
             root.img(1 - root.front).url = "";
-            root.apply();
         }
     }
     // (BandedImage: a picture this size reaches the GPU over eight frames before it is Ready, not in the
     // crossfade's first frame, which was late for it every time)
-    BandedImage {
-        id: l0; property string url
-        address: url; sourceSize: root.decodeSize
-        onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(0, status === Image.Ready)
-    }
-    BandedImage {
-        id: l1; property string url
-        address: url; sourceSize: root.decodeSize
-        onStatusChanged: if (status === Image.Ready || status === Image.Error) root.loaded(1, status === Image.Ready)
-    }
+    BandedImage { id: l0; property string url; address: url; sourceSize: root.decodeSize }
+    BandedImage { id: l1; property string url; address: url; sourceSize: root.decodeSize }
     // The drift: the picture zooms from 1 to 1.07 and back on a sine, 36 s the round (`drift` goes once
     // around and the shader makes the zoom of it). Under something opaque (`covered`, a covering frost) it
     // stops where it is, so nothing redraws for it, and goes on from there once it shows again.

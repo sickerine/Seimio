@@ -1,7 +1,9 @@
 // A title's logo, or its name in large type when it has none (or it fails to load). A new title is
-// committed whole: the logo is preloaded, and the name and logo on screen change together once it has
-// loaded (`ready` turns true), so a name never shows while its logo is on the way. A title appearing
-// where there was none fades in (a page's entrance may finish before its logo has loaded).
+// committed whole, through a Swap (Swap.qml): the logo is loaded first, and the name and logo on screen
+// change together once it has, so a name never shows while its logo is on the way. Between two titles
+// nothing fades (what holds a TitleArt fades the whole of itself); a title appearing where there was
+// none fades in, since a page's entrance may finish before its logo has loaded. `ready` is true once
+// what should show is on screen.
 import QtQuick 2.12
 
 Item {
@@ -10,25 +12,23 @@ Item {
     property string name
     property int nameSize: 72
     property bool centered: false      // centre the logo or name in the box instead of starting at its left
-    // true once whatever should show (the logo, or the name when there is no logo) is on screen
-    readonly property bool ready: shownLogo === logo && shownName === name && (logo === "" || preload.status !== Image.Loading)
-    property string shownLogo: ""
-    property string shownName: ""
-    property bool hasLogo: false
+    readonly property bool ready: !swap.busy
+    readonly property string shownLogo: swap.shown ? swap.shown.logo : ""
+    readonly property string shownName: swap.shown ? swap.shown.name : ""
+    property bool hasLogo: false       // the title on show has a logo, and it loaded
     width: 640; height: 180
     function labState() { return { ready: ready, logo: shownLogo, has: hasLogo, name: shownName, picture: picture.status, painted: Math.round(picture.paintedWidth) + "x" + Math.round(picture.paintedHeight), opacity: content.opacity, preload: preload.status } }      // lab
 
-    // a cached logo can be Ready at once without a status change, so check right after setting it too
-    function load() { preload.source = logo; apply() }
-    function apply() {
-        if (preload.status === Image.Loading) return;
-        if (!shownLogo && !shownName && (logo || name)) appear.restart();
-        hasLogo = preload.status === Image.Ready && logo !== ""; shownLogo = logo; shownName = name;
+    Swap {
+        id: swap
+        want: art.logo || art.name ? { logo: art.logo, name: art.name } : null
+        same: function (a, b) { return a.logo === b.logo && a.name === b.name }
+        // its logo is in, or it has none, or it can't be had
+        ready: preload.source.toString() === "" || preload.status !== Image.Loading
+        outMs: 0; inMs: 0; appearMs: 260
+        // (at the switch the preload is this title's, and settled: that says whether it has a logo to show)
+        onSwitched: art.hasLogo = shown.logo !== "" && preload.status === Image.Ready
     }
-    NumberAnimation { id: appear; target: content; property: "opacity"; from: 0; to: 1; duration: 260; easing.type: Theme.ease }
-    onLogoChanged: load()
-    onNameChanged: apply()
-    Component.onCompleted: load()
     Image {
         id: preload
         // The size and the fit of the picture below, or it preloads nothing: Qt keeps a picture by its
@@ -36,11 +36,12 @@ Item {
         // this one was in, and the logo came in after the title around it had (a second or more late
         // from a slow host), without a fade.
         visible: false; asynchronous: true; sourceSize.width: 780; fillMode: Image.PreserveAspectFit
-        onStatusChanged: art.apply()
+        source: art.logo
     }
     Item {
         id: content
         anchors.fill: parent
+        opacity: swap.level
         Image {
             id: picture
             anchors.fill: parent
