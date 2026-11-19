@@ -769,10 +769,17 @@ WebOSWindow {
             anchors.fill: parent
             source: scene
             darken: 0.55
-            frozen: true; sourceBusy: hero.busy || info.busy
+            readonly property bool wanted: app.layer === "menu" || app.playMenu
+            // It follows the scene only while a menu is up. Warming at launch, nobody sees it: following
+            // the backdrop and the title coming in then was a capture of the whole screen twenty times a
+            // second through the first second, and frames of the launch came late for it (the search
+            // tour, which opens the search as the app starts, had 12, 6 and 10 late against 3, 3 and 7
+            // once the title's panel stayed busy until its chips were in).
+            frozen: true; sourceBusy: wanted && (hero.busy || info.busy)
+            onWantedChanged: if (wanted) refresh()      // of the scene as it is when the menu opens
             // around the held card, or the held Play button or episode
             hole: app.playMenu ? Qt.rect(app.menuAnchor.x - 14, app.menuAnchor.y - 14, app.menuAnchor.width + 28, app.menuAnchor.height + 28) : home.focusRect
-            opacity: app.layer === "menu" || app.playMenu ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
+            opacity: wanted ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.InOutQuad } }
         }
         SegmentedBar {
