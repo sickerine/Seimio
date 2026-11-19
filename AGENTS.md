@@ -224,7 +224,11 @@ Each rule comes from a measured stall on the C5.
   - A picture the size of the screen goes up a band a frame (`BandedImage`, the backdrop's): sent whole it
     took 15 to 20 ms in the frame that first drew it, a late frame at every backdrop change (Qt's own
     texture log says 3 ms; the driver does the rest at first use). Never write to a texture the last
-    frame read: the driver stalls 10 to 15 ms.
+    frame read: the driver stalls 10 to 15 ms. Eight bands of 136 rows is the measured size (three
+    anime tours each, 2026-11-19: 7 to 9 heavy frames as it is). Sixteen bands gave 1 to 6, and every
+    backdrop came in about 130 ms later. Bands sized by the frame they follow (a whole one after
+    under 7 ms of work, half up to 10, a quarter above) gave 6 to 8, inside the spread between runs,
+    and one backdrop in seven then took 18 to 21 frames to go up. Both were taken out.
   - Letters go to the glyph texture in batches of 2 to 7 ms. `Letters` writes the whole alphabet in each
     weight at launch, off screen, so a title that comes in later uploads nothing. A letter there is a
     glyph of the face, and the face's ligatures (fi, fl, ffi, ffl) are glyphs of their own: left out,
