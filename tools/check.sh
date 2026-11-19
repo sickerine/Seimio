@@ -9,6 +9,10 @@ echo "visual check"; tools/preview/shots.sh || fail=1
 # an opacity that a condition switches, in a screen or a component: content that reads the state hiding
 # it changes as the fade starts (a scale or a slide that goes with one is on the same item)
 echo "fades"; out=$(grep -nE '^[[:space:]]*opacity: .*\?' app/qml/*.qml app/Seimio/UI/*.qml | grep -v '// holds:') && { echo "$out"; echo "  an opacity switched by a condition: use Fade (its content reads \`current\`), or say on the line why what it shows can't change under it (// holds: ...)"; fail=1; }
+# What a component has on show becomes another through Swap (AGENTS.md). A value kept for the one on
+# its way, or a flag for the one that has gone, is that state kept by hand again, unless its line says
+# what it is (`// kept: ...`): a swap told by a call with nothing to wait for, or no swap at all.
+echo "swaps"; out=$(grep -nE '^[[:space:]]*property [a-z]+ (pending|incoming|outgoing|gone)[A-Za-z]*\b' app/qml/*.qml app/Seimio/UI/*.qml | grep -v '^app/Seimio/UI/Swap\.qml:' | grep -v '// kept:') && { echo "$out" | cut -c1-200; echo "  a value kept for what is on its way: use Swap (it holds \`shown\` and \`coming\`), or say on the line what it is (// kept: ...)"; fail=1; }
 # What is asked of a service goes through the libraries (AGENTS.md, Data). Outside them: no network
 # manager or reply of one's own, no counter that says whether an answer is still the one wanted, no
 # count of the answers still out, no thread made by hand. The files left out, and why:

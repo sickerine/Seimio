@@ -33,9 +33,11 @@ FocusScope {
     signal activated(var item)
     signal cardHeld(var item, rect rect)      // a long OK on a card: its menu goes beside `rect` (in the window)
 
-    property var pending: null
-    property string pendingLayout: "grid"
-    property int pendingTop: rowTop
+    // (told by a call, with nothing to wait for: the rows go out, these take their place when nothing is
+    // seen, and come in. Qt's own sequence does that, and the last `show` is the one that lands.)
+    property var pending: null                      // kept: the rows `show` was last given, until the old ones are out
+    property string pendingLayout: "grid"           // kept: with `pending`
+    property int pendingTop: rowTop                 // kept: with `pending`
     function show(next, nextLayout, top) {
         pending = next; pendingLayout = nextLayout || "grid"; pendingTop = top === undefined ? rowTop : top;
         Remote.tally("grid shown");

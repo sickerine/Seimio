@@ -126,7 +126,9 @@ Each rule comes from a measured stall on the C5.
   picture's own state and never call into it from a status handler.
   A swap with nothing to wait for and told by a call (a grid's `show`, a strip's page turn) stays a
   `SequentialAnimation` of out, a `ScriptAction` that switches, and in: Qt restarts that from where
-  the values are, which is all those need.
+  the values are, which is all those need. `check.sh` fails on a value kept for what is on its way
+  (`pending`, `incoming`, `outgoing`, `gone`) outside Swap, unless its line says what it is
+  (`// kept: ...`).
 - What was fetched for a title is kept ten minutes (`Live::title`'s metas, `Franchise`'s fetched shows: queries, see Data).
   Home is taken again whenever the account's watch state changes (an episode marked, a title off Continue
   Watching, a film ended), and the page in hand asks for its franchise again: with every meta asked of

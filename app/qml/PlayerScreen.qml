@@ -33,7 +33,7 @@ FocusScope {
     property var item: null
     property string label: ""
     property var stream: null            // the stream being played, once chosen
-    property string pendingUrl: ""
+    property string pendingUrl: ""          // kept: no swap, the link to load once the video window has its id
     readonly property bool playing: media.playing
     readonly property bool paused: media.paused
     readonly property real position: media.position
@@ -132,7 +132,7 @@ FocusScope {
     // the file's tracks, chapters and subtitles, read from the bytes the player loads (Seimio.Native Tee)
     property bool fileIsOther: false
     property var otherSubs: []           // an MP4's text subtitles; its audio comes from LG's player
-    property var pendingChapters: []
+    property var pendingChapters: []        // kept: no swap, chapters gathered as the player names them, taken in together
     property bool sheetReady: false
     Timer { running: media.playing && !page.sheetReady; interval: 3000; onTriggered: page.sheetReady = true }
     // ... and a row a frame: the list starts one pixel tall, so it makes its first row at once and the rest
