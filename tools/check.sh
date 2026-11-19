@@ -9,6 +9,21 @@ echo "visual check"; tools/preview/shots.sh || fail=1
 # an opacity that a condition switches, in a screen or a component: content that reads the state hiding
 # it changes as the fade starts (a scale or a slide that goes with one is on the same item)
 echo "fades"; out=$(grep -nE '^[[:space:]]*opacity: .*\?' app/qml/*.qml app/Seimio/UI/*.qml | grep -v '// holds:') && { echo "$out"; echo "  an opacity switched by a condition: use Fade (its content reads \`current\`), or say on the line why what it shows can't change under it (// holds: ...)"; fail=1; }
+# What is asked of a service goes through the libraries (AGENTS.md, Data). Outside them: no network
+# manager or reply of one's own, no counter that says whether an answer is still the one wanted, no
+# count of the answers still out, no thread made by hand. The files left out, and why:
+#   net.h, pictures.h   the transport and the picture loader themselves (the loader's ticket numbers its jobs)
+#   tee.h               the video's bytes pass through it in ranges as the player reads: a transfer, not an answer to keep
+#   probes.h            the lab posts its log, and nothing comes back
+#   banded_image.h      its ticket hands a picture from the GUI thread to the render thread
+#   query.h             `All` and `inTurns` are the count, written once
+# (a line with `// wire:` says why a network manager is there: one handed to Net)
+echo "requests"; out=$({
+  grep -nE 'QNetworkAccessManager|QNetworkReply' native/src/*.h | grep -vE '^native/src/(net|pictures|tee|probes)\.h:' | grep -v '// wire:'
+  grep -nE '(ticket|session|serial|generation) *(!=|==) *m_|\+\+m_(ticket|session|serial|refresh|generation)' native/src/*.h | grep -vE '^native/src/(banded_image|pictures|tee)\.h:'
+  grep -nE -e '--\*?[A-Za-z_>-]*(left|pending)\b' -e 'make_shared<int>' native/src/*.h | grep -v '^native/src/query\.h:'
+  grep -nE 'QThread::create|new QThread' native/src/*.h | grep -v '^native/src/pictures\.h:'
+}); [ -n "$out" ] && { echo "$out" | cut -c1-200; echo "  a request, a latest-wins counter, a count of answers or a thread kept by hand: a query (query.h), Net, query::All or query::onWorker does it"; fail=1; }
 echo "unit tests"; out=$("$(brew --prefix qt@5)/bin/qmltestrunner" -input tools/tests -import app -import tools/preview/imports 2>&1) || { echo "$out" | grep -E "FAIL|Actual|Expected"; fail=1; }
 errs=$(echo "$out" | grep -E "TypeError|ReferenceError|Unable to assign|is not defined" | sort -u | head -4); [ -n "$errs" ] && { echo "  script errors in the tests:"; echo "$errs" | cut -c1-220; fail=1; }
 # the C++ libraries' own tests (query.h, net.h, watch.h), with the sanitizers and for leaks

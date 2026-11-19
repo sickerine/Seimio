@@ -61,22 +61,21 @@ WebOSWindow {
     property var displayItem: null
     // A search's film or series is a name, a year and pictures (`thin`): the rest of what the info shows
     // is its page's. So it is shown as its page's item, once that is in (one version of a title's info,
-    // not a name that grows a description), or as it is if that can't be had (`unfetched`). Until then
-    // the info stays on the title before it.
-    property var unfetched: ({})
+    // not a name that grows a description), or as it is if that can't be had (Catalog.unfetchable). Until
+    // then the info stays on the title before it.
     function commit() {
         settle.stop();
         var it = focusItem;
         if (it && it.thin) {
-            var f = franchises[it.id];
-            if (f) it = f.item; else if (!unfetched[it.id]) return;
+            var f = catalog.franchise(it.id);
+            if (f) it = f.item; else if (!catalog.unfetchable(it.id)) return;
         }
         if (displayItem !== it) displayItem = it;
     }
     // the cursor has rested on a title: it shows, a search's film or series once it has been fetched
     function rest() {
         var it = focusItem;
-        if (it && it.thin && !franchises[it.id] && !unfetched[it.id]) loadFranchise(it); else commit();
+        if (it && it.thin && !catalog.franchise(it.id) && !catalog.unfetchable(it.id)) catalog.loadFranchise(it); else commit();
     }
     // lab: how long the info took to follow the cursor, the last time it did (a search's film or series
     // waits for its page's item)
@@ -100,7 +99,7 @@ WebOSWindow {
         onTriggered: {
             if (!app.displayItem || !app.onHome || !(app.animeTab || app.browseTab || app.searchTab || home.row === 0)) return;
             // a title that has to be fetched is fetched ahead (its page is built when it's in), so OK opens it at once
-            if (app.fetched(app.displayItem)) { app.loadFranchise(app.displayItem); return }
+            if (app.fetched(app.displayItem)) { catalog.loadFranchise(app.displayItem); return }
             if (app.episodeCount(app.displayItem.id) > 1) app.buildAhead(app.displayItem.id, app.displayItem, app.showData(app.displayItem.id));
         }
     }
@@ -153,7 +152,7 @@ WebOSWindow {
     // Home's selection as the title in hand: an anime's franchise when it's in
     function holdSelection() {
         commit();
-        var f = displayItem && fetched(displayItem) ? franchises[displayItem.id] : null;
+        var f = displayItem && fetched(displayItem) ? catalog.franchise(displayItem.id) : null;
         if (f) hold(f.item, f.show, picked(f, displayItem)); else hold(displayItem, displayItem ? showData(displayItem.id) : null);
     }
     // The episode a franchise was picked for: the release's own, by id or (an anime's calendar release) by
@@ -173,7 +172,7 @@ WebOSWindow {
     property int arrivals: 0
     function backdropOf(item) {
         if (!item) return "";
-        var f = arrivals >= 0 ? franchises[item.id] : null;
+        var f = arrivals >= 0 ? catalog.franchise(item.id) : null;
         return item.backdrop || catalog.backdrop(item.id) || (f && f.item.backdrop) || "";
     }
     // The episode playing as IMDb numbers it ("tt…:season:episode"), for the skip databases keyed that way:
@@ -249,9 +248,9 @@ WebOSWindow {
     Connections { target: account; onWatchingChanged: app.accountChanged(); onLibraryChanged: app.accountChanged() }
     property string franchiseRefresh: ""                   // the franchise asked for again, for the page in hand
     function refreshHeld() {
-        shows = ({}); franchises = ({});
+        shows = ({});                                      // (Catalog has forgotten its pages with the library they were made with)
         if (!held || onHome || layer === "player" || layer === "signin") return;
-        if (fetched(held.item)) { franchiseRefresh = held.item.id; loadFranchise(held.item) }
+        if (fetched(held.item)) { franchiseRefresh = held.item.id; catalog.loadFranchise(held.item) }
         else if (held.show) rehold(held.item, showData(held.item.id));
     }
     // the same title with new data: the page stays where it is
@@ -396,8 +395,8 @@ WebOSWindow {
     // asked for if it isn't, and the menu opens when it comes, if the card still has the focus.
     property var menuWaiting: null                         // { item, rect }
     function openTitleMenu(item, r) {
-        var f = /^anilist:/.test(item.id) ? franchises[item.id] : null;
-        if (/^anilist:/.test(item.id) && !f) { menuWaiting = { item: item, rect: r }; loadFranchise(item); return }
+        var f = /^anilist:/.test(item.id) ? catalog.franchise(item.id) : null;
+        if (/^anilist:/.test(item.id) && !f) { menuWaiting = { item: item, rect: r }; catalog.loadFranchise(item); return }
         var t = f ? f.item : item, entry = f && f.show && f.show.entries ? f.show.entries.filter(function (e) { return e.id === t.id })[0] : null;
         openPlayMenu({ id: t.id, type: "show", plays: false, kind: entry ? (entry.kind === "film" ? "movie" : "series") : t.type,
                        name: entry ? entry.title : t.name, poster: entry ? entry.poster : t.poster || "" }, r);
@@ -483,27 +482,21 @@ WebOSWindow {
     }
     function episodeCount(id) { return episodesIn(showData(id)) }
     // An anime (a Kitsu or AniList id) is a franchise (Catalog.loadFranchise): fetched once, ahead while the
-    // selection rests on it or on OK, kept by the id it was asked for and by its Kitsu id (`franchises`), and
-    // opened when it's in if OK asked for it (`franchiseOpening`) and it's still the selection. Without it
-    // (not on Kitsu, the services down) the title's own page opens, if it has one.
+    // selection rests on it or on OK, held by Catalog under the id it was asked for and its Kitsu id
+    // (`catalog.franchise(id)`: asking twice fetches once, and what is held, on its way or not to be had is
+    // Catalog's to know), and opened when it's in if OK asked for it (`franchiseOpening`) and it's still
+    // the selection. Without it (not on Kitsu, the services down) the title's own page opens, if it has one.
     // (Whether a video is anime, for the pick's rules and the track choices, is Streams' to say and nobody
     // else's: `streams.anime`. This is only whether an id is one a franchise can be fetched for.)
     function franchiseId(id) { return /^(kitsu|anilist):/.test(id || "") }
     // whether a title's page is fetched (Catalog.loadFranchise): an anime, and anything the catalog doesn't
     // hold whole already (it holds Continue Watching's titles with their seasons)
     function fetched(item) { return franchiseId(item.id) || !catalog.holds(item.id) }
-    property var franchises: ({})
-    property var franchiseLoading: ({})
     property string franchiseOpening: ""
     property var franchiseFrom: null                       // the title in hand when it was asked for
-    function loadFranchise(item) {
-        if (franchises[item.id] || franchiseLoading[item.id]) return;
-        franchiseLoading[item.id] = true;
-        catalog.loadFranchise(item);
-    }
     function openFranchise(item) {
-        var f = franchises[item.id], from = held;
-        if (!f) { franchiseOpening = item.id; franchiseFrom = held; loadFranchise(item); return }
+        var f = catalog.franchise(item.id), from = held;
+        if (!f) { franchiseOpening = item.id; franchiseFrom = held; catalog.loadFranchise(item); return }
         hold(f.item, f.show, picked(f, item));
         showHeld(from);                                    // from a page's Related tab, over that page
         probe.captures();                                  // lab: a page over a page is a screen change too
@@ -520,9 +513,7 @@ WebOSWindow {
     Connections {
         target: catalog
         onFranchiseReady: {
-            delete app.franchiseLoading[sourceId];
-            var f = { item: item, show: show };
-            app.franchises[sourceId] = f; app.franchises[item.id] = f; app.arrivals++;
+            app.arrivals++;
             if (app.onHome && app.focusItem && app.focusItem.thin && app.focusItem.id === sourceId && !settle.running) app.commit();      // the cursor rested on it: now it shows
             if (sourceId === app.franchiseRefresh) {         // asked for again after the watch state changed
                 app.franchiseRefresh = "";
@@ -546,8 +537,6 @@ WebOSWindow {
             arrived.source = sourceId; arrived.title = item; arrived.restart();
         }
         onFranchiseFailed: {
-            delete app.franchiseLoading[sourceId];
-            app.unfetched[sourceId] = true;
             if (app.onHome && app.focusItem && app.focusItem.thin && app.focusItem.id === sourceId && !settle.running) app.commit();      // shown as the search gave it
             // a held card's menu waited for it: it is no title of Stremio's, so there is nothing to offer but why
             if (app.menuWaiting && app.menuWaiting.item.id === sourceId) { app.menuWaiting = null; app.say(reason) }
@@ -586,6 +575,7 @@ WebOSWindow {
                      playMenu: app.playMenu, menuCard: app.playMenu && app.menuEpisode ? app.menuEpisode.id : "",
                      menuEntries: app.playMenu ? app.menuEntries.map(function (e) { return e.label }).join(" | ") : "",
                      stage: streams.stage, picks: streams.picksStatus,
+                     streamQueries: streams.queries(),      // the same for a play: the list, the decision and the link (Streams.queries)
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
                      tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
@@ -597,7 +587,7 @@ WebOSWindow {
         }
         onAutopop: if (app.layer === "menu") app.layer = "home"; else app.openMenu()
         onOpenMenu: app.openMenu()
-        onOpenStreams: app.openStreams(null)
+        onOpenStreams: if (app.focusItem) app.openStreams(null)      // (on a title: with the cursor off the cards there is none to open)
         onSearch: { app.tab = 5; app.layer = "tabs"; searchBar.text = text; search.enter() }      // typed, and Enter: on to what is found
         onVariantChanged: {
             if (variant.signIn && account.ready && !account.signedIn) account.signInWith(variant.signIn[0], variant.signIn[1]);   // lab: a tour can't approve a code
@@ -894,7 +884,8 @@ WebOSWindow {
             function next(why, forGood) {
                 if (!stream || !streams.ownPick()) return;
                 var url = stream.url;
-                prepare(app.playTarget ? app.lookFor(app.playTarget.id) : null, app.playTarget ? app.playTarget.label : "");      // first: the next one may start inside leaveOut
+                // (first: the old stream is cleared before the next is asked for. A lab `playId` has no label.)
+                prepare(app.playTarget ? app.lookFor(app.playTarget.id) : null, app.playTarget ? app.playTarget.label || "" : "");
                 streams.leaveOut(url, why, forGood);
             }
             onFailureChanged: if (failure && startMs < 0) next("Didn't play", false)

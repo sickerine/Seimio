@@ -26,11 +26,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QRegularExpression>
 #include <QSet>
-#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -51,26 +48,26 @@ public:
     // What was fetched for a title is a query of its own, fresh ten minutes: asked for again within that
     // (the watch state changed under its page, the page opened again), it is put together again with the
     // library as it is now, and nothing is asked of the network.
-    void load(const QVariantMap &source) {
+    // `done(item, show, why)`: the title as the screen showed it (id "kitsu:N", `video` where its page
+    // opens) and its page, or why there is none. It may be called from a worker's thread.
+    using Done = std::function<void(const QVariantMap &, const QVariantMap &, const QString &)>;
+    void load(const QVariantMap &source, Done done) {
         const QString id = source["id"].toString();
         query::Options kept; kept.freshMs = kept.keepMs = Live::kKept; kept.retries = 0;      // (each request under it has its own tries)
         m_cache->fetch<Job>({ "franchise", id }, [this, id](query::Call<Job> call) { fetch(id, call); }, kept,
-                            [this, source, id, kept](std::shared_ptr<const Job> fetched, const query::Failure &why) {
-            if (!fetched) { emit failed(id, why.reason); return; }
+                            [this, source, kept, done](std::shared_ptr<const Job> fetched, const query::Failure &why) {
+            if (!fetched) { done(QVariantMap(), QVariantMap(), why.reason.isEmpty() ? QStringLiteral("Couldn't load it") : why.reason); return; }
             // by its Kitsu id too, which is what its page asks again with
             const query::Key byKitsu { "franchise", "kitsu:" + QString::number(fetched->picked) };
             if (fetched->picked && !m_cache->peek<Job>(byKitsu)) m_cache->put<Job>(byKitsu, *fetched, kept);
-            assemble(*fetched, source);
+            assemble(*fetched, source, done);
         });
     }
-signals:
-    void ready(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
-    void failed(const QString &sourceId, const QString &reason);
 
 private:
     // what is fetched for a title, and, with what asked for it and the library, what its page is made of
     struct Job {
-        QVariantMap source; QString sourceId, imdb; int picked = 0, tail = 0, pending = 0, tvdb = 0; QVariantList related;
+        QVariantMap source; QString sourceId, imdb; int picked = 0, tail = 0, tvdb = 0; QVariantList related;
         QJsonArray entries; QHash<int, QJsonObject> kitsu; QHash<int, QJsonObject> anilist; QJsonObject cinemeta; QJsonObject library, airing;
         QVector<int> relatedKitsu;                       // the related shows' Kitsu ids, their metas in `kitsu` too
         QJsonObject only;                                // Cinemeta's meta, for a show Kitsu doesn't have (`cinemetaOnly`)
@@ -230,25 +227,25 @@ private:
             if (k && !kitsu.contains(k)) kitsu << k;
             if (a && !anilist.contains(QString::number(a))) anilist << QString::number(a);
         }
-        job->pending = kitsu.size() + 1 + (job->imdb.isEmpty() ? 0 : 1);
-        auto done = [this, job] { if (--job->pending == 0) extras(job); };
+        query::All all;
         for (int k : kitsu)
-            get("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(k) + ".json", [job, k, done](const QByteArray &body, bool ok) {
+            get("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(k) + ".json", [job, k, done = all.part()](const QByteArray &body, bool ok) {
                 if (ok) job->kitsu[k] = QJsonDocument::fromJson(body).object().value("meta").toObject();
                 done();
             });
         send("https://graphql.anilist.co", graphql("{ Page(perPage:50){ media(id_in:[" + anilist.join(',') + "]){ id status startDate{ day } title{ english romaji } averageScore description(asHtml:false) "
                     "relations{ edges{ relationType node{ id type format status startDate{ day } title{ english romaji } coverImage{ large } } } } } } }"),
-             [job, done](const QByteArray &body, bool) {
+             [job, done = all.part()](const QByteArray &body, bool) {
             for (const QJsonValue &v : QJsonDocument::fromJson(body).object().value("data").toObject().value("Page").toObject().value("media").toArray())
                 job->anilist[v.toObject().value("id").toInt()] = v.toObject();
             done();
         });
         if (!job->imdb.isEmpty())
-            get("https://v3-cinemeta.strem.io/meta/series/" + job->imdb + ".json", [job, done](const QByteArray &body, bool) {
+            get("https://v3-cinemeta.strem.io/meta/series/" + job->imdb + ".json", [job, done = all.part()](const QByteArray &body, bool) {
                 job->cinemeta = QJsonDocument::fromJson(body).object().value("meta").toObject();
                 done();
             });
+        all.then([this, job] { extras(job); });
     }
     // What AniList links to the entries that ARM doesn't place in this show: unmapped films and specials join
     // it (their Kitsu metas fetched too), other series are its related shows. Then the show.
@@ -304,19 +301,19 @@ private:
                     job->relatedKitsu << k; fetch << k;
                 }
             }
-            if (fetch.isEmpty()) { finish(job); return; }
-            job->pending = fetch.size();
+            query::All all;
             for (int k : fetch)
-                get("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(k) + ".json", [this, job, k](const QByteArray &body, bool ok) {
+                get("https://anime-kitsu.strem.fun/meta/series/kitsu:" + QString::number(k) + ".json", [job, k, done = all.part()](const QByteArray &body, bool ok) {
                     if (ok) job->kitsu[k] = QJsonDocument::fromJson(body).object().value("meta").toObject();
-                    if (--job->pending == 0) finish(job);
+                    done();
                 });
+            all.then([this, job] { finish(job); });
         });
     }
     // everything is fetched
     void finish(std::shared_ptr<Job> job) { job->end(*job, job->kitsu.contains(job->picked) ? QString() : QString("Couldn't load its episodes")); }
     // The page of what was fetched, for the title as `source` showed it and with the library as it is now
-    void assemble(const Job &fetched, const QVariantMap &source) {
+    void assemble(const Job &fetched, const QVariantMap &source, Done done) {
         auto job = std::make_shared<Job>(fetched);
         job->source = source; job->sourceId = source["id"].toString();
         job->library = m_library; job->airing = m_airing;
@@ -324,14 +321,11 @@ private:
             QVariantMap show = Live::show(job->only, m_library.value(job->imdb).toObject()).toVariantMap();
             show["logo"] = job->only.value("logo").toString(); show["backdrop"] = job->only.value("background").toString();
             QVariantMap item = source; item["id"] = job->imdb;
-            emit ready(job->sourceId, item, show);
+            done(item, show, QString());
             return;
         }
-        auto out = std::make_shared<QPair<QVariantMap, QVariantMap>>();
-        QThread *worker = QThread::create([out, job] { *out = build(*job); });
-        connect(worker, &QThread::finished, this, [this, out, job] { emit ready(job->sourceId, out->first, out->second); });
-        connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-        worker->start();
+        // (a long show's page is 20 ms and more to build: on a pooled thread, which answers itself)
+        query::onPool([job, done] { const auto page = build(*job); done(page.first, page.second, QString()); });
     }
     // a title (a film, a related show) is watched as Stremio says a library item is: it has been, at least
     // once (`state`: its library item's)

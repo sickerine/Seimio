@@ -150,6 +150,27 @@ My reading, for discussion.
 - **Tooling.** A list of live queries and transitions in the lab report, and a switch to force a slow
   or failed answer, as the TanStack devtools have.
 
+## What was built from it
+
+| Part | Where | Tests |
+|---|---|---|
+| The query cache, observers, `All`, `inTurns`, `onWorker` | `native/src/query.h` | `tools/tests/native/tst_query.cpp` |
+| The transport under it | `native/src/net.h` | `tst_net.cpp` |
+| Watching a query from another thread | `native/src/watch.h` | `tst_watch.cpp` |
+| The picture loader | `native/src/pictures.h` | `tst_pictures.cpp` |
+| The swap of what is on show | `app/Seimio/UI/Swap.qml` | `tools/tests/tst_swap.qml` |
+
+Two of the libraries above were weighed again when their turn came, and left out:
+
+- **QtPromise** builds for the TV and its `all` is what a dozen hand-kept counters did. Its handlers
+  belong to no object: one that captures `this` runs after the object is gone, and nothing in its API
+  stops a chain. An answer from the cache or from `Net` is dropped with its owner, which is the
+  behaviour the rest of the data code relies on. `query::All` and `query::inTurns` are the two joins
+  the code needs, under forty lines with their own tests.
+- **Qt's state machine** reacts only to signals sent after a state is entered, so a target that
+  changed while a transition ran needs the same bookkeeping `Swap` does. `Swap` decides in one
+  function instead.
+
 ## Sources
 
 1. https://github.com/TanStack/query/blob/main/docs/framework/react/guides/caching.md

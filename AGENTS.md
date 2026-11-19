@@ -215,13 +215,21 @@ Everything asked of a service is a query (`native/src/query.h`, after TanStack Q
 request" counter, cache map, or retry loop:
 - A read goes through `Net::request` (net.h): one fetch for an address asked twice at once, a failure
   for a passing reason tried again (a 5xx, no answer, a 429 when the service says), a "no" (4xx) the
-  answer, nothing arriving for 20 s a failure. Only Stremio's core sends its own requests (`Net::send`).
+  answer, nothing arriving for 20 s a failure. What writes or costs goes out once (`Net::send`):
+  Stremio's core, TorBox, the decision model.
 - What is fetched and put together is a query with a key and a time it stays fresh (`Queries::fetch`):
   a title's meta ten minutes, a show's fetched pieces ten, Home's rows and a season's list six hours.
 - A screen's side watches a query (`Watch`, watch.h) and hears only of the key it watches now: Home,
   the season and the search in `Catalog`. Asking again is `invalidate`, and the newest asking answers.
   On the cache's own thread the holder watches with `query::Observer` itself: a video's skip times
-  (skip.h) and its addon subtitles (subtitle_layer.h, a cache of the subtitle thread's own).
+  (skip.h), its addon subtitles (subtitle_layer.h, a cache of the subtitle thread's own), the account
+  and the grid's page as the core has them (account.h), and a play's list, decision and link
+  (streams.h). An observer answers every asking: call `retell()` after `watch()`.
+- Several things asked for at once are an `All` (`part()` for each, `then` for what follows), and many
+  of a kind a few at a time are `inTurns`. Work rather than a request (JSON to read and shape) is
+  `onWorker`, on a pooled thread. Never count answers by hand, and never hold a function in itself.
+- What was asked for ahead (the next episode's streams, Up next's link) is the same query asked early,
+  fresh for as long as it is good; the same thing asked for in the ordinary way is asked for each time.
 - The lab report's `queries` lists what the cache holds and each fetch that ended with how long it
   took; `{"queryFault": ["search", 3000, false]}` makes the queries with that in their key slow, or
   with `true` failing, to see what a screen does then.

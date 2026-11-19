@@ -12,9 +12,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJSValue>
 #include <QLocale>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include <QQmlEngine>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -189,7 +189,7 @@ class Catalog : public QObject {
     // The app's day ("YYYY-MM-DD"): what has aired goes by it, and with that the episode a show rests on
     // (resting.h). Another day (midnight, or a preview's pinned one) takes Home's data again.
     Q_PROPERTY(QString today READ today WRITE setToday NOTIFY todayChanged)
-    struct Data; struct Home; struct Found;                 // (what the queries watched from here hold: at the end)
+    struct Data; struct Home; struct Found; struct Page;    // (what the queries watched from here hold: at the end)
     using Season = std::shared_ptr<const Data>;
 public:
     explicit Catalog(QObject *parent = nullptr) : QObject(parent), m_model(new CalendarModel(this)) {
@@ -197,8 +197,6 @@ public:
         // kilobytes of JSON, and reading it where it arrived, on the GUI thread, stalled it 20 to 60 ms
         // whenever the network answered. `work` runs something there; what it produces comes `back` here.
         m_cache->moveToThread(&m_thread); m_live->moveToThread(&m_thread); m_franchise->moveToThread(&m_thread);
-        connect(m_franchise, &Franchise::ready, this, &Catalog::franchiseReady);
-        connect(m_franchise, &Franchise::failed, this, &Catalog::franchiseFailed);
         m_thread.start();
         Core *core = Core::instance();
         connect(core, &Core::readyChanged, this, &Catalog::load);
@@ -235,26 +233,39 @@ public:
     // where its page opens) or `franchiseFailed`.
     // A Cinemeta title (a film or a series from a list, the library or a search) answers the same way:
     // its facts and art filled in, and a series' seasons with the library's watch state.
+    //
+    // A page is a query of this thread's own cache (`m_pages`), by the id it was asked for: asked for
+    // while it is on its way or once it is held, nothing more is fetched and nothing is said again. One
+    // that couldn't be had is held too (`unfetchable`: the cursor resting on it doesn't ask again), and
+    // asking for it outright (OK on it) tries once more. The pages last as long as the library they were
+    // made with (`take`).
     Q_INVOKABLE void loadFranchise(const QVariantMap &source) {
-        const QString id = source.value("id").toString(), type = source.value("type").toString() == "movie" ? "movie" : "series";
-        if (!id.startsWith("tt")) { work([this, source] { m_franchise->load(source); }); return; }
-        const QJsonObject state = m_docs.library.value(id).toObject();
-        work([this, source, id, type, state] {
-            m_live->title(type, id, [this, source, id, type, state](const QJsonObject &meta) {
-                if (meta.isEmpty()) { back([this, id] { emit franchiseFailed(id, "Couldn't load it"); }); return; }
-                const QVariantMap show = type == "series" ? Live::show(meta, state).toVariantMap() : QVariantMap();
-                // what the screen showed, with the meta's facts and art; its own place in the title stays
-                QVariantMap item = source;
-                const QVariantMap fresh = Live::item(meta);
-                for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
-                item["type"] = type; item.remove("thin");
-                back([this, source, id, item, show, state] {
-                    // watched while it was on its way: its seasons are made again with what the library says now
-                    if (m_docs.library.value(id).toObject() != state) { loadFranchise(source); return; }
-                    emit franchiseReady(id, item, show);
-                });
-            });
+        const QString id = source.value("id").toString();
+        const query::Key key { "page", id };
+        const auto held = m_pages.peek<Page>(key);
+        if ((held && held->failed.isEmpty()) || m_pages.fetching(key)) return;
+        if (held) m_pages.remove(key);
+        m_pages.fetch<Page>(key, [this, source](query::Call<Page> call) { page(source, call); }, kPages, [this, source, id](std::shared_ptr<const Page> page, const query::Failure &) {
+            // forgotten while it was on its way (the library changed under it): asked for again
+            if (!page) { loadFranchise(source); return; }
+            if (!page->failed.isEmpty()) { emit franchiseFailed(id, page->failed); return; }
+            // Turned into QML's objects here, once (20 ms of it for a long show), and held by its own id
+            // too, which is what its page asks again with: the same two objects under both.
+            page->js = qmlEngine(this)->toScriptValue(QVariantMap { { "item", page->item }, { "show", page->show } });
+            const query::Key own { "page", page->item.value("id").toString() };
+            if (own != query::Key { "page", id } && !m_pages.peek<Page>(own)) m_pages.put<Page>(own, *page, kPages);
+            emit franchiseReady(id, page->js.property("item"), page->js.property("show"));
         });
+    }
+    // the page held for an id: { item, show }, or undefined (not asked for, on its way, or none to be had)
+    Q_INVOKABLE QJSValue franchise(const QString &id) const {
+        const auto page = m_pages.peek<Page>({ "page", id });
+        return page && page->failed.isEmpty() ? page->js : QJSValue();
+    }
+    // whether a page was asked for and couldn't be had (the title shows as it came)
+    Q_INVOKABLE bool unfetchable(const QString &id) const {
+        const auto page = m_pages.peek<Page>({ "page", id });
+        return page && !page->failed.isEmpty();
     }
     // Titles by name (Live::search): `found(query, results)`, the titles of each kind { anime, series,
     // movie }. A film or a series is as Cinemeta's search gives it, a name, a year and pictures (`thin`):
@@ -476,15 +487,7 @@ public:
     // in use or being fetched, and how many others are kept), history (the last fetches that ended, and
     // how long each took) }. Read over there and brought back, so a report costs the screen nothing.
     Q_INVOKABLE QVariantMap queries() {
-        work([this] {
-            QVariantList held; int kept = 0;
-            for (const QVariant &v : m_cache->lab()) { const QVariantMap e = v.toMap(); if (e["observers"].toInt() || e["fetching"].toBool()) held << e; else kept++; }
-            const query::Counts c = m_cache->counts();
-            const QVariantMap out { { "held", held }, { "kept", kept }, { "history", m_cache->history().mid(qMax(0, m_cache->history().size() - 40)) },
-                                    { "counts", QVariantMap { { "fetches", c.fetches }, { "joined", c.joined }, { "fresh", c.fresh }, { "retries", c.retries },
-                                                              { "cancelled", c.cancelled }, { "dropped", c.dropped }, { "failed", c.failed } } } };
-            back([this, out] { m_queries = out; });
-        });
+        work([this] { const QVariantMap out = m_cache->summary(); back([this, out] { m_queries = out; }); });
         return m_queries;
     }
     // the picture loader's part (pictures.h), the same way: how many pictures were asked for and shown,
@@ -507,7 +510,7 @@ signals:
     void seasonLoaded();
     void seasonAskedChanged();
     void seasonFailed(const QString &name);
-    void franchiseReady(const QString &sourceId, const QVariantMap &item, const QVariantMap &show);
+    void franchiseReady(const QString &sourceId, const QJSValue &item, const QJSValue &show);      // (QML's own objects: `franchise(id)` holds the same two)
     void franchiseFailed(const QString &sourceId, const QString &reason);
     void found(const QString &query, const QVariantMap &results);
     void foundMore(const QString &query, const QVariantList &anime);
@@ -697,7 +700,36 @@ private:
         m_data = data;
         m_ready = true;
         m_model->setCalendar(&m_data->calendar);
+        // the pages were made with the library before: forgotten (one on its way is asked for again, and
+        // the page in hand asks for its own on `loaded`)
+        m_pages.remove({ "page" });
         emit loaded();
+    }
+    // The fetch of a page's query. An anime is Franchise's to put together; a Cinemeta title is its meta
+    // with the library's watch state. Both answer from the data thread or a worker's.
+    void page(const QVariantMap &source, query::Call<Page> call) {
+        const QString id = source.value("id").toString(), type = source.value("type").toString() == "movie" ? "movie" : "series";
+        if (!id.startsWith("tt")) {
+            work([this, source, call] { m_franchise->load(source, [call](const QVariantMap &item, const QVariantMap &show, const QString &why) { call.ok(Page { item, show, why, QJSValue() }); }); });
+            return;
+        }
+        const QJsonObject state = m_docs.library.value(id).toObject();
+        work([this, source, id, type, state, call] {
+            m_live->title(type, id, [this, source, id, type, state, call](const QJsonObject &meta) {
+                if (meta.isEmpty()) { call.ok(Page { QVariantMap(), QVariantMap(), "Couldn't load it", QJSValue() }); return; }
+                const QVariantMap show = type == "series" ? Live::show(meta, state).toVariantMap() : QVariantMap();
+                // what the screen showed, with the meta's facts and art; its own place in the title stays
+                QVariantMap item = source;
+                const QVariantMap fresh = Live::item(meta);
+                for (auto it = fresh.begin(); it != fresh.end(); ++it) if ((it.key() != "episode" && it.key() != "progress") || !item.contains(it.key())) item[it.key()] = it.value();
+                item["type"] = type; item.remove("thin");
+                back([this, source, id, item, show, state, call] {
+                    // watched while it was on its way: its seasons are made again with what the library says now
+                    if (m_docs.library.value(id).toObject() != state) { page(source, call); return; }
+                    call.ok(Page { item, show, QString(), QJSValue() });
+                });
+            });
+        });
     }
 
     QString m_searching;                                   // the last search asked for
@@ -716,6 +748,11 @@ private:
         m_seasonReady = true;
         emit seasonLoaded();
     }
+    // A title's page as the screens hold it, or why it has none (`failed`). `js`: the same as QML's own
+    // objects, made once when it comes in (this thread's to touch).
+    struct Page { QVariantMap item, show; QString failed; mutable QJSValue js; };
+    query::Queries m_pages { this };                       // this thread's cache: the pages, by the id asked for
+    const query::Options kPages = [] { query::Options o; o.freshMs = o.keepMs = 24 * 60 * 60 * 1000; o.retries = 0; return o; }();     // (kept until the library changes)
     QThread m_thread;
     query::Queries *m_cache = new query::Queries;          // the data thread's cache; these three live on m_thread
     Live *m_live = new Live(m_cache);
