@@ -58,6 +58,24 @@ Run `tools/check.sh` (`--mac` when the TV is off) and push only when it ends wit
   than 50 ms of the GUI thread's own CPU time between two ticks. (Counted by the gap between ticks, a
   35 ms piece of work read as a stall of 50 to 100 ms on some runs: the timer's phase and the waits on
   the render thread and the compositor came with it.)
+  A frame of 100 ms and more with nothing of ours in it is the TV's compositor. Qt's Wayland client
+  (libQt5WaylandClient 5.12.4 on the TV, `waitForFrameSync`: "Didn't receive frame callback in time")
+  waits for the compositor to acknowledge a frame before it swaps the next, 100 ms at most, and now
+  and then no acknowledgement comes. Qt's render timing then reads `swap=100` to `104` with an
+  ordinary `render`. In three days of timing logs (2026-11-16 to 19, 949,392 frames, every build of
+  those days) 85 swaps took 60 ms or more: 84 of them 100 to 104 ms, one in the 90s and none between
+  60 and 89, so it is the wait running out and nothing slower by degrees. That is one frame in about
+  11,000, three minutes of frames, at rest as often as on the move. All 27 frames of 95 ms and more
+  that the lab logged as late were such swaps, with 1 to 23 ms of sync and render before them.
+  FrameStats times the swap by itself, counts one of 95 ms and more apart (`held`) and judges the
+  frame by the rest of its gap; a tour prints "the TV held ..." and its budget is the app's frames.
+  Before chasing a long frame, read `swap` in a run with the render loop's timing on.
+  What brings a held swap on is a heavy frame of ours. In the same logs, after a frame with under
+  12 ms of sync and render a held swap followed within four frames 0.02% of the time; after one of
+  12 to 17 ms, 1.5%; of 17 to 25 ms, 3 to 4%; above that, 5%. So a frame can be on time and still
+  cost a 100 ms hitch: keep a frame's drawing under 12 ms, not only under a refresh. A tour counts
+  the frames over that (`heavy`, per phase and in all; no budget yet). On 2026-11-19: home 8 to 11,
+  browse 4 to 12, anime 13 to 14, most of them in tab switches and the first seconds of a launch.
 
 ## Performance rules
 
@@ -107,6 +125,11 @@ Each rule comes from a measured stall on the C5.
   which capture only while visible (`frozen` captures once, and again while `sourceBusy`). A small glass
   over the drifting backdrop (the tab bar) stays live: refreshed twice a second instead, each capture was
   a 14-16 ms frame on its own and often late, where the steady chain costs ~2 ms a frame.
+- A glass draws its source again to blur it, the whole of it, whatever part lies under the panel. Give
+  it the least that can be under it: the tab bar and the search bar blur `sky` (the backdrop, its frost
+  and the shade, App.qml), not the scene. On the scene, every frame drew the screens twice, and a tab
+  switch, with one screen going and another coming, had 14 to 18 frames over 12 ms of drawing in
+  Home's tour (3 to 8 on `sky`; the previews are pixel for pixel the same).
 - A full-screen texture nobody sees is not free. `Backdrop` lets go of the picture that faded out: its
   shader samples both, and the second 1080p texture cost 2 to 3.5 ms of every frame.
 - Icons are `Icon` (distance-field shaders). Canvas paints in JS and uploads a texture per instance.

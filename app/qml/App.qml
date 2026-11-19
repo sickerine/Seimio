@@ -622,45 +622,56 @@ WebOSWindow {
             visible: opacity > 0
             Behavior on opacity { NumberAnimation { duration: 500 } }
 
-            Backdrop {
-                id: hero
-                width: parent.width; height: parent.height
-                // an anime franchise's page wears the backdrop of the entry it's on (ShowScreen.backdrop)
-                target: app.layer === "show" && showPage.backdrop ? showPage.backdrop : app.backdropOf(app.pageItem)
-                // parallax: the backdrop drifts a little against moves along a row
-                pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
-                Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
-                onCrossfadeStarted: { Remote.stir(); probe.act("hero crossfade") }   // a crossfade is movement too
-                covered: backdropFrost.covering
-            }
-            // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
-            // is only a background
-            Frost {
-                id: backdropFrost
+            // The sky: what lies under the bars at the top of the screen, and nothing else. The backdrop, its
+            // frost and the shade over them are all a bar's glass ever blurs, so the tab bar and the search
+            // bar take this as their source. They took the whole scene, and a glass draws its source again
+            // for its blur: every frame the screens were drawn twice, and as one tab's screen went and the
+            // next came the frames passed 12 ms of drawing, which is what the TV's compositor answers with
+            // a swap held 100 ms now and then (FrameStats, probes.h). Home's tour had 14 to 18 such frames
+            // in its tab switches; with the tab bar's glass off, 3 to 4.
+            Item {
+                id: sky
                 anchors.fill: parent
-                source: hero
-                readonly property bool wanted: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player"
-                // On its way out its blur stays as it is: a backdrop still crossfading under it as a page
-                // opened had it blurred again every frame of the fade (five passes more), and the page opened
-                // at 30 fps, six or seven late frames.
-                readonly property bool leaving: !wanted && opacity > 0.01
-                frozen: true; sourceBusy: !leaving && hero.settling; sourceMoving: wanted && hero.fading
-                // The filter bars of a grid tab are glass made of this blur, also over a clear backdrop: left
-                // alone there, it went stale and the bars wore a blur of whatever was up when it last showed.
-                // (Not every frame of a crossfade for them: 20 a second while the backdrop settles is plenty.)
-                needed: app.onHome && (app.animeTab || app.browseTab)
-                onWantedChanged: if (wanted) refresh()      // back before it had gone: of the backdrop as it is now
-                // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
-                hideCovered: true
-                opacity: wanted ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
-                Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
-            }
-            Scrim {
-                anchors.fill: parent
-                readonly property bool page: app.layer === "show" || app.layer === "title" || app.layer === "streams" || home.dayOpen
-                side: page ? 0.95 : 0.85
-                sideMid: page ? 0.35 : 0.15
-                footMid: page ? 0.7 : 0.55
+                Backdrop {
+                    id: hero
+                    width: parent.width; height: parent.height
+                    // an anime franchise's page wears the backdrop of the entry it's on (ShowScreen.backdrop)
+                    target: app.layer === "show" && showPage.backdrop ? showPage.backdrop : app.backdropOf(app.pageItem)
+                    // parallax: the backdrop drifts a little against moves along a row
+                    pan: app.onHome && (home.row === 0 || home.dayOpen) ? Math.min(8, home.row === 0 ? home.column : home.dayColumn) * 5 : 0
+                    Behavior on pan { NumberAnimation { duration: 700; easing.type: Theme.ease } }
+                    onCrossfadeStarted: { Remote.stir(); probe.act("hero crossfade") }   // a crossfade is movement too
+                    covered: backdropFrost.covering
+                }
+                // the backdrop frosts on Home below the first row, where the info has stepped aside and the art
+                // is only a background
+                Frost {
+                    id: backdropFrost
+                    anchors.fill: parent
+                    source: hero
+                    readonly property bool wanted: (app.onHome && (app.scrolled || app.bare) && !home.dayOpen) || app.layer === "streams" || app.layer === "player"
+                    // On its way out its blur stays as it is: a backdrop still crossfading under it as a page
+                    // opened had it blurred again every frame of the fade (five passes more), and the page opened
+                    // at 30 fps, six or seven late frames.
+                    readonly property bool leaving: !wanted && opacity > 0.01
+                    frozen: true; sourceBusy: !leaving && hero.settling; sourceMoving: wanted && hero.fading
+                    // The filter bars of a grid tab are glass made of this blur, also over a clear backdrop: left
+                    // alone there, it went stale and the bars wore a blur of whatever was up when it last showed.
+                    // (Not every frame of a crossfade for them: 20 a second while the backdrop settles is plenty.)
+                    needed: app.onHome && (app.animeTab || app.browseTab)
+                    onWantedChanged: if (wanted) refresh()      // back before it had gone: of the backdrop as it is now
+                    // fully in, it hides the backdrop: drawing it under an opaque frost was a wasted full-screen pass
+                    hideCovered: true
+                    opacity: wanted ? 1 : (app.warming ? 0.003 : 0)      // holds: a blur of what is under it: nothing of its own
+                    Behavior on opacity { NumberAnimation { duration: 520; easing.type: Easing.InOutQuad } }
+                }
+                Scrim {
+                    anchors.fill: parent
+                    readonly property bool page: app.layer === "show" || app.layer === "title" || app.layer === "streams" || home.dayOpen
+                    side: page ? 0.95 : 0.85
+                    sideMid: page ? 0.35 : 0.15
+                    footMid: page ? 0.7 : 0.55
+                }
             }
             HeroInfo {
                 id: info
@@ -788,7 +799,7 @@ WebOSWindow {
         SegmentedBar {
             id: tabs
             focus: app.layer === "tabs" && !app.searchTab
-            source: scene
+            source: sky                 // (the backdrop's layers alone: see `sky`)
             // Its blur is taken every frame, five small passes: taken twice a second instead (the backdrop
             // under it only drifts), each capture was a 14 to 16 ms frame on its own and often a late one,
             // where the steady chain costs about 2 ms of every frame.
@@ -817,7 +828,7 @@ WebOSWindow {
             focus: app.layer === "tabs" && app.searchTab
             opacity: app.layer === "menu" || app.playMenu ? 0.3 : 1      // holds: only dims, as the tab bar does under a menu
             Behavior on opacity { NumberAnimation { duration: 300 } }
-            source: scene
+            source: sky                 // (as the tab bar's: two glasses here, each drawing its source again)
             iconX: tabs.x
             // a kind the search found nothing of is dim
             kinds: app.searchKinds.map(function (k) { return { label: k[0], faint: search.found.length > 1 && !search.count(k[1]) } })
