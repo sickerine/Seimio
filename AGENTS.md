@@ -480,3 +480,17 @@ format list differs from the TV, so neither settles anything.
 The Mac runs Qt 5.15, so code that works there can fail on the TV. Use `onFoo:` handlers in
 `Connections` (the function syntax is 5.15), and check property names against FINAL ones (`left`,
 `right`, `bottom` on Item) and reserved GLSL words (`half`).
+
+The app runs under webOS's `qml-runner`, which acts on the root window of `main.qml`:
+- That root is the app's own window. Launched again while the app runs (picked in the launcher with
+  the app among the recent ones), qml-runner brings its root back. With a hidden window for a root it
+  answered "Got relaunch on closing" and did nothing: the app had to be closed from the recent list.
+- A file the TV's Qt won't take is then an app that closes as it opens, with nothing said where dev
+  mode can read. `tools/deploy.sh` notices that no load report came, puts `app/why.qml` in
+  `main.qml`'s place and prints the error.
+- qml-runner cuts every connection to its root window's `frameSwapped` once the first frame is up.
+  What needs each frame shown listens through `onFrameShown` (probes.h), which listens again.
+- Until the app's first frame webOS shows `splashBackground` from `appinfo.json` (1920 x 1080); with
+  none, a grey screen and a spinner. The splash, the icon (80 px) and the home row's tile
+  (`largeIcon`, 130 px) are drawn by `tools/brand.qml` with the app's face and colours and written
+  into `app/` by `tools/brand.sh`. No spinner shows over a splash image, so there is no setting for it.

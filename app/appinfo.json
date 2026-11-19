@@ -5,5 +5,8 @@
   "type": "qml",
   "main": "main.qml",
   "title": "Seimio",
-  "icon": "icon.png"
+  "icon": "icon.png",
+  "largeIcon": "icon-large.png",
+  "iconColor": "#000000",
+  "splashBackground": "splash.png"
 }
