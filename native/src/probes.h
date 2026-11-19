@@ -28,6 +28,23 @@
 #include <sys/syscall.h>
 
 inline double monoMs() { timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
+
+// Hears each frame shown on `window` (QQuickWindow::frameSwapped, on the render thread), and goes on
+// hearing them. qml-runner waits for the first frame of the root window it loaded and then cuts every
+// connection to that window's frameSwapped, whoever made it; the app's window is that root (main.qml).
+// A listener made before that frame heard one frame and no more, and the tours had none to judge. There
+// is one frameSwapped between two afterRendering while anything listens, both on the render thread: a
+// frame drawn with the one before it never told of as shown means nothing listens, and it is made again.
+template <typename Shown> inline void onFrameShown(QQuickWindow *window, QObject *owner, Shown shown) {
+    struct Heard { int unshown = 0; QMetaObject::Connection made; };
+    auto heard = std::make_shared<Heard>();
+    auto listen = [window, owner, shown, heard] {
+        QObject::disconnect(heard->made);
+        heard->made = QObject::connect(window, &QQuickWindow::frameSwapped, owner, [shown, heard] { heard->unshown = 0; shown(); }, Qt::DirectConnection);
+    };
+    listen();
+    QObject::connect(window, &QQuickWindow::afterRendering, owner, [listen, heard] { if (++heard->unshown > 1) { heard->unshown = 1; listen(); } }, Qt::DirectConnection);
+}
 inline double threadCpuMs() { timespec t; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t); return t.tv_sec * 1e3 + t.tv_nsec / 1e6; }
 
 // The lab log: Qt's log output (once LogTap starts) and the probes' own events, each as
@@ -101,7 +118,7 @@ public:
             QMutexLocker l(&m_mutex);
             for (auto &p : m_pending) p.synced = true;
         }, Qt::DirectConnection);
-        connect(w, &QQuickWindow::frameSwapped, this, [this] {           // render thread
+        onFrameShown(w, this, [this] {                                   // render thread
             double now = monoMs();
             QMutexLocker l(&m_mutex);
             for (int i = m_pending.size() - 1; i >= 0; i--) {
@@ -110,7 +127,7 @@ public:
                 m_fromEvent << now - m_pending[i].eventTime;
                 m_pending.removeAt(i);
             }
-        }, Qt::DirectConnection);
+        });
     }
     bool eventFilter(QObject *, QEvent *e) override {
         if (e->type() == QEvent::KeyPress) {
@@ -188,7 +205,7 @@ public:
         connect(w, &QQuickWindow::beforeSynchronizing, this, [this] { m_began = monoMs(); m_handed = true; }, Qt::DirectConnection);
         connect(w, &QQuickWindow::beforeRendering, this, [this] { if (m_began < m_swapped) m_began = monoMs(); }, Qt::DirectConnection);
         connect(w, &QQuickWindow::afterRendering, this, [this] { m_rendered = monoMs(); }, Qt::DirectConnection);      // drawn: the swap is next
-        connect(w, &QQuickWindow::frameSwapped, this, [this] {
+        onFrameShown(w, this, [this] {
             double now = monoMs();
             timespec t; clock_gettime(m_guiClock, &t);
             const double guiCpu = t.tv_sec * 1e3 + t.tv_nsec / 1e6;
@@ -261,7 +278,7 @@ public:
             }
             m_lastGap = m_last > 0 ? gap : 0;
             m_last = now; m_swapped = now; m_guiCpuAtSwap = guiCpu;
-        }, Qt::DirectConnection);
+        });
         // GUI thread: a long wait between two animation ticks means key handling, JS or item creation
         // held the GUI thread up
         connect(w, &QQuickWindow::afterAnimating, this, [this] {
@@ -336,10 +353,14 @@ public:
         if (g_handlerBefore) return;
         g_handlerBefore = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &ctx, const QString &msg) {
             labLog(QString("%1 %2").arg(ctx.category ? ctx.category : "").arg(msg));
-            // not ours to fix: art that isn't there, LG's platform announcing the video window or a launch
-            // that came while the app was closing, and Qt's network code complaining about itself when a
-            // reply is aborted as it fails
-            static const QStringList noise { "QML Image:", "[Client:", "QNetworkReplyImplPrivate::error", "libpng warning", "Got relaunch on closing" };
+            // not ours to fix: art that isn't there, LG's platform announcing the video window, qml-runner
+            // asking Wayland to activate the window as the app is launched again while it runs (it comes
+            // back all the same), and Qt's network code complaining about itself when a reply is aborted
+            // as it fails.
+            // ("Got relaunch on closing" was in this list. It was no noise: qml-runner was refusing every
+            // launch of the running app, because the root it had loaded was a window that never showed.
+            // main.qml has the story.)
+            static const QStringList noise { "QML Image:", "[Client:", "QNetworkReplyImplPrivate::error", "libpng warning", "Wayland does not support QWindow::requestActivate()" };
             bool ours = type != QtDebugMsg && type != QtInfoMsg;
             for (const QString &n : noise) ours = ours && !msg.contains(n);
             if (ours) {

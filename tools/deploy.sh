@@ -1,6 +1,7 @@
 #!/bin/bash
 # Packages app/ (with the built plugins), installs it on the TV and launches it, then
-# prints the load result from the lab server. Needs ares-cli on Node 20 and the TV set up as device "tv".
+# prints the load result from the lab server; with none, it asks the TV why the app doesn't load
+# (app/why.qml). Needs ares-cli on Node 20 and the TV set up as device "tv".
 # usage: tools/deploy.sh [seconds to wait]
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd); cd "$REPO"
@@ -22,6 +23,21 @@ ares-package --no-minify "$tmp/app" -o .lab/ipk >/dev/null || exit 1
 ls -t .lab/ipk/*.ipk 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
 ares-launch -d tv --close "$id" >/dev/null 2>&1
 ares-install -d tv ".lab/ipk/${id}_${next}_all.ipk" >/dev/null || exit 1
-rm -rf "$tmp"
+said() { for f in $(find .lab/reports -name '*loadreport*' -newer "$mark"); do echo "$(basename $f): $(cat $f)"; done; }
 mark=$(mktemp); ares-launch -d tv "$id" >/dev/null; sleep "${1:-6}"
-for f in $(find .lab/reports -name '*loadreport*' -newer "$mark"); do echo "$(basename $f): $(cat $f)"; done; rm -f "$mark"
+out=$(said)
+if [ -z "$out" ]; then
+  # No word from the app: it closed as it opened (main.qml's root is the app itself, and a file the TV's
+  # Qt won't take is no app). The same files with why.qml for their main say what is wrong; that is
+  # what is on the TV until the next deploy.
+  echo "no load report: asking why"
+  why="${ver%.*}.$(((build + 1) % 100000))"
+  python3 - "$tmp/app/appinfo.json" "$why" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["version"] = sys.argv[2]; d["main"] = "why.qml"; json.dump(d, open(p, "w"), indent=2)
+PY
+  ares-package --no-minify "$tmp/app" -o "$tmp" >/dev/null && ares-launch -d tv --close "$id" >/dev/null 2>&1
+  ares-install -d tv "$tmp/${id}_${why}_all.ipk" >/dev/null && ares-launch -d tv "$id" >/dev/null && sleep "${1:-6}"
+  out=$(said)
+fi
+echo "$out"; rm -rf "$tmp" "$mark"
