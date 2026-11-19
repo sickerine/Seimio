@@ -69,11 +69,17 @@ QtObject {
     onReadyChanged: Qt.callLater(swap.step)
     onFailedChanged: Qt.callLater(swap.step)
     Component.onCompleted: step()
+    // A step asked for (Qt.callLater) can come after its owner has been let go: a bar's segment taken out
+    // of the bar in the same breath as its label changed. Nothing here can be called by then, and the
+    // step threw. (`over` reads as true, or as nothing at all, once that has happened.)
+    property bool over: false
+    Component.onDestruction: over = true
 
     property bool gone: true                // out for nothing being wanted (or nothing shown yet), not on the way to another
     property var gaveUp: null               // crossing: the want whose content couldn't be had
 
     function step() {
+        if (over !== false) return;
         if (cross) { stepCross(); return }
         var w = want;
         if (w === null) {                               // nothing wanted: out at once

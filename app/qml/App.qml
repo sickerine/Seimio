@@ -48,19 +48,19 @@ WebOSWindow {
     onTabChanged: tabs.currentIndex = tabs.placeOf(tab)
     property alias searchText: searchBar.text
     readonly property bool animeTab: tab === 1
-    // Movies, Series and the Library are one screen (BrowseScreen), each a list of Account's; `browsed` is
-    // the last one up, which the screen goes on showing while it fades
-    readonly property string browsing: ["", "", "movie", "series", "library"][tab] || ""
+    // Movies, Series and the Library are a screen each (BrowseScreen), each a list of Account's: a tab's
+    // screen goes as the next one comes, whichever two they are. `browse` is the one whose tab is up.
+    readonly property var browsings: ["movie", "series", "library"]
+    readonly property string browsing: ["", ""].concat(browsings)[tab] || ""
     readonly property bool browseTab: browsing !== ""
-    property string browsed: ""
-    onBrowsingChanged: if (browsing) browsed = browsing
+    readonly property Item browse: (browsers.count, browsers.itemAt(Math.max(0, browsings.indexOf(browsing))))
     readonly property bool searchTab: tab === 5              // the tab bar turns into the search bar; its results below
     onSearchTabChanged: { if (searchTab) searchBar.zone = 0; probe.captures() }    // reached from the tab bar: to type
     // the kinds of title a search finds, as its bar names them and as Catalog does
     readonly property var searchKinds: [["Anime", "anime"], ["Series", "series"], ["Movies", "movie"]]
     readonly property bool bare: onHome && (browsing === "library" || (searchTab && !search.any))     // a tab with no title above its grid: no info, the backdrop frosted
-    readonly property bool scrolled: animeTab ? anime.scrolled : browseTab ? browse.scrolled : searchTab ? search.scrolled : home.scrolled
-    readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? browse.focusItem : searchTab ? search.focusItem : home.focusItem
+    readonly property bool scrolled: animeTab ? anime.scrolled : browseTab ? !!browse && browse.scrolled : searchTab ? search.scrolled : home.scrolled
+    readonly property var focusItem: animeTab ? anime.focusItem : browseTab ? (browse ? browse.focusItem : null) : searchTab ? search.focusItem : home.focusItem
     property var displayItem: null
     // A search's film or series is a name, a year and pictures (`thin`): the rest of what the info shows
     // is its page's. So it is shown as its page's item, once that is in (one version of a title's info,
@@ -582,7 +582,8 @@ WebOSWindow {
                      streamQueries: streams.queries(),      // the same for a play: the list, the decision and the link (Streams.queries)
                      art: { loads: ArtCache.loads, reloads: ArtCache.reloads, heldMb: Math.round(ArtCache.held / 1048576) },
                      account: { signedIn: account.signedIn, link: account.link.state || "", code: account.link.code || "", menu: app.profileOpen },
-                     tab: app.tab, browse: { what: browse.what, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading },
+                     tab: app.tab, browse: browse ? { what: browse.what, up: browse.shown, mine: browse.mine, row: browse.row, rows: browse.page.count || 0, loading: !!browse.page.loading,
+                                                        chosen: browse.filters.map(function (f) { return f.options[f.current] }), list: browse.menuBar ? browse.menuBar.filter.key : "" } : null,
                      redraws: Remote.tallies, watching: catalog.continueWatching.slice(0, 8).map(function (i) { return i.id + " " + i.episode + " " + (i.video || "-") + " " + i.progress }), resume: showPage.resumeLabel, header: showPage.headerState(), hero: hero.labState(),
                      search: { text: searchBar.text, kind: search.kind, zone: searchBar.zone, cursor: searchBar.kindBar.cursor, row: search.row, found: search.found, counts: app.searchKinds.map(function (k) { return search.count(k[1]) }).join(","), shownLag: app.shownLag },
                      library: { item: app.libraryItem ? app.libraryItem.id : "", "in": !!app.libraryItem && account.inLibrary(app.libraryItem.id), watched: !!app.libraryItem && account.watched(app.libraryItem.id), reported: app.reported, stale: app.watchingStale },
@@ -766,18 +767,23 @@ WebOSWindow {
                 onHeld: app.openTitleMenu(item, rect)
                 onSaid: app.say(text)
             }
-            BrowseScreen {
-                id: browse
-                width: parent.width; height: parent.height
-                focus: app.layer === "home" && app.browseTab && !app.playMenu
-                shown: app.onHome && app.browseTab
-                account: account
-                what: app.browsed
-                glassSource: backdropFrost
-                onExitTop: app.layer = "tabs"
-                onRowChanged: probe.act("browse row")
-                onActivated: app.open()
-                onHeld: app.openTitleMenu(item, rect)
+            Repeater {
+                id: browsers
+                model: app.browsings
+                readonly property var account: account      // (for the screens: in one, `account` is its own)
+                BrowseScreen {
+                    width: parent.width; height: parent.height
+                    what: modelData
+                    readonly property bool up: app.browsing === what
+                    focus: app.layer === "home" && up && !app.playMenu
+                    shown: app.onHome && up
+                    account: browsers.account
+                    glassSource: backdropFrost
+                    onExitTop: app.layer = "tabs"
+                    onRowChanged: if (up) probe.act("browse row")
+                    onActivated: app.open()
+                    onHeld: app.openTitleMenu(item, rect)
+                }
             }
             SearchScreen {
                 id: search

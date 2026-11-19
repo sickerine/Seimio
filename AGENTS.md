@@ -451,11 +451,31 @@ format list differs from the TV, so neither settles anything.
   `Icon.inkLeft`/`inkRight`, and centre a label and anything under it (a progress bar) as one block.
   Measure the gaps on a 2x render (see the gallery) rather than trusting box maths.
 - Nothing shifts once shown: give placeholders the final size, and fade art in when it's decoded.
-- A filter with two choices is a switch, both in sight; one with more shows its choice and drops a
-  list (`FilterBar`, his rule of 2026-11-19: "tabs if it has two options or fewer"). A bar that
-  drops a list is as wide as its longest choice (`SegmentedBar`'s `room`), so the bars after it stay
-  where they are when the choice changes: sized by its label, "Chart" turning to "Schedule" pushed
-  three bars along in one frame.
+- A filter with three choices or fewer shows them all, as segments; one with more shows its choice
+  and drops a list (`FilterBar`, his rule of 2026-11-19: "make it 3 instead of 2"). A bar that drops
+  a list is as wide as its choice and goes to another choice's width in a glide (`SegmentedBar`: the
+  label fades out, the segment's width eases, the new label comes in), the bars after it sliding
+  along. A segment has room for the wider of the label on show and the one coming: a longer one's
+  room opens at once, a shorter one's closes when the old label has gone (closing at once, the
+  chevrons crossed a label still there to read). Never a width fixed for its longest choice (built
+  the same day and turned down: "Why are we prebaking the width"), and never a new label's width
+  taken at a stroke ("Chart" turning to "Schedule" pushed three bars along in one frame).
+- A bar's selection and cursor stand on the segment they are on, placed by it (`SegmentedBar.edgeAt`),
+  not by edges that ease towards it: eased, they grew out from nothing each time a bar got its
+  segments (a list coming in, a tab coming up) and trailed a segment whose width changed. Only a
+  move from one segment to another glides; a bar given another filter is put on its choice at once
+  (`put`).
+- Every tab has a screen of its own, and one tab goes as the next comes, whichever two they are:
+  Movies, Series and the Library are a `BrowseScreen` each. One screen that changes its list where
+  it stands waits for the next list with the last one's rows up, under a title that is already the
+  next tab's: Movies to Series hung and flashed, and the Library's posters stood under the Series
+  tab's title. A screen that is not up keeps its rows and its filters as they stood and takes no
+  list (one that came in for a tab already left made three rows of cards at once, out of sight:
+  37 ms of the GUI thread in the next tab's entrance); it takes what `Account` has as it comes up.
+  `Account.browsing` is the last list that came in, never an empty one of the list just asked for,
+  and a tab's own choices come back with it: Discover is one core model for films and series and
+  starts a type on its first list with no genre, so `Account.browse` selects the type's list and
+  genre again, by name.
 - A control that has no say where you are is not in the row: it is not dimmed (the order in the
   Anime tab's schedule, the view for a season with nothing airing). Put the one that comes and goes
   last, so nothing moves for it; where it can't be last, its place closes after it has faded

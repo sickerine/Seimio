@@ -3,11 +3,10 @@
 // `model` entries are strings, or { label, icon } for icon-only segments, or { label, trailing } for a
 // label with a small icon after it (chevrons on a segment that opens a menu), or { label, faint } for a
 // label drawn dim (a kind a search found nothing of: it can still be chosen); a new model of the same
-// length relabels the segments in place. { label, trailing, room } is a choice that opens a list: `room`
-// is every label it may come to show, and the segment is as wide as the longest, so the bar keeps its
-// width and what stands after it keeps its place when the choice changes (a select box's way: sized by
-// its label, "Chart" turning to "Schedule" pushed the three bars after it along in one frame). Its label
-// starts where the longest would and its chevrons stay at the end. Other keys, and Left or Right past an end, pass on to the
+// length relabels the segments in place: the old label goes out and the new one comes in (Swap), and the
+// segment goes from one's width to the other's meanwhile, so the bar, and what stands after it in a row,
+// glide to their new size and place. (Relabelled at a stroke, "Chart" turning to "Schedule" pushed the
+// three bars after it along in one frame.) Other keys, and Left or Right past an end, pass on to the
 // parent. `source` is what the glass blurs; `sx`/`sy` the bar's position in it (see Glass).
 // Moving selects, unless `selectOnOk`: then a cursor walks the segments and OK selects the one under it
 // (bars side by side, see BarRow). The selection is a soft pill that stays on its segment; the cursor is
@@ -58,7 +57,17 @@ FocusScope {
     height: barHeight
 
     Shadow { opacity: bar.shadow; drop: 8 }
-    FontMetrics { id: lettering; font.family: Theme.face; font.pixelSize: bar.fontSize; font.weight: Font.DemiBold }      // (a segment's `room`)
+    // The left or right edge of the segment at `place`: a segment's index, or between two for a place on
+    // the way from one to the other.
+    function edgeAt(place, right) {
+        var n = segmentItems.count;
+        var a = segmentItems.itemAt(Math.max(0, Math.min(n - 1, Math.floor(place)))), b = segmentItems.itemAt(Math.max(0, Math.min(n - 1, Math.ceil(place))));
+        if (!a || !b) return glass.inset;
+        var ea = a.x + (right ? a.width : 0), eb = b.x + (right ? b.width : 0);
+        return glass.inset + ea + (eb - ea) * (place - Math.floor(place));
+    }
+    // onto a segment at once, with nothing gliding there (a bar given another filter)
+    function put(index) { glass.snap = true; currentIndex = index; glass.snap = false }
     Glass {
         id: glass
         source: bar.source
@@ -66,22 +75,29 @@ FocusScope {
         sx: bar.sx; sy: bar.sy
         width: segments.width + 2 * inset; height: bar.barHeight; radius: height / 2
         readonly property int inset: Math.round(bar.barHeight * 0.13)
-        // the cursor's segment and its edges, which stretch like liquid as it moves; `snap`: the next
-        // change is a jump (onto the segment it's walked in at, or back onto the selection out of sight)
+        // Where the cursor is, as a place among the segments (a segment's index, or between two on the
+        // way), one place for each of its edges: the leading one moves first, so the pill stretches like
+        // liquid. The edges are worked out from the segments as they are, so a segment that changes size
+        // or comes in under the pill is followed as it is. (The edges were what moved: a bar coming in
+        // with its filter, or a choice relabelled, had its pill stretch out to its segment in sight.)
+        // `snap`: the next change is a jump (onto the segment it's walked in at, or back onto the
+        // selection out of sight).
         property bool snap: false
-        property Item target: segmentItems.count, segmentItems.itemAt(bar.cursor)
-        property real edgeL: target ? inset + target.x : inset
-        property real edgeR: target ? inset + target.x + target.width : inset
-        Behavior on edgeL { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
-        Behavior on edgeR { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
-        // the selection
+        property real placeL: bar.cursor
+        property real placeR: bar.cursor
+        Behavior on placeL { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
+        Behavior on placeR { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
+        readonly property real edgeL: (segmentItems.count, bar.edgeAt(placeL, false))
+        readonly property real edgeR: (segmentItems.count, bar.edgeAt(placeR, true))
+        // the selection, placed the same way
         Rectangle {
             id: chosen
-            readonly property Item at: segmentItems.count, segmentItems.itemAt(bar.currentIndex)
-            property real edgeL: at ? glass.inset + at.x : glass.inset
-            property real edgeR: at ? glass.inset + at.x + at.width : glass.inset
-            Behavior on edgeL { NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
-            Behavior on edgeR { NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
+            property real placeL: bar.currentIndex
+            property real placeR: bar.currentIndex
+            Behavior on placeL { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 420 : 240; easing.type: Theme.ease } }
+            Behavior on placeR { enabled: !glass.snap; NumberAnimation { duration: bar.moveDir > 0 ? 240 : 420; easing.type: Theme.ease } }
+            readonly property real edgeL: (segmentItems.count, bar.edgeAt(placeL, false))
+            readonly property real edgeR: (segmentItems.count, bar.edgeAt(placeR, true))
             x: edgeL; width: edgeR - edgeL
             y: glass.inset; height: glass.height - 2 * glass.inset; radius: height / 2
             color: "#2effffff"
@@ -112,24 +128,35 @@ FocusScope {
                     readonly property string icon: typeof m === "string" ? "" : (m && m.icon || "")
                     readonly property string trailing: typeof m === "string" ? "" : (m && m.trailing || "")
                     readonly property bool faint: typeof m !== "string" && !!(m && m.faint)
-                    readonly property var room: typeof m === "string" ? [] : (m && m.room || [])
-                    // its label's width, or the longest it may come to have
-                    readonly property real lettered: { var w = text.implicitWidth; for (var i = 0; i < room.length; i++) w = Math.max(w, lettering.advanceWidth(room[i])); return w }
                     readonly property bool current: bar.currentIndex === index
                     readonly property color ink: bar.showFocus && bar.cursor === index ? Theme.inkOnLight : Theme.ink
-                    // the label and its trailing icon, centred as one block by what's drawn
+                    // The label on show: the model's, once it is in. One that replaces another comes in as that
+                    // one goes out (the first is simply there).
+                    property Swap named: Swap { want: label || null; appearMs: 0 }
+                    // Room for the label on show and for the one the model has, whichever is wider: a
+                    // longer label's room opens as the old one goes out, and a shorter one's closes once
+                    // the old one has gone. (Going straight to the new label's width, a bar that shrank
+                    // drew its chevrons across the old label while it was still there to read.) The
+                    // model's label is measured by a twin of the Text that shows it, out of sight:
+                    // measured apart, in the selection's weight, a segment that was not the selection
+                    // was made 1.2 px too wide and shrank to its label in sight.
+                    Text { id: sized; visible: false; text: parent.label; font: text.font }
+                    readonly property real lettered: Math.max(sized.implicitWidth, text.implicitWidth)
+                    // the label and its trailing icon, centred as one block by what's drawn: the label starts
+                    // half the padding in and the icon ends half the padding from the end, which is the same
+                    // thing at rest and holds each to its own end while the width between them changes
                     readonly property real block: lettered + (trailing ? 8 + tail.inkRight - tail.inkLeft : 0)
                     width: icon !== "" ? bar.barHeight : block + bar.segmentPad
+                    Behavior on width { NumberAnimation { duration: Theme.settle; easing.type: Theme.ease } }
                     height: segments.height
                     Text {
                         id: text
                         visible: parent.icon === ""
-                        x: (parent.width - parent.block) / 2; anchors.verticalCenter: parent.verticalCenter
-                        text: parent.label; color: parent.ink
-                        opacity: parent.faint && !(bar.showFocus && bar.cursor === index) ? 0.42 : 1      // holds: only dims; the label is the same (under the cursor it is whole: grey on the white pill read as switched off)
+                        x: bar.segmentPad / 2; anchors.verticalCenter: parent.verticalCenter
+                        text: parent.named.shown || ""; color: parent.ink
+                        opacity: parent.named.level * (parent.faint && !(bar.showFocus && bar.cursor === index) ? 0.42 : 1)      // holds: `named` (Swap) is what the label comes and goes by; `faint` only dims (under the cursor it is whole: grey on the white pill read as switched off)
                         font.family: Theme.face; font.pixelSize: bar.fontSize; font.weight: parent.current ? Font.DemiBold : Font.Medium
                         Behavior on color { ColorAnimation { duration: 200 } }
-                        Behavior on opacity { NumberAnimation { duration: 200 } }
                     }
                     Icon { visible: parent.icon !== ""; name: parent.icon; anchors.centerIn: parent; color: parent.ink }
                     Icon {
@@ -137,7 +164,7 @@ FocusScope {
                         visible: parent.trailing !== ""
                         name: parent.trailing; color: parent.ink
                         width: Math.round(bar.fontSize * 28 / 26); height: width     // as icons are to a 26 px label in a Button
-                        x: text.x + parent.lettered + 8 - inkLeft; anchors.verticalCenter: parent.verticalCenter
+                        x: parent.width - bar.segmentPad / 2 - inkRight; anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }

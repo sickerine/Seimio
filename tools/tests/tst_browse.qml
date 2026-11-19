@@ -26,6 +26,8 @@ Item {
     }
     // on screen (a TestCase's own children are not), so new rows fade the old ones out first, as in the app
     BrowseScreen { id: screen; width: 1920; height: 1080; account: account; what: "library"; shown: true }
+    // another tab's screen, not up
+    BrowseScreen { id: films; width: 1920; height: 1080; account: account; what: "movie" }
 
     TestCase {
     name: "BrowseScreen"
@@ -34,6 +36,31 @@ Item {
     function titles() { var out = []; screen.rows.forEach(function (r) { r.items.forEach(function (i) { out.push(i.id) }) }); return out }
     function settle() { tryVerify(function () { return titles().join(",") === account.all.map(function (i) { return i.id }).join(",") }, 3000) }
 
+    // A screen keeps what it showed while Account browses another tab's list: its rows and its filters.
+    // (One screen for the three tabs took each list as it came, so the Library's posters stood under
+    // the Series tab's title until the series were in.)
+    function test_keepsItsListWhileAnotherIsBrowsed() {
+        account.show(ids(14)); settle();
+        films.shown = true;                                 // the Movies tab up, and its list in
+        account.all = ids(5, 500).map(function (id) { return { id: id, name: id, title: id, art: "" } });
+        account.browsing = { what: "movie", filters: [{ key: "genre", options: ["Top", "Action"], current: 1 }], count: 5, more: false, loading: false };
+        tryVerify(function () { return films.rows.length === 1 && films.filters.length === 1 });
+        compare(titles().join(","), ids(14).join(","), "the Library's titles, with the films in Account's hand");
+        films.shown = false;                                // and the Library's again
+        account.show(ids(14)); settle(); wait(50);
+        compare(films.rows[0].items.map(function (i) { return i.id }).join(","), ids(5, 500).join(","), "the films, with the Library in it again");
+        compare(films.filters[0].key, "genre", "and their filters");
+    }
+    // A screen that is not up takes nothing: a list that comes in for it then is taken as it comes up.
+    // (Taken out of sight, its rows of cards were made in one go, in the frames of another tab's entrance.)
+    function test_aListThatCameInWhileItWasAwayIsTakenAsItComesUp() {
+        account.show(ids(14)); settle();
+        screen.shown = false;
+        account.show(ids(7, 300)); wait(100);
+        compare(titles().join(","), ids(14).join(","), "as it was, out of sight");
+        screen.shown = true; settle();
+        compare(screen.rows.length, 1);
+    }
     function test_rowsFollowTheList() {
         account.show(ids(14)); settle();
         compare(screen.rows.length, 2);

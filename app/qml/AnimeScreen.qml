@@ -233,9 +233,9 @@ FocusScope {
         focus: anime.row < 0
         Behavior on y { NumberAnimation { duration: 480; easing.type: Theme.ease } }
         // The controls, in a row walked by one cursor: the season, the view, a genre, the format and the
-        // order. One with two choices is a switch, both in sight (the view); one with more shows its
-        // choice and drops a list, and is as wide as its longest choice, so nothing after it moves when
-        // the choice changes (FilterBar).
+        // order. One with three choices or fewer has them all in sight (the view); one with more shows
+        // its choice and drops a list (FilterBar), and goes to another choice's width in a glide, the
+        // bars after it with it.
         // A control that has no say is not in the row: the view for a season with nothing airing (the
         // ones after it close up, Fade's `gap`), and the order in the schedule, which is in air-time
         // order (the last in the row, so nothing moves for it).
@@ -253,7 +253,7 @@ FocusScope {
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 27; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: [{ label: anime.catalog ? anime.catalog.seasonAsked : "", trailing: "chevrons", room: filter.options }]
+                model: [{ label: anime.catalog ? anime.catalog.seasonAsked : "", trailing: "chevrons" }]
                 onTriggered: anime.openList(seasonBar)
             }
             Fade {
@@ -272,7 +272,7 @@ FocusScope {
                 source: anime.glassSource; preblurred: true
                 sx: controls.x + x; sy: controls.y + y
                 barHeight: 64; fontSize: 22; segmentPad: 38; shadow: anime.scrolled ? 0.8 : 0
-                model: [{ label: anime.genre || "All genres", trailing: "chevrons", room: filter.options }]
+                model: [{ label: anime.genre || "All genres", trailing: "chevrons" }]
                 onTriggered: anime.openList(genreBar)
             }
             FilterBar {

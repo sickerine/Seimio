@@ -10,6 +10,7 @@
 // `seeked`, `paused`, `stopped`), and the core decides what is watched, where Continue Watching resumes and
 // when a series moves on to its next episode, and syncs it. A seek is said as a seek: time jumped over is
 // not time watched.
+#include <QHash>
 #include <QSet>
 #include <QTimer>
 #include <QVariantMap>
@@ -28,6 +29,10 @@ class Account : public QObject {
     Q_PROPERTY(QVariantMap watchedTitles READ watchedTitles NOTIFY libraryChanged)
     // What a grid shows (`browse`): the library, or one of Discover's types ("movie", "series").
     //   browsing   { what, filters: [{ key, options: [names], current }], count, more, loading }
+    //              the last list that came in: asked for another, it is the one before until that one's
+    //              page is read, so a screen has a list of its own to show or nothing new at all (set
+    //              to an empty list of the new name at the asking, a tab coming back up lost its
+    //              filters and dimmed its rows until the core answered)
     //   ids()   its titles' ids, in order: what a screen tells a changed list from a longer one by
     //   itemsOf(ids)   those of its titles, as the screens show a title (a screen keeps the order it
     //                  shows while it is looked at, so it asks by id)
@@ -70,17 +75,36 @@ public:
     Q_INVOKABLE QStringList ids() const { return m_ids; }
     Q_INVOKABLE void browse(const QString &what) {
         if (what == m_browse) return;
-        m_page.stop();                  // (a page still being read is the grid's before)
-        m_browse = what; m_items.clear(); m_ids.clear(); m_browsing = QVariantMap { { "what", what }, { "filters", QVariantList() }, { "count", 0 }, { "more", false }, { "loading", true } };
-        emit browsingChanged();
-        if (what.isEmpty()) return;
-        // the library keeps the choice it had; Discover is asked for the type (a list and a genre are that type's)
-        if (what != "library") Core::instance()->select("discover.type", what.toUtf8());
-        else if (!m_libraryAsked) { m_libraryAsked = true; Core::instance()->select("library.sort", "0"); }
-        else browsed();
+        m_page.stop();                  // (a page still being read is the list's before)
+        m_browse = what;
+        // The library keeps the choice it had. Discover is one model for films and series: asked for a
+        // type it starts on that type's first list with no genre, so what was chosen for the type is
+        // chosen again with it. The core takes each choice as it is made, and loads the last.
+        if (what == "library") {
+            if (!m_libraryAsked) { m_libraryAsked = true; Core::instance()->select("library.sort", "0"); }
+            else browsed();
+            return;
+        }
+        Core::instance()->select("discover.type", what.toUtf8());
+        // (by name, among the options the core has for the type now: with another account or another
+        // addon installed a place in the list is another choice. The page is a few names until its
+        // titles are in, so it is read here.)
+        for (const char *filter : { "list", "genre" }) {
+            const QString name = m_chosen[what].value(filter);
+            const QJsonArray options = name.isEmpty() ? QJsonArray() : Core::view("discover.page").object().value(filter).toArray();
+            for (int i = 0; i < options.size(); i++)
+                if (options[i].toObject().value("name").toString() == name) { Core::instance()->select(QByteArray("discover.") + filter, QByteArray::number(i)); break; }
+        }
     }
     Q_INVOKABLE void choose(const QString &filter, int option) {
-        if (!m_browse.isEmpty()) Core::instance()->select(((m_browse == "library" ? "library." : "discover.") + filter).toUtf8(), QByteArray::number(option));
+        if (m_browse.isEmpty()) return;
+        const bool library = m_browse == "library";
+        if (!library) {
+            if (filter == "list") m_chosen[m_browse].remove("genre");       // (another list's genres are its own)
+            for (const QVariant &f : m_browsing.value("filters").toList())
+                if (f.toMap().value("key") == filter) m_chosen[m_browse][filter] = f.toMap().value("options").toStringList().value(option);
+        }
+        Core::instance()->select((library ? "library." : "discover.") + filter.toUtf8(), QByteArray::number(option));
     }
     Q_INVOKABLE void more() {
         if (m_browse.isEmpty() || !m_browsing.value("more").toBool() || m_browsing.value("loading").toBool()) return;
@@ -266,6 +290,7 @@ private:
     query::Observer<Read> m_account { &m_queries, latest<Read>() };
     query::Observer<Page> m_page { &m_queries, latest<Page>() };
     QString m_browse;
+    QHash<QString, QHash<QString, QString>> m_chosen;       // Discover's choices, by type: a filter's key to its option's name
     QVariantMap m_browsing;
     QVariantList m_items;
     QStringList m_ids;                              // m_items' ids, for ids()
