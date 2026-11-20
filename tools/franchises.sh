@@ -6,25 +6,11 @@
 # With no ids it takes AniList's most popular anime. Prints each show's tabs and what it found; exits 1
 # on a broken promise, and on a show or a related title that could not be put together.
 # (The Mac's Qt can't make a TLS connection to arm.haglund.dev, where a franchise starts, so a relay runs
-# beside it for the length of the run, asking through curl: native/src/http.h, SEIMIO_VIA.)
+# beside it for the length of the run: tools/arm-relay.py.)
 # usage: tools/franchises.sh [id...]     ids as the app has them: anilist:101280, kitsu:49235
 REPO=$(cd "$(dirname "$0")/.." && pwd); OUT="$REPO/.lab/franchises"; mkdir -p "$OUT"
 PORT=8099
-python3 -I - "$PORT" <<'PY' &
-import sys, subprocess, http.server
-class Relay(http.server.BaseHTTPRequestHandler):
-    # (through curl: this Python's TLS is too old for the host as well)
-    def go(self, body=None):
-        cmd = ["curl", "-s", "-m", "30", "-A", "seimio/0.1", "-X", self.command, "-w", "\n%{http_code}", "https://arm.haglund.dev" + self.path]
-        if body is not None: cmd += ["-H", "Content-Type: application/json", "--data-binary", "@-"]
-        out = subprocess.run(cmd, input=body, capture_output=True).stdout
-        data, _, code = out.rpartition(b"\n")
-        self.send_response(int(code or 502)); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
-    def do_GET(self): self.go()
-    def do_POST(self): self.go(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-    def log_message(self, *a): pass
-http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Relay).serve_forever()
-PY
+python3 -I "$REPO/tools/arm-relay.py" "$PORT" &
 relay=$!; trap 'kill $relay 2>/dev/null; wait $relay 2>/dev/null' EXIT; sleep 1
 run() {       # ids, comma separated: one line of JSON a franchise
   rm -rf "$OUT/account"; mkdir -p "$OUT/account"

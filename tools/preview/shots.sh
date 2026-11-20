@@ -10,7 +10,12 @@
 # usage: tools/preview/shots.sh [--approve | --record] [state...]
 P=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$P/../.." && pwd); OUT="$REPO/.lab/shots"; mkdir -p "$OUT"
 approve=0; [ "$1" = --approve ] && { approve=1; shift; }
-[ "$1" = --record ] && { export SEIMIO_RECORD=1; shift; }
+# (recording, arm.haglund.dev goes through tools/arm-relay.py: the Mac's Qt can't reach it, and without it a
+# search, the season and a show page record what they show with no Kitsu ids: no logos, one season)
+if [ "$1" = --record ]; then
+  export SEIMIO_RECORD=1 SEIMIO_VIA="arm.haglund.dev=http://127.0.0.1:8099"; shift
+  python3 -I "$REPO/tools/arm-relay.py" 8099 & relay=$!; trap 'kill $relay 2>/dev/null; wait $relay 2>/dev/null' EXIT; sleep 1
+fi
 export SEIMIO_REPLAY="$P/api"
 # finds an item in the window's tree by a test (screen ids aren't reachable from the preview)
 FIND_JS='function f(o, t) { if (o && t(o)) return o; for (var i = 0; o && i < o.children.length; i++) { var r = f(o.children[i], t); if (r) return r } return null }

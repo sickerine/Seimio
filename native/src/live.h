@@ -135,7 +135,8 @@ public:
                 const bool more = found.value("pageInfo").toObject().value("hasNextPage").toBool();
                 auto shows = std::make_shared<QJsonArray>();
                 for (const QJsonValue &v : found.value("media").toArray()) if (!v.toObject().value("isAdult").toBool()) *shows << shown(v.toObject(), false);
-                kitsuIds(shows, [shows, more, call] { call.ok(QJsonObject { { "shows", *shows }, { "more", more } }); });       // (what a result's watched check goes by)
+                // (`kitsu`: what a result's watched check goes by, and where its logo and fanart are, as a season's)
+                kitsuIds(shows, [this, shows, more, call] { art(shows, [shows, more, call] { call.ok(QJsonObject { { "shows", *shows }, { "more", more } }); }); });
             });
         }, kept, [done](std::shared_ptr<const QJsonObject> page, const query::Failure &) {
             done(page ? page->value("shows").toArray() : QJsonArray(), page && page->value("more").toBool(), !!page);
