@@ -39,6 +39,20 @@ TestCase {
         compare(tracks.choose([{ id: 0, type: "audio", lang: "eng", default: true }], "fallback").audio, 0, "no Japanese: the file's default plays");
         compare(tracks.preferences("fallback").audio, "jpn", "and Japanese stays the choice");
     }
+    // A show's default wins over its group's, list by list: what the show hasn't set comes from the group,
+    // and another show (or a film, with no show) has only the group's.
+    function test_aShowsDefaultOverTheGroups() {
+        tracks.prefer("showGroup", "audio", "eng", "");
+        tracks.prefer("showGroup", "sub", "off", "");
+        tracks.prefer("series:tt9335498", "audio", "jpn", "");
+        var c = tracks.choose(salieri, "showGroup", "tt9335498");
+        compare(c.audio, 1, "the show's Japanese audio");
+        compare(c.subsOff, true, "the group's subtitles: the show set none");
+        compare(tracks.choose(salieri, "showGroup", "tt0000001").audio, 0, "another show: the group's English");
+        compare(tracks.choose(salieri, "showGroup").audio, 0, "a film: the group's English");
+        tracks.prefer("series:tt9335498", "audio", "", "");
+        compare(tracks.choose(salieri, "showGroup", "tt9335498").audio, 0, "cleared: the group's again");
+    }
     function test_subtitlesOffAndOn() {
         tracks.prefer("other", "sub", "off", "");
         var c = tracks.choose(salieri, "other");

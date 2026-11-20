@@ -176,6 +176,13 @@ WebOSWindow {
     // `show` only when there is something to browse: a film, or a show whose whole run is one episode, is
     // held alone
     function hold(item, show, video) { held = { item: item, show: episodesIn(show) > 1 ? show : null, video: video || (item ? item.video : "") || "" } }
+    // The show a title in hand is of, all of it, as one key however it was reached (the Anime tab,
+    // Continue Watching, the calendar, a search) and whichever season, film or special: its IMDb series,
+    // else (an anime IMDb doesn't have) its first entry. None for a film on its own.
+    function seriesOf(h) {
+        if (!h || !h.show) return "";
+        return h.show.imdb || (/^tt/.test(h.item.id) ? h.item.id : h.show.entries && h.show.entries.length ? h.show.entries[0].id : h.item.id);
+    }
     // Home's selection as the title in hand: an anime's franchise when it's in
     function holdSelection() {
         commit();
@@ -1010,6 +1017,8 @@ WebOSWindow {
             onSwitchStream: { app.playTarget.resumeMs = player.position; streams.playRow(row) }
             // anime by its Kitsu id; everything else keeps its own track choices
             group: probe.variant.playGroup || (streams.anime ? "anime" : "other")       // lab: the play list's clips as anime
+            series: app.seriesOf(app.held)
+            seriesName: app.held && app.held.show ? app.held.show.name || app.held.item.name : ""
             focus: app.layer === "player"
             active: app.layer === "player"
         }

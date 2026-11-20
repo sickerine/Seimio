@@ -19,6 +19,8 @@ FocusScope {
     property var streams                 // Seimio.Data Streams, for what the AI pick is doing
     property var tracks                  // Seimio.Data Tracks: which audio and subtitles play, and the choices
     property string group: "other"       // whose track choices apply: "anime" or "other"
+    property string series: ""           // the show it is of, all of it (App.seriesOf); none for a film
+    property string seriesName: ""
     property var trackList: []           // the file's audio and subtitle tracks, as Tracks takes them
     property var addonSubs: []           // subtitles from the OpenSubtitles addon, after the file's own
     property bool pickedSub: false       // a subtitle was picked in the menu for this file
@@ -106,7 +108,7 @@ FocusScope {
     readonly property real duration: media.duration
     readonly property string failure: media.failure
     readonly property var seen: media.seen
-    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " zone " + zone + " segs " + JSON.stringify(segments) + " now " + (segmentNow ? segmentNow.kind : "-") + " next " + (upNextMode || "-") + ":" + Math.round(upNextElapsed * 100)
+    function subtitleInfo() { return subs.info() + " addon " + addonSubs.length + " delay " + subs.delay + " tee " + tee.stats() + " audioTrack " + media.audioTrack + " prefs " + JSON.stringify(tracks.preferences(group)) + " show " + JSON.stringify(series ? tracks.preferences("series:" + series) : null) + " zone " + zone + " segs " + JSON.stringify(segments) + " now " + (segmentNow ? segmentNow.kind : "-") + " next " + (upNextMode || "-") + ":" + Math.round(upNextElapsed * 100)
         + " binge " + (stream ? stream.bingeGroup : "") + " favs " + JSON.stringify(tracks.favorites("sub")) + " fav-menu " + favoriteMenu + " seeklog " + JSON.stringify(seekLog) + " start " + startMs + " chapters " + chapters.length + " skip " + JSON.stringify(skipTimes)
         // where OK would land: the button under the cursor, and in a list its level, row and that row's track ("other", "off")
         + " button " + buttons.currentIndex + " menu " + menuLevel + ":" + menu.currentIndex + ":" + (menuTracks[menu.currentIndex] ? menuTracks[menu.currentIndex].id || menuTracks[menu.currentIndex] : "off")
@@ -261,7 +263,7 @@ FocusScope {
         onTriggered: if (page.active && !media.playing && !media.failure && !media.seen.sourceInfo) page.reject("Didn't start", false)
     }
     function chooseTracks(list) {
-        trackList = list.concat(addonSubs); choice = tracks.choose(trackList, group);
+        trackList = list.concat(addonSubs); choice = tracks.choose(trackList, group, series);
         var mine = choice;
         if (!judged) {
             judged = true;
@@ -456,7 +458,9 @@ FocusScope {
     }
 
     // ---- audio and subtitles ----------------------------------------------------------------------------
-    // Choosing a track plays it; a default (per group: anime, other) is set only from the hold menu.
+    // Choosing a track plays it; a default (per group: anime, other; or for the show) is set only from
+    // the hold menu. The show's wins over the group's, list by list.
+    function defaultOf(type) { return (series && tracks.preferences("series:" + series)[type]) || tracks.preferences(group)[type] || "" }
     function codecName(c) {
         var n = { "A_FLAC": "FLAC", "A_AC3": "Dolby Digital", "A_EAC3": "Dolby Digital Plus", "A_DTS": "DTS", "A_TRUEHD": "TrueHD", "A_OPUS": "Opus", "A_VORBIS": "Vorbis",
                   "S_TEXT/ASS": "ASS", "S_TEXT/SSA": "SSA", "S_TEXT/UTF8": "SRT", "S_HDMV/PGS": "PGS", "S_VOBSUB": "VobSub", "tx3g": "Text",
@@ -474,8 +478,8 @@ FocusScope {
     function buildMenu(keep) {
         var type = zone === "audio" ? "audio" : "sub";
         var current = type === "audio" ? (audioMuted ? -2 : media.audioTrack) : subs.track;
-        // the genre's default language (Tracks.prefer), marked with a pin
-        var preferred = tracks.preferences(group)[type] || "";
+        // the default language that applies (Tracks.prefer), marked with a pin
+        var preferred = defaultOf(type);
         var preferredBase = preferred === "off" ? "off" : preferred ? tracks.baseLanguage(preferred, "") : "";
         var favorites = tracks.favorites(type), groups = ({}), order = [];
         for (var i = 0; i < trackList.length; i++) {
@@ -541,8 +545,8 @@ FocusScope {
         menu.follow(true);
     }
     // Holding OK on a language offers to make it a favourite (or stop it being one) and to make it the
-    // default for this genre (or stop it being one); on Off, only the default. The default is what
-    // plays when a file of the genre opens.
+    // default for this show or for its genre (or stop it being one); on Off, only the defaults. The
+    // default is what plays when a file of the show, or of the genre, opens.
     property bool favoriteMenu: false
     property string favoriteLanguage: ""                         // the held row's language, or "off"
     property var heldTrack: null
@@ -550,16 +554,21 @@ FocusScope {
     function holdRow(row) {
         var t = menuTracks[row];
         if (t === "other") return;
-        var type = zone === "audio" ? "audio" : "sub", preferred = tracks.preferences(group)[type] || "";
+        var type = zone === "audio" ? "audio" : "sub";
         heldTrack = t;
         favoriteLanguage = t ? tracks.baseLanguage(t.lang, t.title) : "off";
-        var isDefault = preferred === "off" ? favoriteLanguage === "off" : !!preferred && tracks.baseLanguage(preferred, "") === favoriteLanguage;
+        function isDefault(preferred) { return preferred === "off" ? favoriteLanguage === "off" : !!preferred && tracks.baseLanguage(preferred, "") === favoriteLanguage }
         var rows = [], actions = [];
         if (t) {
             var fav = tracks.favorites(type).indexOf(favoriteLanguage) >= 0;
             rows.push({ label: fav ? "Remove from favorites" : "Add to favorites", icon: "star" }); actions.push("favorite");
         }
-        rows.push({ label: isDefault ? "Remove default" : "Set default", detail: group === "anime" ? "Anime" : "Movies & series", icon: "pin" }); actions.push(isDefault ? "undefault" : "default");
+        if (series) {
+            var own = isDefault(tracks.preferences("series:" + series)[type] || "");
+            rows.push({ label: own ? "Remove default" : "Set default", detail: seriesName, icon: "pin" }); actions.push(own ? "series:undefault" : "series:default");
+        }
+        var its = isDefault(tracks.preferences(group)[type] || "");
+        rows.push({ label: its ? "Remove default" : "Set default", detail: group === "anime" ? "Anime" : "Movies & series", icon: "pin" }); actions.push(its ? "undefault" : "default");
         holdActions = actions; favoriteList.model = rows; favoriteList.currentIndex = 0;
         favoriteMenu = true;
     }
@@ -568,8 +577,11 @@ FocusScope {
         if (action === "favorite") {
             tracks.setFavorite(type, favoriteLanguage, tracks.favorites(type).indexOf(favoriteLanguage) < 0);
             if (!tracks.favorites(type).length) menuLevel = "main";
-        } else if (action === "default") tracks.prefer(group, type, t ? t.lang : "off", t ? t.title : "");
-        else tracks.prefer(group, type, "", "");                 // no language: the default is cleared
+        } else {
+            var scope = action.indexOf("series:") === 0 ? "series:" + series : group;
+            if (action.replace("series:", "") === "default") tracks.prefer(scope, type, t ? t.lang : "off", t ? t.title : "");
+            else tracks.prefer(scope, type, "", "");             // no language: the default is cleared
+        }
         favoriteMenu = false;
         buildMenu(true);
     }
@@ -705,7 +717,7 @@ FocusScope {
                 out.push({ id: subtitles[i].number, type: "sub", lang: subtitles[i].lang, title: subtitles[i].title, codec: "OpenSubtitles", playable: true, external: true });
             page.addonSubs = out;
             if (!page.trackList.length) return;                  // the file's tracks aren't in yet; chooseTracks adds these
-            page.trackList = page.trackList.concat(out); page.choice = tracks.choose(page.trackList, page.group);
+            page.trackList = page.trackList.concat(out); page.choice = tracks.choose(page.trackList, page.group, page.series);
             if (!page.pickedSub) subs.track = page.subtitlesShown ? page.choice.sub : -1;   // a pick in the menu stays
         }
     }

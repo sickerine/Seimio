@@ -16,8 +16,9 @@
 //   subtitles' language (a dub), they count as forced, as its whitelist of "sign" and "song" does.
 //   Files often leave a "Signs & Songs" track unflagged, or flag it default.
 // Preferences: for each group ("anime", "other"), the audio and subtitle language, or "off": the default.
-// Only Set default in a list's hold menu (prefer()) sets one; picking a track plays it for that file,
-// and whatever choose() falls back to is never saved.
+// A show can have its own ("series:<id>", the whole show: every season, film and special), which wins
+// over its group's list by list. Only Set default in a list's hold menu (prefer()) sets one; picking a
+// track plays it for that file, and whatever choose() falls back to is never saved.
 // Subtitle delay is kept per file.
 #include "playback.h"
 #include <QtQml>
@@ -113,13 +114,16 @@ public:
     Q_INVOKABLE bool audioPlays(const QString &codec, int channels) const { return playback::audioPlays(codec, channels); }
     Q_INVOKABLE QString videoTrouble(const QString &codec, const QString &privHex) const { return playback::videoTrouble(codec, QByteArray::fromHex(privHex.toLatin1())); }   // tests
 
-    // Chooses the tracks to play. `tracks` are { id, type: "audio" | "sub", lang, title, default, forced,
+    // Chooses the tracks to play, by the group's defaults and the show's (`series`: none for a film). `tracks` are { id, type: "audio" | "sub", lang, title, default, forced,
     // playable, external } in container order (`external`: loaded for the file, as the OpenSubtitles
     // addon's are). Returns { audio: id or -1, sub: id or -1, audioOff, subsOff }, and what's wrong with
     // the file: `silent` (it has audio, but none the TV plays, or none in the preferred language when it
     // has that language) and `noSubtitleTrack` (no subtitles of its own).
-    Q_INVOKABLE QVariantMap choose(const QVariantList &tracks, const QString &group) {
-        const QJsonObject pref = m_store.data().value("prefs").toObject().value(group).toObject();
+    Q_INVOKABLE QVariantMap choose(const QVariantList &tracks, const QString &group, const QString &series = QString()) {
+        const QJsonObject prefs = m_store.data().value("prefs").toObject();
+        QJsonObject pref = prefs.value(group).toObject();
+        const QJsonObject own = series.isEmpty() ? QJsonObject() : prefs.value("series:" + series).toObject();
+        for (auto it = own.begin(); it != own.end(); ++it) pref[it.key()] = it.value();
         const QString audioPref = pref.value("audio").toString(), subPref = pref.value("sub").toString();
         QVector<T> all;
         for (const QVariant &v : tracks) {
@@ -147,7 +151,7 @@ public:
                  { "silent", any && (!anyPlays || (wanted && !wantedPlays)) }, { "noSubtitleTrack", !ownSubs } };
     }
     // "Set default" in a list's hold menu: `type` "audio" or "sub", the held track's tag and title (as
-    // passed to choose()) or "off". It becomes the default for the group.
+    // passed to choose()) or "off". It becomes the default for `group`: a group, or "series:<id>".
     Q_INVOKABLE void prefer(const QString &group, const QString &type, const QString &tag, const QString &title) {
         const QString l = tag == "off" ? QString("off") : lang::canonical(lang::of(tag, title));
         QJsonObject prefs = m_store.data().value("prefs").toObject(), g = prefs.value(group).toObject();
