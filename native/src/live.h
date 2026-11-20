@@ -295,7 +295,8 @@ public:
         return QJsonObject { { "name", meta.value("name") }, { "current", current }, { "rest", Episodes::rest(list.toVariantList(), current) },
                              { "description", meta.value("description").toString().left(260) },
                              { "genres", firstN(meta.value("genres").toArray(), 2) }, { "year", year },
-                             { "rating", meta.value("imdbRating").toVariant().toString() }, { "seasons", list } };
+                             { "rating", meta.value("imdbRating").toVariant().toString() }, { "seasons", list },
+                             { "imdb", meta.value("imdb_id") } };        // the series, as a franchise names it (App.seriesOf)
     }
     // Stremio's watched bitfield, "anchorId:anchorLength:base64(zlib(bits))": bit i is the i-th video in
     // season-then-episode order, shifted so the anchor video sits at anchorLength - 1

@@ -178,10 +178,11 @@ WebOSWindow {
     function hold(item, show, video) { held = { item: item, show: episodesIn(show) > 1 ? show : null, video: video || (item ? item.video : "") || "" } }
     // The show a title in hand is of, all of it, as one key however it was reached (the Anime tab,
     // Continue Watching, the calendar, a search) and whichever season, film or special: its IMDb series,
-    // else (an anime IMDb doesn't have) its first entry. None for a film on its own.
+    // else (an anime IMDb doesn't have) its first entry. None for a film on its own. (A show from one
+    // entry's meta, before its franchise is in, carries the same IMDb series: Kitsu's and ARM's agree.)
     function seriesOf(h) {
         if (!h || !h.show) return "";
-        return h.show.imdb || (/^tt/.test(h.item.id) ? h.item.id : h.show.entries && h.show.entries.length ? h.show.entries[0].id : h.item.id);
+        return h.show.imdb || (h.show.entries && h.show.entries.length ? h.show.entries[0].id : h.item.id);
     }
     // Home's selection as the title in hand: an anime's franchise when it's in
     function holdSelection() {
