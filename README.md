@@ -3,6 +3,15 @@
 A native Stremio client for LG webOS TVs, written in QML (Qt 5.12, run by the TV's own `qml-runner`)
 with a C++ plugin for LG's media server and libass subtitles. Built and measured on an LG C5 (webOS 26).
 
+| | |
+|---|---|
+| ![Home](tools/preview/baseline/home.png) | ![A show](tools/preview/baseline/show.png) |
+| ![A title](tools/preview/baseline/title.png) | ![Anime season](tools/preview/baseline/anime.png) |
+| ![Calendar](tools/preview/baseline/calendar.png) | ![Movies](tools/preview/baseline/movies.png) |
+| ![Search](tools/preview/baseline/search.png) | ![Quick actions](tools/preview/baseline/menu.png) |
+
+These are the visual check's approved renders (`tools/preview/shots.sh`), so they change with the app.
+
 ## Layout
 
 | Path | What |
