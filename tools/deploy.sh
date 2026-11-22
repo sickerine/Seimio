@@ -13,6 +13,8 @@ ver=$(python3 -c "import json;print(json.load(open('app/appinfo.json'))['version
 # a fresh build number each time, or ares-install keeps the old files
 build=$(date +%s); next="${ver%.*}.$((build % 100000))"
 tmp=$(mktemp -d); rsync -a --exclude .DS_Store app/ "$tmp/app/"
+# the lab server is this Mac, at whatever address the network gave it today (the app is written with .47)
+LAB=$(ipconfig getifaddr en0); perl -pi -e "s/192\.168\.1\.47/$LAB/g" "$tmp/app/main.qml" "$tmp/app/why.qml" "$tmp/app/qml/LabProbe.qml"
 python3 - "$tmp/app/appinfo.json" "$next" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p)); d["version"] = sys.argv[2]; json.dump(d, open(p, "w"), indent=2)

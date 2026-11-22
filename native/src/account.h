@@ -160,6 +160,8 @@ public:
     Q_INVOKABLE void signInWith(const QString &email, const QString &password) {
         authenticate(QJsonObject { { "type", "Login" }, { "email", email }, { "password", password }, { "facebook", false } });
     }
+    // lab: a session's key, as an approved code gives it (another TV signed in without a phone)
+    Q_INVOKABLE void signInWithKey(const QString &key) { authenticate(QJsonObject { { "type", "LoginWithToken" }, { "token", key } }); }
 
 signals:
     void changed();

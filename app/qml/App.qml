@@ -509,6 +509,10 @@ WebOSWindow {
     // everything comes live from the services, and the account from Stremio's core (Account)
     Catalog { id: catalog; today: app.today; onLoaded: app.refreshHeld() }
     Account { id: account; onMarkFailed: app.say("Couldn't mark it") }
+    // lab: a tour can't approve a code; { "signIn": ["email", "password"] }, or [key] for a session's key. Once the
+    // variant and the stored account are both in, whichever comes last
+    readonly property bool labSignIn: !!probe.variant.signIn && account.ready && !account.signedIn
+    onLabSignInChanged: if (labSignIn) probe.variant.signIn.length === 1 ? account.signInWithKey(probe.variant.signIn[0]) : account.signInWith(probe.variant.signIn[0], probe.variant.signIn[1])
     // A moment's word at the bottom of the screen when something asked for couldn't be done: a show that
     // can't open (not on Kitsu yet, its episodes didn't load), a season that didn't load, an episode that
     // couldn't be marked. The Anime tab's season on its way shows there too.
@@ -616,6 +620,7 @@ WebOSWindow {
                      season: { asked: catalog.seasonAsked, shown: catalog.seasonName },
                      anime: { view: anime.view, format: anime.format, sort: anime.sort, genre: anime.genre, row: anime.row, list: anime.menu },      // its controls, and the list that is dropped
                      focusItem: id(app.focusItem), displayItem: id(app.displayItem), held: id(app.held ? app.held.item : null),
+                     keys: String(app.activeFocusItem).replace(/_QMLTYPE_\d+|\(0x[0-9a-f]+\)/g, ""),     // what the next key goes to
                      video: app.playTarget ? app.playTarget.id : "", trail: app.trail.map(function (t) { return t.layer }).join(">"),
                      info: { item: id(info.item), m: id(info.m), pending: id(info.pending), fadeIn: info.fadeIn, away: info.away,
                              visible: info.visible, opacity: info.opacity, y: info.y, busy: info.busy },
@@ -640,7 +645,6 @@ WebOSWindow {
         onOpenStreams: if (app.focusItem) app.openStreams(null)      // (on a title: with the cursor off the cards there is none to open)
         onSearch: { app.tab = 5; app.layer = "tabs"; searchBar.text = text; search.enter() }      // typed, and Enter: on to what is found
         onVariantChanged: {
-            if (variant.signIn && account.ready && !account.signedIn) account.signInWith(variant.signIn[0], variant.signIn[1]);   // lab: a tour can't approve a code
             if (variant.signOut && account.signedIn) account.signOut();
             // lab: { "queryFault": ["search", 3000, false] } makes the queries with that in their key 3 s slower (true: fail)
             if (variant.queryFault) catalog.fault(variant.queryFault[0], variant.queryFault[1] || 0, !!variant.queryFault[2]);

@@ -341,7 +341,8 @@ carries the account's key) is never recorded and never made in a preview. The pr
 core's storage in `tools/preview/account/` (not in git), signed in once:
 `core/target/release/core-lab tools/preview/account '|{"action":"Ctx","args":{"action":"Authenticate","args":{"type":"Login","email":"…","password":"…","facebook":false}}}' wait:6000`.
 On the TV a tour can't approve a code, so the lab signs in: `{"signIn": ["email", "password"]}` in the
-variant.
+variant, or `{"signIn": ["<key>"]}` with a session's key (the previews' account has one in
+`tools/preview/account/profile.json`, `auth.key`).
 
 What a menu does to a title is done to the account, on every device: Add to library, Mark watched, an
 episode marked, Remove from Continue Watching. Trying one on the TV, read which title has the focus from
