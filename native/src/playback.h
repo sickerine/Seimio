@@ -9,6 +9,14 @@
 #include <QByteArray>
 
 namespace playback {
+#ifdef Q_OS_ANDROID
+// On Android mpv plays the file (android/mpv.h): it decodes in software what the TV's own decoders don't
+// (DTS, TrueHD, ALAC, 10-bit H.264) and mixes every channel down, so every track is listed and heard and no
+// video track is refused.
+inline QString videoTrouble(const QString &, const QByteArray &) { return QString(); }
+inline bool audioListed(const QString &) { return true; }
+inline bool audioPlays(const QString &, int) { return true; }
+#else
 // `codec` as Matroska names it (A_OPUS), as LG's pipeline does (opus, raw) or as a release name does
 
 // What a video track's own header says the TV won't show, or "": `codec` and `priv` are Matroska's CodecID
@@ -38,4 +46,5 @@ inline bool audioPlays(const QString &codec, int channels) {
     if (c.contains("pcm") || c == "raw") return channels <= 6;             // 7.1: the centre was faint; not measured per channel
     return true;                                                            // AAC, Dolby Digital (Plus, Atmos), MP3, MP2, Vorbis
 }
+#endif
 }

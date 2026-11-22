@@ -81,7 +81,7 @@ inline Want wanted(const QString &id) {
     const QString flags = id.left(qMax(0, slash));
     if (slash < 0 || flags.contains(':')) { w.places << id; return w; }
     w.banded = flags.contains('f');
-    for (const QString &part : id.mid(slash + 1).split('.', QString::SkipEmptyParts)) w.places << decodedPlace(part);
+    for (const QString &part : id.mid(slash + 1).split('.')) if (!part.isEmpty()) w.places << decodedPlace(part);
     return w;
 }
 

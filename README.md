@@ -24,6 +24,7 @@ These are the visual check's approved renders (`tools/preview/shots.sh`), so the
 | `third_party/libass/` | libass with FriBidi and HarfBuzz, built for the TV |
 | `tools/` | Deploy, remote-driven tours, the lab server, art fetching, Mac previews |
 | `lab/` | Earlier experiments (web motion lab, QML benchmarks, video tests) |
+| `android/` | The Android TV build: the same QML and data code in Qt 6, the player over mpv (`mpv.h`), stand-ins for what only the LG has |
 
 ## How focus works
 
@@ -55,3 +56,6 @@ its owner, so the rest of the hold can't press anything in the menu.
    renders the app on the Mac (Qt 5 from Homebrew) for screenshots;
    `tools/preview/shots.sh` compares fixed states with the approved images, replaying recorded API answers
    (`tools/preview/api/`, `--record` to refresh) so the renders don't change with the day's data.
+7. `android/build.sh install` builds the Android TV app (32-bit ARM, Qt 6 for Android in `~/Qt`, the SDK and NDK in
+   `~/Library/Android/sdk`) and puts it on the TV over adb. It fetches libmpv once and compiles the QML's shaders
+   for Qt 6 (`android/stage.py`).
